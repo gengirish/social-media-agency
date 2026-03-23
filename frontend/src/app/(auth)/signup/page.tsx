@@ -94,8 +94,9 @@ export default function SignupPage() {
 
           <form onSubmit={handleSignup} className="space-y-5">
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Full Name</label>
+              <label htmlFor="fullName" className="mb-1 block text-sm font-medium text-slate-700">Full Name</label>
               <input
+                id="fullName"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Jordan Smith"
@@ -104,8 +105,9 @@ export default function SignupPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
+              <label htmlFor="email" className="mb-1 block text-sm font-medium text-slate-700">Email</label>
               <input
+                id="email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -115,8 +117,9 @@ export default function SignupPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
+              <label htmlFor="password" className="mb-1 block text-sm font-medium text-slate-700">Password</label>
               <input
+                id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -127,8 +130,9 @@ export default function SignupPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Organization Name</label>
+              <label htmlFor="orgName" className="mb-1 block text-sm font-medium text-slate-700">Organization Name</label>
               <input
+                id="orgName"
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
                 placeholder="Northwind Marketing"
