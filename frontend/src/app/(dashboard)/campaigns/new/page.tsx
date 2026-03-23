@@ -2,10 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, type Client } from "@/lib/api";
+import { api, type BrandProfileRequest, type Client, type CreateClientRequest } from "@/lib/api";
 import { toast } from "sonner";
-import { Sparkles, ArrowLeft, ArrowRight, Rocket } from "lucide-react";
+import { Sparkles, ArrowLeft, ArrowRight, Rocket, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const MAGIC_BRIEF_STORAGE_KEY = "campaignforge_magic_brief_client";
+
+type MagicBriefStored = {
+  clientDraft: CreateClientRequest;
+  brandProfile: BrandProfileRequest;
+  targetAudienceHint?: string;
+};
 
 const CHANNEL_OPTIONS = [
   { id: "linkedin", label: "LinkedIn", emoji: "💼" },
@@ -31,10 +39,45 @@ export default function NewCampaignPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [additionalContext, setAdditionalContext] = useState("");
+  const [magicBriefDraft, setMagicBriefDraft] = useState<MagicBriefStored | null>(null);
+  const [creatingFromBrief, setCreatingFromBrief] = useState(false);
 
   useEffect(() => {
     api.getClients().then((res) => setClients(res.items)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const raw = sessionStorage.getItem(MAGIC_BRIEF_STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const data = JSON.parse(raw) as MagicBriefStored;
+      if (data?.clientDraft?.brand_name) {
+        setMagicBriefDraft(data);
+        if (data.targetAudienceHint) setTargetAudience(data.targetAudienceHint);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  async function handleCreateClientFromMagicBrief() {
+    if (!magicBriefDraft) return;
+    setCreatingFromBrief(true);
+    try {
+      const client = await api.createClient(magicBriefDraft.clientDraft);
+      await api.createBrandProfile(client.id, magicBriefDraft.brandProfile);
+      sessionStorage.removeItem(MAGIC_BRIEF_STORAGE_KEY);
+      setMagicBriefDraft(null);
+      const res = await api.getClients();
+      setClients(res.items);
+      setClientId(client.id);
+      toast.success("Client created from Magic Brief");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Could not create client");
+    } finally {
+      setCreatingFromBrief(false);
+    }
+  }
 
   function toggleChannel(ch: string) {
     setChannels((prev) =>
@@ -92,6 +135,35 @@ export default function NewCampaignPage() {
       {/* Step 1: Brief */}
       {step === 1 && (
         <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          {magicBriefDraft && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/80 p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
+                  <Wand2 className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-indigo-900">Magic Brief profile ready</p>
+                  <p className="mt-1 text-sm text-indigo-800/90">
+                    {magicBriefDraft.clientDraft.brand_name}
+                    {magicBriefDraft.clientDraft.industry
+                      ? ` · ${magicBriefDraft.clientDraft.industry}`
+                      : ""}
+                  </p>
+                  <p className="mt-2 text-xs text-indigo-700">
+                    Create this client (and save brand voice) to use it in this campaign.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={creatingFromBrief}
+                    onClick={handleCreateClientFromMagicBrief}
+                    className="mt-3 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                  >
+                    {creatingFromBrief ? "Creating…" : "Create client from profile"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Client *</label>
             <select

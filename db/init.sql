@@ -199,3 +199,63 @@ CREATE INDEX IF NOT EXISTS idx_content_piece_client ON content_piece(client_id);
 CREATE INDEX IF NOT EXISTS idx_content_piece_status ON content_piece(status);
 CREATE INDEX IF NOT EXISTS idx_analytics_account ON analytics_snapshot(platform_account_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_date ON analytics_snapshot(date);
+
+-- Comments on content pieces
+CREATE TABLE IF NOT EXISTS content_comment (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    content_id UUID NOT NULL REFERENCES content_piece(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id UUID NOT NULL REFERENCES organization(id),
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- White-label branding for agency mode
+CREATE TABLE IF NOT EXISTS white_label (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL UNIQUE REFERENCES organization(id) ON DELETE CASCADE,
+    custom_domain VARCHAR(255),
+    logo_url TEXT,
+    primary_color VARCHAR(7) DEFAULT '#4f46e5',
+    company_name VARCHAR(255),
+    support_email VARCHAR(255),
+    is_active BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Campaign templates
+CREATE TABLE IF NOT EXISTS campaign_template (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID REFERENCES organization(id),
+    name VARCHAR(255) NOT NULL,
+    description TEXT DEFAULT '',
+    category VARCHAR(100) DEFAULT 'general',
+    objective_template TEXT DEFAULT '',
+    channels TEXT[] DEFAULT '{}',
+    content_directives JSONB DEFAULT '{}',
+    is_public BOOLEAN DEFAULT FALSE,
+    uses_count INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- API keys for external integrations
+CREATE TABLE IF NOT EXISTS api_key (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    key_hash VARCHAR(255) NOT NULL,
+    key_prefix VARCHAR(10) NOT NULL,
+    permissions TEXT[] DEFAULT '{read}',
+    is_active BOOLEAN DEFAULT TRUE,
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_comment_content ON content_comment(content_id);
+CREATE INDEX IF NOT EXISTS idx_content_comment_org ON content_comment(org_id);
+CREATE INDEX IF NOT EXISTS idx_white_label_org ON white_label(org_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_template_org ON campaign_template(org_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_template_public ON campaign_template(is_public);
+CREATE INDEX IF NOT EXISTS idx_api_key_org ON api_key(org_id);
+CREATE INDEX IF NOT EXISTS idx_api_key_prefix ON api_key(key_prefix);

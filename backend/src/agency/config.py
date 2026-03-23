@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     agentmail_api_key: str = ""
     agentmail_default_domain: str = ""
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # CORS — accepts JSON array string or comma-separated string
+    cors_origins: str = "http://localhost:3000"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

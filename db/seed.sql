@@ -61,3 +61,13 @@ INSERT INTO brand_profile (client_id, org_id, voice_description, tone_attributes
  'Foodies 30-55, date-night couples, wine enthusiasts, local fine-dining seekers',
  ARRAY['Use Italian culinary terms with translations', 'Emphasize freshness and seasonality', 'Include sensory descriptions of dishes'])
 ON CONFLICT DO NOTHING;
+
+-- Campaign Templates
+INSERT INTO campaign_template (org_id, name, description, category, objective_template, channels, is_public) VALUES
+(NULL, 'Product Launch', 'Complete multi-platform launch campaign with awareness, engagement, and conversion phases', 'launch', 'Launch [PRODUCT] to [AUDIENCE] across social channels, driving awareness and sign-ups', ARRAY['linkedin', 'twitter', 'instagram'], TRUE),
+(NULL, 'Weekly Social Calendar', 'Recurring weekly content plan with daily themes', 'recurring', 'Maintain consistent brand presence with 5 posts per week across primary channels', ARRAY['linkedin', 'twitter'], TRUE),
+(NULL, 'Brand Awareness', 'Top-of-funnel campaign focused on reach and impressions', 'awareness', 'Increase brand awareness among [AUDIENCE] by 30% over 4 weeks', ARRAY['instagram', 'facebook', 'twitter'], TRUE),
+(NULL, 'Thought Leadership', 'B2B-focused LinkedIn and Twitter campaign for authority building', 'b2b', 'Establish [BRAND] as a thought leader in [INDUSTRY] through expert content', ARRAY['linkedin', 'twitter'], TRUE),
+(NULL, 'Holiday Campaign', 'Seasonal campaign template with festive messaging', 'seasonal', 'Drive holiday engagement and sales with festive, time-sensitive content', ARRAY['instagram', 'facebook', 'twitter'], TRUE),
+(NULL, 'Event Promotion', 'Pre-event, during-event, and post-event content plan', 'events', 'Maximize attendance and engagement for [EVENT] across all channels', ARRAY['linkedin', 'twitter', 'instagram'], TRUE)
+ON CONFLICT DO NOTHING;

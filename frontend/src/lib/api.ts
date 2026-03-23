@@ -81,6 +81,59 @@ export const api = {
     request(`/api/v1/content/${id}/approve`, { method: "POST" }),
 
   getStats: () => request<DashboardStats>("/api/v1/stats"),
+
+  extractBrand: (url: string) =>
+    request<BrandProfile>("/api/v1/magic-brief", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+
+  getCalendar: async (start: string, end: string) => {
+    const data = await request<CalendarApiResponse>(
+      `/api/v1/publishing/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+    );
+    const items = Array.isArray(data) ? data : data.items ?? [];
+    return { items };
+  },
+
+  scheduleContent: (contentId: string, scheduledAt: string) =>
+    request(`/api/v1/publishing/${contentId}/schedule`, {
+      method: "POST",
+      body: JSON.stringify({ scheduled_at: scheduledAt }),
+    }),
+
+  publishContent: (contentId: string) =>
+    request(`/api/v1/publishing/${contentId}/publish`, { method: "POST" }),
+
+  getPlans: async () => {
+    const data = await request<Plan[] | { items: Plan[]; plans?: Plan[] }>("/api/v1/billing/plans");
+    if (Array.isArray(data)) return data;
+    return data.items ?? data.plans ?? [];
+  },
+
+  getSubscription: () => request<SubscriptionInfo>("/api/v1/billing/subscription"),
+
+  createCheckout: (planTier: string) =>
+    request<{ checkout_url: string; session_id?: string }>("/api/v1/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify({ plan_tier: planTier }),
+    }),
+
+  getTeam: async () => {
+    const data = await request<TeamMember[] | { items: TeamMember[]; members?: TeamMember[] }>(
+      "/api/v1/team"
+    );
+    if (Array.isArray(data)) return data;
+    if ("items" in data && Array.isArray(data.items)) return data.items;
+    if ("members" in data && Array.isArray(data.members)) return data.members;
+    return [];
+  },
+
+  inviteTeamMember: (email: string, role: string) =>
+    request("/api/v1/team/invite", {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
+    }),
 };
 
 // --- Types ---
@@ -186,4 +239,64 @@ export interface AgentStreamEvent {
   content: string;
   progress: number;
   timestamp: string;
+}
+
+export interface BrandProfile {
+  brand_name?: string;
+  industry?: string;
+  description?: string;
+  voice_description?: string;
+  tone_attributes?: Record<string, number>;
+  target_audience?: string;
+  style_rules?: string[];
+  emoji_policy?: string;
+  source_url?: string;
+  error?: string;
+  vocabulary_include?: string[];
+  vocabulary_exclude?: string[];
+  suggested_channels?: string[];
+  content_pillars?: string[];
+  competitor_differentiation?: string;
+}
+
+export interface CalendarEntry {
+  id: string;
+  title: string;
+  platform: string;
+  scheduled_at: string | null;
+  status: string;
+  body?: string;
+  campaign_id?: string | null;
+  client_id?: string;
+  content_type?: string;
+}
+
+export type CalendarApiResponse = CalendarEntry[] | { items: CalendarEntry[] };
+
+export interface Plan {
+  tier: string;
+  price_id?: string;
+  clients_limit?: number;
+  posts_limit?: number;
+  features?: string[];
+  amount?: number;
+}
+
+export interface SubscriptionInfo {
+  plan_tier: string;
+  status?: string;
+  clients_limit?: number;
+  posts_limit?: number;
+  posts_used?: number;
+  features?: string[];
+}
+
+export interface TeamMember {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  is_active?: boolean;
+  permissions?: string[];
+  created_at?: string | null;
 }

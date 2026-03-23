@@ -13,7 +13,8 @@ import {
   Settings,
   LogOut,
   Menu,
-  X,
+  Calendar,
+  CreditCard,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -22,6 +23,9 @@ const navItems = [
   { label: "Clients", href: "/clients", icon: Users },
   { label: "Campaigns", href: "/campaigns", icon: Megaphone },
   { label: "Content Library", href: "/content", icon: FileText },
+  { label: "Calendar", href: "/calendar", icon: Calendar },
+  { label: "Team", href: "/team", icon: Users },
+  { label: "Pricing", href: "/pricing", icon: CreditCard },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },
   { label: "Settings", href: "/settings", icon: Settings },
 ];

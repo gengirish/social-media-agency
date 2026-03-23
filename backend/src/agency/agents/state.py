@@ -41,6 +41,10 @@ class CampaignState(TypedDict, total=False):
     ad_variants: list[dict]        # Ad Copy Agent output
     qa_feedback: dict              # QA/Brand Agent output
 
+    # --- Analytics Agent ---
+    engagement_data: dict          # Per-post / per-platform metrics for analysis
+    analytics_insights: dict       # Recommendations and narrative insights
+
     # --- Human-in-the-loop ---
     human_review: str              # "pending" | "approved" | "revision_needed"
     human_feedback: str

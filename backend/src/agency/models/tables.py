@@ -226,3 +226,59 @@ class AnalyticsSnapshot(Base):
     followers_delta = Column(Integer, default=0)
     extra = Column(JSONB, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ContentComment(Base):
+    __tablename__ = "content_comment"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    content_id = Column(UUID(as_uuid=True), ForeignKey("content_piece.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class WhiteLabel(Base):
+    __tablename__ = "white_label"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False, unique=True)
+    custom_domain = Column(String(255))
+    logo_url = Column(Text)
+    primary_color = Column(String(7), default="#4f46e5")
+    company_name = Column(String(255))
+    support_email = Column(String(255))
+    is_active = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CampaignTemplate(Base):
+    __tablename__ = "campaign_template"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, default="")
+    category = Column(String(100), default="general")
+    objective_template = Column(Text, default="")
+    channels = Column(ARRAY(Text), default=[])
+    content_directives = Column(JSONB, default={})
+    is_public = Column(Boolean, default=False)
+    uses_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ApiKey(Base):
+    __tablename__ = "api_key"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False)
+    name = Column(String(255), nullable=False)
+    key_hash = Column(String(255), nullable=False)
+    key_prefix = Column(String(10), nullable=False)
+    permissions = Column(ARRAY(Text), default=["read"])
+    is_active = Column(Boolean, default=True)
+    last_used_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
