@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.services.team import invite_team_member, list_team_members, update_member_role
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/team", tags=["Team"])
 
 
 class InviteRequest(BaseModel):
-    email: EmailStr
+    email: str
     role: str
 
 

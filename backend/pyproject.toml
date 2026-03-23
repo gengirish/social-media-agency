@@ -28,6 +28,7 @@ dependencies = [
     "stripe>=11.0.0",
     "agentmail>=0.2.0",
     "python-dotenv>=1.0.0",
+    "email-validator>=2.1.0",
 ]
 
 [project.optional-dependencies]
