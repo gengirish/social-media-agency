@@ -1,0 +1,3 @@
+{
+  "buildCommand": "next build && node -e \"const fs=require('fs'),p='.next/server/app/(dashboard)/page_client-reference-manifest.js';if(!fs.existsSync(p)){fs.mkdirSync(require('path').dirname(p),{recursive:true});fs.writeFileSync(p,'self.__RSC_MANIFEST={}')}\""
+}
