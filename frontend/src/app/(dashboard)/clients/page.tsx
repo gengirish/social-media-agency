@@ -58,26 +58,26 @@ export default function ClientsPage() {
           <h3 className="text-lg font-semibold text-slate-900">New Client</h3>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Brand Name *</label>
-              <input value={formData.brand_name} onChange={(e) => setFormData(p => ({ ...p, brand_name: e.target.value }))} required className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+              <label htmlFor="brand_name" className="mb-1 block text-sm font-medium text-slate-700">Brand Name *</label>
+              <input id="brand_name" value={formData.brand_name} onChange={(e) => setFormData(p => ({ ...p, brand_name: e.target.value }))} required className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Industry *</label>
-              <input value={formData.industry} onChange={(e) => setFormData(p => ({ ...p, industry: e.target.value }))} required className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+              <label htmlFor="industry" className="mb-1 block text-sm font-medium text-slate-700">Industry *</label>
+              <input id="industry" value={formData.industry} onChange={(e) => setFormData(p => ({ ...p, industry: e.target.value }))} required className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
             </div>
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Description</label>
-            <textarea value={formData.description} onChange={(e) => setFormData(p => ({ ...p, description: e.target.value }))} rows={2} className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none" />
+            <label htmlFor="description" className="mb-1 block text-sm font-medium text-slate-700">Description</label>
+            <textarea id="description" value={formData.description} onChange={(e) => setFormData(p => ({ ...p, description: e.target.value }))} rows={2} className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none" />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Website</label>
-              <input value={formData.website_url} onChange={(e) => setFormData(p => ({ ...p, website_url: e.target.value }))} className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+              <label htmlFor="website_url" className="mb-1 block text-sm font-medium text-slate-700">Website</label>
+              <input id="website_url" value={formData.website_url} onChange={(e) => setFormData(p => ({ ...p, website_url: e.target.value }))} className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Contact Email</label>
-              <input type="email" value={formData.contact_email} onChange={(e) => setFormData(p => ({ ...p, contact_email: e.target.value }))} className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+              <label htmlFor="contact_email" className="mb-1 block text-sm font-medium text-slate-700">Contact Email</label>
+              <input id="contact_email" type="email" value={formData.contact_email} onChange={(e) => setFormData(p => ({ ...p, contact_email: e.target.value }))} className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
             </div>
           </div>
           <div className="flex justify-end gap-3">
