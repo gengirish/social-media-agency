@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { clerkAuth } from "./helpers/auth";
+import { clerkAuth, isClerkConfigured } from "./helpers/auth";
 
 type PageCheck = { path: string; heading: RegExp };
 
@@ -16,6 +16,7 @@ const PAGES: PageCheck[] = [
 
 test.describe("Navigation", () => {
   test.beforeEach(async ({ page }) => {
+    test.skip(!isClerkConfigured(), "Clerk keys not configured");
     await clerkAuth(page);
   });
 

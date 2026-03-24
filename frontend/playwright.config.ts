@@ -1,8 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
-import { clerkSetup } from "@clerk/testing/playwright";
 
 export default defineConfig({
-  globalSetup: clerkSetup,
+  globalSetup: "./e2e/global-setup.ts",
   testDir: "./e2e",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

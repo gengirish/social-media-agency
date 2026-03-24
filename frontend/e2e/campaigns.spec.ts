@@ -1,10 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { clerkAuth } from "./helpers/auth";
+import { clerkAuth, isClerkConfigured } from "./helpers/auth";
 
 test.describe("Campaigns", () => {
   const brandName = `E2E Brand ${Date.now()}`;
 
   test.beforeEach(async ({ page }) => {
+    test.skip(!isClerkConfigured(), "Clerk keys not configured");
     await clerkAuth(page);
   });
 
