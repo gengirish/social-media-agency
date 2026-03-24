@@ -1,16 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { buildTestUser, signupViaApi, loginAs } from "./helpers/auth";
+import { clerkAuth } from "./helpers/auth";
 
 test.describe("Magic Brief", () => {
-  let user: ReturnType<typeof buildTestUser>;
-
-  test.beforeAll(async ({ request }) => {
-    user = buildTestUser();
-    await signupViaApi(request, user);
-  });
-
   test.beforeEach(async ({ page }) => {
-    await loginAs(page, user.email, user.password);
+    await clerkAuth(page);
   });
 
   test("scan website produces brand profile", async ({ page }) => {

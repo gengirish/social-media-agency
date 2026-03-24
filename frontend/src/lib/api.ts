@@ -6,8 +6,15 @@ class ApiError extends Error {
   }
 }
 
+let _clerkGetToken: (() => Promise<string | null>) | null = null;
+
+/** Called once from ClerkTokenSync to wire up Clerk's getToken. */
+export function setClerkTokenGetter(getter: () => Promise<string | null>) {
+  _clerkGetToken = getter;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const token = _clerkGetToken ? await _clerkGetToken() : null;
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -27,18 +34,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<{ status: string }>("/api/v1/health"),
-
-  login: (email: string, password: string) =>
-    request<{ access_token: string; role: string; org_id: string }>("/api/v1/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    }),
-
-  signup: (data: { email: string; password: string; full_name: string; org_name: string }) =>
-    request<{ access_token: string; role: string; org_id: string }>("/api/v1/auth/signup", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
 
   getClients: (page = 1) => request<ClientListResponse>(`/api/v1/clients?page=${page}`),
   getClient: (id: string) => request<Client>(`/api/v1/clients/${id}`),

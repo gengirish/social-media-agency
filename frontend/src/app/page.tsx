@@ -1,15 +1,17 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 export default function Home() {
+  const { isLoaded, isSignedIn } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    router.push(token ? "/campaigns" : "/login");
-  }, [router]);
+    if (!isLoaded) return;
+    router.push(isSignedIn ? "/campaigns" : "/sign-in");
+  }, [isLoaded, isSignedIn, router]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 to-indigo-50/30">

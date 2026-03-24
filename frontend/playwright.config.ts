@@ -1,6 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import { clerkSetup } from "@clerk/testing/playwright";
 
 export default defineConfig({
+  globalSetup: clerkSetup,
   testDir: "./e2e",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -19,8 +21,6 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  // CI: no local server (assume BASE_URL is set or tests are API-only).
-  // PLAYWRIGHT_SKIP_WEBSERVER=1: skip `next dev` for quick API checks without starting the app.
   webServer:
     process.env.CI || process.env.PLAYWRIGHT_SKIP_WEBSERVER === "1"
       ? undefined

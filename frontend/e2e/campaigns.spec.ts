@@ -1,17 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { buildTestUser, signupViaApi, loginAs } from "./helpers/auth";
+import { clerkAuth } from "./helpers/auth";
 
 test.describe("Campaigns", () => {
-  let user: ReturnType<typeof buildTestUser>;
   const brandName = `E2E Brand ${Date.now()}`;
 
-  test.beforeAll(async ({ request }) => {
-    user = buildTestUser();
-    await signupViaApi(request, user);
-  });
-
   test.beforeEach(async ({ page }) => {
-    await loginAs(page, user.email, user.password);
+    await clerkAuth(page);
   });
 
   test("wizard creates campaign; detail shows Live Agents and Content", async ({ page }) => {

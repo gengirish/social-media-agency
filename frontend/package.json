@@ -11,6 +11,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.0.6",
     "@hookform/resolvers": "^3.9.0",
     "@radix-ui/react-avatar": "^1.1.0",
     "@radix-ui/react-dialog": "^1.1.0",
@@ -35,6 +36,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@clerk/testing": "^2.0.6",
     "@playwright/test": "^1.58.2",
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.14",
