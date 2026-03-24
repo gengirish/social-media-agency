@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { connectAgentStream } from "@/lib/agent-stream";
 import type { AgentStreamEvent } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,13 @@ interface LiveAgentDashboardProps {
 }
 
 export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: LiveAgentDashboardProps) {
+  const { getToken } = useAuth();
+
+  const getTokenForReview = async () => {
+    const t = await getToken();
+    return t || "";
+  };
+
   const [agentStatuses, setAgentStatuses] = useState<Record<string, AgentStatus>>({});
   const [currentAgent, setCurrentAgent] = useState<string>("");
   const [progress, setProgress] = useState(0);
@@ -45,54 +53,72 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
   const disconnectRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const disconnect = connectAgentStream(
-      campaignId,
-      (event) => {
-        setEvents((prev) => [...prev, event]);
+    let disconnectFn: (() => void) | null = null;
+    let cancelled = false;
 
-        if (event.type === "step_complete") {
-          setAgentStatuses((prev) => ({
-            ...prev,
-            [event.agent]: "complete",
-          }));
-          setProgress(event.progress);
+    getToken()
+      .catch(() => null)
+      .then((t) => {
+        if (!t || cancelled) return;
+        disconnectFn = connectAgentStream(
+          campaignId,
+          t,
+          (event) => {
+            setEvents((prev) => [...prev, event]);
+
+            if (event.type === "step_complete") {
+              setAgentStatuses((prev) => ({
+                ...prev,
+                [event.agent]: "complete",
+              }));
+              setProgress(event.progress);
+            }
+
+            if (event.type === "step_start") {
+              setCurrentAgent(event.agent);
+              setAgentStatuses((prev) => ({
+                ...prev,
+                [event.agent]: "running",
+              }));
+            }
+
+            if (event.type === "waiting_human") {
+              setAgentStatuses((prev) => ({
+                ...prev,
+                human_review: "waiting",
+              }));
+              onWaitingHuman?.();
+            }
+
+            if (event.type === "complete") {
+              setIsComplete(true);
+              setProgress(100);
+              onComplete?.();
+            }
+
+            if (event.type === "error") {
+              setAgentStatuses((prev) => ({
+                ...prev,
+                [event.agent]: "error",
+              }));
+            }
+          },
+          () => {}
+        );
+        disconnectRef.current = disconnectFn;
+        if (cancelled) {
+          disconnectFn();
+          disconnectRef.current = null;
         }
+      });
 
-        if (event.type === "step_start") {
-          setCurrentAgent(event.agent);
-          setAgentStatuses((prev) => ({
-            ...prev,
-            [event.agent]: "running",
-          }));
-        }
-
-        if (event.type === "waiting_human") {
-          setAgentStatuses((prev) => ({
-            ...prev,
-            human_review: "waiting",
-          }));
-          onWaitingHuman?.();
-        }
-
-        if (event.type === "complete") {
-          setIsComplete(true);
-          setProgress(100);
-          onComplete?.();
-        }
-
-        if (event.type === "error") {
-          setAgentStatuses((prev) => ({
-            ...prev,
-            [event.agent]: "error",
-          }));
-        }
-      },
-      () => {}
-    );
-
-    disconnectRef.current = disconnect;
-    return () => disconnect();
-  }, [campaignId, onComplete, onWaitingHuman]);
+    return () => {
+      cancelled = true;
+      disconnectFn?.();
+      disconnectRef.current?.();
+      disconnectRef.current = null;
+    };
+  }, [campaignId, getToken, onComplete, onWaitingHuman]);
 
   function getStatusIcon(agentId: string) {
     const status = agentStatuses[agentId];
@@ -184,6 +210,76 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
           );
         })}
       </div>
+
+      {agentStatuses["human_review"] === "waiting" && (
+        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-5">
+          <div className="mb-3 flex items-center gap-2">
+            <UserCheck className="h-5 w-5 text-amber-600" />
+            <h3 className="font-semibold text-amber-900">Review Required</h3>
+          </div>
+          <p className="mb-4 text-sm text-amber-700">
+            Content has been generated. Review the content tab and approve or request revisions.
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const res = await fetch(
+                    `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"}/api/v1/campaigns/${campaignId}/review`,
+                    {
+                      method: "PATCH",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${await getTokenForReview()}`,
+                      },
+                      body: JSON.stringify({ decision: "approved" }),
+                    }
+                  );
+                  if (!res.ok) {
+                    console.error("Review submit failed", res.status, await res.text());
+                    return;
+                  }
+                  setAgentStatuses((prev) => ({ ...prev, human_review: "complete" }));
+                } catch (e) {
+                  console.error("Review submit failed", e);
+                }
+              }}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              Approve & Continue
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const res = await fetch(
+                    `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"}/api/v1/campaigns/${campaignId}/review`,
+                    {
+                      method: "PATCH",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${await getTokenForReview()}`,
+                      },
+                      body: JSON.stringify({ decision: "revise_content" }),
+                    }
+                  );
+                  if (!res.ok) {
+                    console.error("Review submit failed", res.status, await res.text());
+                    return;
+                  }
+                  setAgentStatuses((prev) => ({ ...prev, human_review: "running" }));
+                } catch (e) {
+                  console.error("Review submit failed", e);
+                }
+              }}
+              className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50"
+            >
+              Request Revisions
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Event log */}
       {events.length > 0 && (

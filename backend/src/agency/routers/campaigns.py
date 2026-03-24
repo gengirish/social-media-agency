@@ -5,14 +5,23 @@ import json
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, status
+from jose import JWTError, jwt as jose_jwt
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from agency.agents.graph import get_compiled_graph
 from agency.agents.state import BrandContext, CampaignState
-from agency.dependencies import get_current_user, get_db, get_org_id
+from agency.config import get_settings
+from agency.dependencies import (
+    _resolve_clerk_user,
+    _verify_clerk_jwt,
+    get_current_user,
+    get_db,
+    get_org_id,
+)
+from agency.models.database import get_session_factory
 from agency.models.schemas import (
     AgentStreamEvent,
     CampaignBrief,
@@ -21,7 +30,6 @@ from agency.models.schemas import (
 )
 from agency.models.tables import (
     AgentRun,
-    BrandProfile,
     Campaign,
     Client,
     ContentPiece,
@@ -184,6 +192,27 @@ async def _run_campaign_pipeline(
                     progress=progress,
                 ).model_dump_json())
 
+                # Track agent run in DB
+                if node_name != "__interrupt__":
+                    try:
+                        factory = get_session_factory()
+                        async with factory() as tracking_db:
+                            agent_run = AgentRun(
+                                campaign_id=UUID(campaign_id),
+                                org_id=UUID(org_id),
+                                agent_name=node_name,
+                                status="completed",
+                                output=(
+                                    json.dumps(node_output)
+                                    if isinstance(node_output, dict)
+                                    else str(node_output)
+                                ),
+                            )
+                            tracking_db.add(agent_run)
+                            await tracking_db.commit()
+                    except Exception:
+                        pass  # Don't let tracking failures break the pipeline
+
         await queue.put(AgentStreamEvent(
             type="complete",
             agent="pipeline",
@@ -206,8 +235,6 @@ async def _persist_campaign_results(
     campaign_id: str, org_id: str, client_id: str, graph, config: dict
 ):
     """Save agent outputs to the database after pipeline completes."""
-    from agency.models.database import get_session_factory
-
     try:
         state = graph.get_state(config)
         if not state or not state.values:
@@ -268,6 +295,31 @@ async def _persist_campaign_results(
                 workflow.status = "completed"
                 workflow.completed_at = datetime.now(timezone.utc)
 
+            try:
+                from agency.services.brand_learning import update_brand_learnings
+
+                content_summary = {
+                    "topics_covered": [
+                        p.get("title", "") for p in values.get("content_pieces", [])
+                    ],
+                    "platforms_used": list(
+                        {p.get("platform", "") for p in values.get("content_pieces", [])}
+                    ),
+                    "ad_platforms": list(
+                        {a.get("platform", "") for a in values.get("ad_variants", [])}
+                    ),
+                }
+                if values.get("seo_keywords"):
+                    content_summary["best_performing_topics"] = [
+                        kw.get("keyword", "")
+                        for kw in values.get("seo_keywords", [])[:5]
+                    ]
+                await update_brand_learnings(
+                    db, UUID(client_id), content_summary
+                )
+            except Exception:
+                pass  # Brand learning is non-critical
+
             await db.commit()
     except Exception:
         pass  # Log error in production
@@ -276,9 +328,68 @@ async def _persist_campaign_results(
 @router.get("/{campaign_id}/stream")
 async def stream_campaign(
     campaign_id: str,
-    user=Depends(get_current_user),
+    token: str = QueryParam(default=""),
 ):
-    """SSE endpoint — streams agent progress events in real time."""
+    """SSE endpoint — streams agent progress events in real time.
+
+    Accepts JWT via ``token`` query param because EventSource cannot send
+    Authorization headers.
+    """
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token required",
+        )
+
+    settings = get_settings()
+    user = None
+
+    if settings.clerk_jwks_url and settings.clerk_secret_key:
+        try:
+            clerk_payload = await _verify_clerk_jwt(token, settings.clerk_jwks_url)
+            user = await _resolve_clerk_user(clerk_payload, settings)
+        except Exception:
+            pass
+
+    if not user:
+        try:
+            user = jose_jwt.decode(
+                token,
+                settings.jwt_secret,
+                algorithms=[settings.jwt_algorithm],
+            )
+        except JWTError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+            )
+
+    org_raw = user.get("org_id")
+    if not org_raw:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required",
+        )
+    try:
+        cid = UUID(campaign_id)
+        oid = UUID(str(org_raw))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid campaign id",
+        )
+
+    factory = get_session_factory()
+    async with factory() as auth_db:
+        result = await auth_db.execute(
+            select(Campaign).where(Campaign.id == cid, Campaign.org_id == oid)
+        )
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found",
+            )
+
     queue = _campaign_streams.get(campaign_id)
 
     async def event_generator():
@@ -307,8 +418,8 @@ async def stream_campaign(
 @router.get("", response_model=CampaignListResponse)
 async def list_campaigns(
     client_id: UUID | None = None,
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    page: int = QueryParam(1, ge=1),
+    per_page: int = QueryParam(20, ge=1, le=100),
     user=Depends(get_current_user),
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
@@ -371,6 +482,13 @@ async def submit_human_review(
     """Submit human review for a paused campaign pipeline.
     Body: {"decision": "approved|revise_content|revise_ads", "feedback": "optional text"}
     """
+    result = await db.execute(
+        select(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
+    )
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Campaign not found")
+
     graph = get_compiled_graph()
     config = {"configurable": {"thread_id": str(campaign_id)}}
 
@@ -387,26 +505,76 @@ async def submit_human_review(
     if campaign_id_str not in _campaign_streams:
         _campaign_streams[campaign_id_str] = asyncio.Queue()
 
-    asyncio.create_task(_resume_pipeline(graph, config, campaign_id_str))
+    asyncio.create_task(
+        _resume_pipeline(
+            graph,
+            config,
+            campaign_id_str,
+            str(org_id),
+            str(campaign.client_id),
+        )
+    )
 
     return {"status": "review_submitted", "decision": decision.get("decision")}
 
 
-async def _resume_pipeline(graph, config: dict, campaign_id: str):
+async def _resume_pipeline(
+    graph,
+    config: dict,
+    campaign_id: str,
+    org_id: str,
+    client_id: str,
+):
     """Resume pipeline after human review."""
     queue = _campaign_streams.get(campaign_id)
     if not queue:
         return
 
+    agent_order = [
+        "orchestrate", "strategise", "seo_research",
+        "create_content", "write_ads", "human_review",
+        "qa_check", "compile_output",
+    ]
+
     try:
         async for event in graph.astream(None, config=config, stream_mode="updates"):
             for node_name, node_output in event.items():
+                if node_name == "__interrupt__":
+                    await queue.put(AgentStreamEvent(
+                        type="waiting_human",
+                        agent="human_review",
+                        content="Awaiting human review.",
+                    ).model_dump_json())
+                    continue
+
+                current_idx = agent_order.index(node_name) if node_name in agent_order else 0
+                progress = int((current_idx + 1) / len(agent_order) * 100)
+
                 await queue.put(AgentStreamEvent(
                     type="step_complete",
                     agent=node_name,
                     content=f"Agent '{node_name}' completed after review.",
-                    progress=90,
+                    progress=progress,
                 ).model_dump_json())
+
+                try:
+                    factory = get_session_factory()
+                    async with factory() as tracking_db:
+                        agent_run = AgentRun(
+                            campaign_id=UUID(campaign_id),
+                            org_id=UUID(org_id),
+                            agent_name=node_name,
+                            status="completed",
+                            output=(
+                                json.dumps(node_output)
+                                if isinstance(node_output, dict)
+                                else str(node_output)
+                            ),
+                        )
+                        tracking_db.add(agent_run)
+                        await tracking_db.commit()
+                except Exception:
+                    pass
 
         await queue.put(AgentStreamEvent(
             type="complete",
@@ -414,6 +582,8 @@ async def _resume_pipeline(graph, config: dict, campaign_id: str):
             content="Campaign completed after human review.",
             progress=100,
         ).model_dump_json())
+
+        await _persist_campaign_results(campaign_id, org_id, client_id, graph, config)
 
     except Exception as e:
         await queue.put(AgentStreamEvent(

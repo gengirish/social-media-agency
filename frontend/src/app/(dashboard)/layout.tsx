@@ -65,7 +65,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       <div className="border-t border-slate-100 p-3">
         <div className="flex items-center gap-3 px-3 py-2">
-          <UserButton afterSignOutUrl="/" />
+          <UserButton />
           <span className="text-sm text-slate-600">Account</span>
         </div>
       </div>
@@ -89,7 +89,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Menu className="h-6 w-6 text-slate-600" />
           </button>
           <div className="flex-1" />
-          <UserButton afterSignOutUrl="/" />
+          <UserButton />
         </header>
 
         <main className="p-4 sm:p-6 lg:p-8">{children}</main>

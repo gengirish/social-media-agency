@@ -43,7 +43,6 @@ jobs:
       - name: Type check with mypy
         working-directory: backend
         run: mypy src/agency/ --ignore-missing-imports
-        continue-on-error: true
 
       - name: Run tests
         working-directory: backend
@@ -51,7 +50,6 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/campaignforge_test
           JWT_SECRET: test-secret
         run: pytest tests/ -v --tb=short
-        continue-on-error: true
 
   frontend:
     name: Frontend Checks
@@ -70,7 +68,6 @@ jobs:
       - name: Lint
         working-directory: frontend
         run: npm run lint
-        continue-on-error: true
 
       - name: Build
         working-directory: frontend

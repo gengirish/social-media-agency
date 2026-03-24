@@ -31,8 +31,15 @@ async def update_brand_learnings(
     if "engagement_multipliers" in analytics_data:
         learned["engagement_multipliers"] = analytics_data["engagement_multipliers"]
 
-    # Optional passthrough for richer agent output
-    for key in ("topic_engagement_index", "platform_benchmarks", "last_updated_at"):
+    # Optional passthrough for richer agent output (incl. campaign completion summary)
+    for key in (
+        "topic_engagement_index",
+        "platform_benchmarks",
+        "last_updated_at",
+        "topics_covered",
+        "platforms_used",
+        "ad_platforms",
+    ):
         if key in analytics_data:
             learned[key] = analytics_data[key]
 

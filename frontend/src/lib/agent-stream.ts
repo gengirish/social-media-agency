@@ -4,11 +4,11 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
 export function connectAgentStream(
   campaignId: string,
+  token: string,
   onEvent: (event: AgentStreamEvent) => void,
   onError?: (error: Event) => void
 ): () => void {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
-  const url = `${API_BASE}/api/v1/campaigns/${campaignId}/stream?token=${token}`;
+  const url = `${API_BASE}/api/v1/campaigns/${campaignId}/stream?token=${encodeURIComponent(token)}`;
 
   const source = new EventSource(url);
 

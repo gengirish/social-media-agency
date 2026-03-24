@@ -67,11 +67,15 @@ def compile_output_node(state: CampaignState) -> dict:
 
 
 def human_review_node(state: CampaignState) -> dict:
-    """Placeholder node for human-in-the-loop. Execution pauses here via interrupt_before."""
+    """Human-in-the-loop step; graph pauses before this node via interrupt_before.
+
+    On resume, state carries the review decision. If still pending (fallback),
+    auto-approve so routing can proceed.
+    """
     review = state.get("human_review", "pending")
     if review == "pending":
-        return {"human_review": "approved"}
-    return {}
+        return {"human_review": "approved", "current_agent": "human_review"}
+    return {"current_agent": "human_review"}
 
 
 def build_campaign_graph() -> StateGraph:
