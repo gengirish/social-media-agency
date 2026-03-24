@@ -163,8 +163,23 @@ We keep all important docs in `./docs` folder and keep updating them, structure 
 ├── analytics-setup.md
 ├── usage-guide.md
 ├── reviewer-agents-update.md
-└── agent-organization-update.md
+├── agent-organization-update.md
+└── features/                    # Living feature docs (auto-updated with code)
+    ├── README.md                # Feature index & stats
+    ├── api-endpoints.md
+    ├── database-schema.md
+    ├── services.md
+    ├── workers.md
+    ├── integrations.md
+    ├── websocket.md
+    ├── frontend-pages.md
+    ├── frontend-components.md
+    ├── auth-and-rbac.md
+    ├── billing.md
+    └── changelog.md
 ```
+
+**IMPORTANT**: After code changes that add/modify/remove features, run the `feature-docs` skill to keep `docs/features/` in sync.
 
 ## Command Categories
 
