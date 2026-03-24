@@ -11,7 +11,7 @@ test.describe("Clients", () => {
     const brand = `E2E Client ${Date.now()}`;
 
     await page.goto("/clients");
-    await expect(page.getByRole("heading", { name: /^clients$/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^clients$/i })).toBeVisible({ timeout: 15000 });
 
     await page.getByRole("button", { name: /add client/i }).click();
     await expect(page.getByRole("heading", { name: /^new client$/i })).toBeVisible();

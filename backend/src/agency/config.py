@@ -14,10 +14,14 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379"
 
-    # Auth
+    # Auth (legacy JWT)
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
+
+    # Clerk
+    clerk_secret_key: str = ""
+    clerk_jwks_url: str = ""
 
     # LLM Providers
     google_api_key: str = ""

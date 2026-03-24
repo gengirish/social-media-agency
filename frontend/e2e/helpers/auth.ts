@@ -9,7 +9,22 @@ export function isClerkConfigured(): boolean {
   return !!sk && !sk.startsWith("sk_test_xxxxx");
 }
 
-/** Authenticate the page via Clerk testing token (bypasses UI sign-in). */
+/** Authenticate the page via Clerk sign-in form. */
 export async function clerkAuth(page: Page) {
   await setupClerkTestingToken({ page });
+
+  await page.goto("/sign-in");
+
+  const emailInput = page.getByLabel("Email address");
+  await emailInput.waitFor({ state: "visible", timeout: 15000 });
+  await emailInput.fill(process.env.E2E_CLERK_USER_EMAIL!);
+
+  const passwordInput = page.getByLabel("Password");
+  await passwordInput.fill(process.env.E2E_CLERK_USER_PASSWORD!);
+
+  await page.getByRole("button", { name: /continue/i }).click();
+
+  await page.waitForURL((url) => !url.pathname.includes("/sign-in"), {
+    timeout: 15000,
+  });
 }
