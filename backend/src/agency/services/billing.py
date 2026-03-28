@@ -12,24 +12,28 @@ from agency.models.tables import Organization, Subscription
 
 logger = structlog.get_logger()
 
+_s = get_settings()
 PLAN_CONFIG = {
     "free": {
         "price_id": "",
         "clients_limit": 1,
         "posts_limit": 30,
+        "campaigns_limit": 5,
         "features": ["1 client", "5 campaigns/mo", "No publishing"],
     },
     "starter": {
-        "price_id": "price_starter",
+        "price_id": _s.stripe_price_starter or "price_starter",
         "clients_limit": 3,
         "posts_limit": 200,
+        "campaigns_limit": 20,
         "amount": 4900,
         "features": ["3 clients", "20 campaigns/mo", "2 platforms", "Email reports"],
     },
     "growth": {
-        "price_id": "price_growth",
+        "price_id": _s.stripe_price_growth or "price_growth",
         "clients_limit": 10,
         "posts_limit": 1000,
+        "campaigns_limit": 9999,
         "amount": 14900,
         "features": [
             "10 clients",
@@ -40,9 +44,10 @@ PLAN_CONFIG = {
         ],
     },
     "agency": {
-        "price_id": "price_agency",
+        "price_id": _s.stripe_price_agency or "price_agency",
         "clients_limit": 999,
         "posts_limit": 99999,
+        "campaigns_limit": 9999,
         "amount": 39900,
         "features": [
             "Unlimited clients",

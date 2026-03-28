@@ -31,6 +31,7 @@ class CampaignState(TypedDict, total=False):
     org_id: str
     channels: list[str]
     budget_usd: float
+    target_languages: list[str]
     brand_context: BrandContext
 
     # --- Agent outputs (filled progressively) ---

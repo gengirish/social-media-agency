@@ -12,6 +12,7 @@ Architecture:
 from langgraph.graph import END, START, StateGraph
 
 from agency.agents.ad_copy import ad_copy_node
+from agency.agents.analytics import analytics_node
 from agency.agents.content_writer import content_writer_node
 from agency.agents.orchestrator import orchestrator_node
 from agency.agents.qa_brand import qa_brand_node
@@ -92,6 +93,7 @@ def build_campaign_graph() -> StateGraph:
     graph.add_node("human_review", human_review_node)
     graph.add_node("qa_check", qa_brand_node)
     graph.add_node("compile_output", compile_output_node)
+    graph.add_node("analytics", analytics_node)
 
     # --- Define edges ---
 
@@ -126,8 +128,9 @@ def build_campaign_graph() -> StateGraph:
         "write_ads": "write_ads",
     })
 
-    # Final output
-    graph.add_edge("compile_output", END)
+    # Final output: compile then analytics insights
+    graph.add_edge("compile_output", "analytics")
+    graph.add_edge("analytics", END)
 
     return graph
 

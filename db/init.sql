@@ -259,3 +259,18 @@ CREATE INDEX IF NOT EXISTS idx_campaign_template_org ON campaign_template(org_id
 CREATE INDEX IF NOT EXISTS idx_campaign_template_public ON campaign_template(is_public);
 CREATE INDEX IF NOT EXISTS idx_api_key_org ON api_key(org_id);
 CREATE INDEX IF NOT EXISTS idx_api_key_prefix ON api_key(key_prefix);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    action VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(100),
+    resource_id VARCHAR(255),
+    details JSONB DEFAULT '{}',
+    ip_address VARCHAR(45),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_org ON audit_log(org_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_org_created ON audit_log(org_id, created_at DESC);

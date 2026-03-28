@@ -1,5 +1,5 @@
 # Services
-<!-- verified: 260324 -->
+<!-- verified: 260328 -->
 
 Business logic layer in `backend/src/agency/services/`.
 
@@ -47,7 +47,8 @@ Stripe subscription management. Singleton: `billing = BillingService()`.
 
 Platform publishing. Singleton: `publisher = PlatformPublisher()`.
 
-- `publish(platform, content, credentials)` — Routes to platform-specific handler
+- `publish(platform, content, credentials)` — Routes to platform-specific handler; HTTP layer uses `_with_http_retries` (up to 3 attempts with backoff on transient `httpx` errors)
+- `_decrypt_token(encrypted)` — Token decryption stub (passthrough until Fernet/production wiring)
 - `_publish_twitter(content, credentials)` — X/Twitter API v2
 - `_publish_linkedin(content, credentials)` — LinkedIn UGC API
 - `_publish_facebook(content, credentials)` — Facebook Graph API
@@ -94,7 +95,7 @@ Called automatically after campaign completion in `_persist_campaign_results`. S
 - `create_api_key(db, org_id, name, permissions)` — Create key; returns plaintext once
 - `list_api_keys(db, org_id)` — Metadata only (no secrets)
 - `revoke_api_key(db, org_id, key_id)` — Soft deactivation
-- `validate_api_key(db, raw_key)` — Hash-based lookup (not yet wired to middleware)
+- `validate_api_key(db, raw_key)` — Hash-based lookup; used by API key auth middleware for programmatic access
 
 ## White Label
 **Status**: [LIVE]
@@ -102,3 +103,75 @@ Called automatically after campaign completion in `_persist_campaign_results`. S
 
 - `get_white_label(db, org_id)` — Get branding config
 - `upsert_white_label(db, org_id, data)` — Create or update
+
+## Reporting
+**Status**: [LIVE]
+**File**: `services/reporting.py`
+
+- `generate_report_data(db, client_id, org_id, period)` — Client report data
+
+## Notifications
+**Status**: [LIVE]
+**File**: `services/notifications.py`
+
+- `create_notification()` — In-app notification creation
+
+## Trends
+**Status**: [LIVE]
+**File**: `services/trends.py`
+
+- `get_trending_topics(platform)` — Platform trending topics
+
+## Analytics Fetcher
+**Status**: [LIVE]
+**File**: `services/analytics_fetcher.py`
+
+- `fetch_content_metrics()`, `get_content_analytics()`, `get_client_analytics_summary()`
+
+## Cross Learning
+**Status**: [LIVE]
+**File**: `services/cross_learning.py`
+
+- `get_industry_benchmarks()`, `get_cross_campaign_insights()`
+
+## Knowledge Base
+**Status**: [LIVE]
+**File**: `services/knowledge_base.py`
+
+RAG knowledge retrieval from marketing skills library.
+
+## Image Generation
+**Status**: [LIVE]
+**File**: `services/image_generation.py`
+
+- `generate_social_image()` — via fal.ai
+
+## Slack Integration
+**Status**: [LIVE]
+**File**: `services/slack_integration.py`
+
+Slack messaging.
+
+## Webhook Dispatcher
+**Status**: [LIVE]
+**File**: `services/webhook_dispatcher.py`
+
+Event webhook dispatch.
+
+## Client Acquisition
+**Status**: [LIVE]
+**File**: `services/client_acquisition.py`
+
+Prospect outreach generation.
+
+## Ad Optimization
+**Status**: [LIVE]
+**File**: `services/ad_optimization.py`
+
+Bid optimization analysis (LLM-assisted).
+
+## Audit
+**Status**: [LIVE]
+**File**: `services/audit.py`
+
+- `log_action()` — Audit trail logging

@@ -4,19 +4,32 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agency.config import get_settings
+from agency.middleware.api_key_auth import ApiKeyAuthMiddleware
 from agency.middleware.tenant import TenantMiddleware
 from agency.routers import (
+    acquisition,
+    audit,
     auth,
     billing,
+    brand_analytics,
     campaigns,
     clients,
+    comments,
+    competitive,
     content,
     health,
     integrations,
     magic_brief,
+    notifications,
+    oauth,
+    portal,
+    public_api,
     publishing,
+    reports,
+    slack,
     stats,
     team,
+    webhooks_config,
 )
 
 
@@ -45,8 +58,9 @@ def create_app() -> FastAPI:
         allow_origins=origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key"],
     )
+    app.add_middleware(ApiKeyAuthMiddleware)
     app.add_middleware(TenantMiddleware)
 
     for router in [
@@ -54,13 +68,25 @@ def create_app() -> FastAPI:
         auth,
         clients,
         campaigns,
+        acquisition,
+        audit,
         content,
+        comments,
+        notifications,
         stats,
         billing,
         publishing,
+        reports,
         team,
         magic_brief,
         integrations,
+        webhooks_config,
+        slack,
+        portal,
+        public_api,
+        oauth,
+        brand_analytics,
+        competitive,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

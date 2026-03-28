@@ -1,7 +1,7 @@
 # Database Schema
-<!-- verified: 260324 -->
+<!-- verified: 260328 -->
 
-PostgreSQL (Neon serverless) via SQLAlchemy async. 15 tables total.
+PostgreSQL (Neon serverless) via SQLAlchemy async. 17 tables total.
 
 **File**: `backend/src/agency/models/tables.py`
 
@@ -170,7 +170,7 @@ Per-content per-platform metrics. Fields: date, impressions, reach, engagement, 
 Review comments on content pieces. Fields: content_id, user_id, body text.
 
 ### WhiteLabel [LIVE]
-Org white-label branding config. One per org. Fields: branding strings/text/bool.
+Org white-label branding config. One per org. Fields: branding strings/text/bool. Also `portal_enabled` (boolean) and `email_from_name` for client portal and outbound labeling.
 
 ### CampaignTemplate [LIVE]
 Reusable campaign templates (public + org-specific). Fields: name, category, objective_template, channels, content_directives JSONB, is_public, uses_count.
@@ -178,11 +178,19 @@ Reusable campaign templates (public + org-specific). Fields: name, category, obj
 ### ApiKey [LIVE]
 Org API keys with hashed storage. Fields: name, key_hash, key_prefix, permissions text[], is_active, last_used_at.
 
+### Notification [LIVE]
+In-app notification system. Fields: `user_id`, `org_id`, `type`, `title`, `body`, `data` JSONB, `read` (boolean), `created_at`.
+
+### AuditLog [LIVE]
+Enterprise audit trail. Fields: `org_id`, `user_id`, `action`, `resource_type`, `resource_id`, `details` JSONB, `ip_address`, `created_at`.
+
 ## Entity Relationships
 
 ```
 Organization ──┬── User (many)
                ├── Subscription (one)
+               ├── Notification (many)
+               ├── AuditLog (many)
                ├── Client (many) ──┬── BrandProfile (one)
                │                   ├── Campaign (many) ──┬── ContentPiece (many)
                │                   │                     ├── AgentRun (many)

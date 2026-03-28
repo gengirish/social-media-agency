@@ -9,6 +9,7 @@ import json
 from langchain_core.messages import SystemMessage
 
 from agency.agents.state import CampaignState
+from agency.services.knowledge_base import retrieve_knowledge
 from agency.services.llm_provider import get_worker_llm
 
 SYSTEM_PROMPT = """You are the Strategy Agent of CampaignForge, a digital marketing agency AI.
@@ -59,11 +60,21 @@ async def strategy_node(state: CampaignState) -> dict:
     brand_str = "\n".join(f"- {k}: {v}" for k, v in brand_ctx.items() if v)
     plan_str = json.dumps(plan, indent=2) if isinstance(plan, dict) else str(plan)
 
+    brief_for_kb = state.get("client_brief", "") or ""
+    knowledge = await retrieve_knowledge(brief_for_kb, k=2)
+    knowledge_context = ""
+    if knowledge:
+        knowledge_context = "\n\nRelevant marketing knowledge:\n" + "\n".join(
+            f"- {k['title']}: {k['content'][:200]}" for k in knowledge
+        )
+
+    system_content = SYSTEM_PROMPT.format(
+        brand_context=brand_str,
+        execution_plan=plan_str,
+    ) + knowledge_context
+
     messages = [
-        SystemMessage(content=SYSTEM_PROMPT.format(
-            brand_context=brand_str,
-            execution_plan=plan_str,
-        )),
+        SystemMessage(content=system_content),
         ("human", f"Create the campaign strategy.\nBrief: {state.get('client_brief', '')}"),
     ]
 

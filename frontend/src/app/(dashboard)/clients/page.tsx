@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api, type Client } from "@/lib/api";
 import { toast } from "sonner";
 import { Plus, Users, Loader2, Globe, Mail, Building2 } from "lucide-react";
@@ -101,8 +102,13 @@ export default function ClientsPage() {
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50">
                   <Building2 className="h-5 w-5 text-indigo-600" />
                 </div>
-                <div>
-                  <h3 className="font-semibold text-slate-900">{client.brand_name}</h3>
+                <div className="min-w-0 flex-1">
+                  <Link
+                    href={`/clients/${client.id}`}
+                    className="font-semibold text-slate-900 hover:text-indigo-600"
+                  >
+                    {client.brand_name}
+                  </Link>
                   <p className="text-sm text-slate-500">{client.industry}</p>
                 </div>
               </div>

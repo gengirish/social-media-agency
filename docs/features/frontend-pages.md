@@ -1,5 +1,5 @@
 # Frontend Pages
-<!-- verified: 260324 -->
+<!-- verified: 260328 -->
 
 Next.js 14 App Router. All dashboard routes protected by Clerk middleware.
 
@@ -55,31 +55,33 @@ Two tabs:
 **File**: `src/app/(dashboard)/clients/page.tsx` | **Client**
 Client list + inline "Add Client" form. `api.getClients()` / `api.createClient()`.
 
+### Client Detail `/clients/[id]`
+**File**: `src/app/(dashboard)/clients/[id]/page.tsx` | **Client**
+Brand intelligence dashboard: KPIs, platform breakdown, brand voice, top content.
+
 ### Content `/content`
 **File**: `src/app/(dashboard)/content/page.tsx` | **Client**
-Content library with status filter. Approve drafts inline.
+Content library with status filter. **Publish Now** and **Repurpose** actions. Approve drafts inline. **Suggestions** tab for recycling top performers.
 
 ### Calendar `/calendar`
 **File**: `src/app/(dashboard)/calendar/page.tsx` | **Client**
-Month grid via `date-fns`. Shows scheduled/published content. Modal detail view.
+Month grid via `date-fns`. **Drag-and-drop** rescheduling (HTML5 DnD), **week view** toggle, **platform color coding**. Shows scheduled/published content. Modal detail view.
 
 ### Analytics `/analytics`
 **File**: `src/app/(dashboard)/analytics/page.tsx` | **Client**
-Real analytics dashboard:
-- 4 KPI cards (clients, campaigns, content pieces, agent runs)
-- Content pipeline: draft vs approved/published bar
-- Campaign status: running vs completed grid
-- Campaign activity distribution bar
-- Agent run metrics (total, avg per campaign, draft %)
-- Platform insights placeholder
+Real analytics dashboard with **tabs**: **Overview**, **Trends**, **Benchmarks**. Overview includes KPI cards, content pipeline, campaign status, agent metrics, platform insights.
 
 ### Settings `/settings`
 **File**: `src/app/(dashboard)/settings/page.tsx` | **Client**
-Tabbed UI:
-- **General**: Org name, timezone, save button
+Tabbed UI wired to the **backend API** for org **settings**, **API keys**, and **platform accounts**:
+- **General**: Org name, domain/settings from API, save
 - **Platforms**: Connection status for X, LinkedIn, Instagram, Facebook
 - **API Keys**: Create/delete keys with prefix display
 - **Notifications**: Toggle preferences (campaign complete, review ready, publish success, weekly digest)
+
+### Templates `/templates`
+**File**: `src/app/(dashboard)/templates/page.tsx` | **Client**
+Campaign template marketplace. Category filter, template cards, **Use Template** launch flow.
 
 ### Pricing `/pricing`
 **File**: `src/app/(dashboard)/pricing/page.tsx` | **Client**
@@ -89,4 +91,4 @@ Tabbed UI:
 **File**: `src/app/(dashboard)/team/page.tsx` | **Client**
 Member list with role badges. Invite form (email + role).
 
-**Total: 15 page files, 14 distinct URL patterns**
+**Total: 17 page files** (including dashboard, auth, campaigns, clients detail, templates, and nested routes)

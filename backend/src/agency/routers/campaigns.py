@@ -33,8 +33,10 @@ from agency.models.tables import (
     Campaign,
     Client,
     ContentPiece,
+    Subscription,
     Workflow,
 )
+from agency.services.billing import PLAN_CONFIG
 
 router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
 
@@ -59,6 +61,30 @@ async def create_campaign(
     client = result.scalar_one_or_none()
     if not client:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
+
+    # Quota check
+    result_sub = await db.execute(
+        select(Subscription).where(Subscription.org_id == org_id)
+    )
+    sub = result_sub.scalar_one_or_none()
+    plan_tier = sub.plan_tier if sub else "free"
+    plan = PLAN_CONFIG.get(plan_tier, PLAN_CONFIG["free"])
+    campaigns_limit = plan.get("campaigns_limit", 5)
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    result_count = await db.execute(
+        select(func.count(Campaign.id)).where(
+            Campaign.org_id == org_id,
+            Campaign.created_at >= month_start,
+        )
+    )
+    campaign_count = result_count.scalar() or 0
+    if campaign_count >= campaigns_limit:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            f"Campaign limit reached ({campaigns_limit}/mo). Upgrade your plan.",
+        )
 
     # Create campaign record
     campaign = Campaign(
@@ -112,7 +138,8 @@ Key Messages: {', '.join(brief.key_messages) if brief.key_messages else 'Not spe
 Channels: {', '.join(brief.channels)}
 Budget: ${brief.budget_usd}
 Duration: {brief.start_date} to {brief.end_date}
-Additional Context: {brief.additional_context}"""
+Additional Context: {brief.additional_context}
+Languages: {', '.join(brief.languages) if brief.languages else 'Default (brief language)'}"""
 
     # Initialize SSE stream
     campaign_id_str = str(campaign.id)
@@ -128,6 +155,7 @@ Additional Context: {brief.additional_context}"""
             brand_ctx=brand_ctx,
             channels=brief.channels,
             budget_usd=brief.budget_usd,
+            target_languages=brief.languages,
         )
     )
 
@@ -142,6 +170,7 @@ async def _run_campaign_pipeline(
     brand_ctx: BrandContext,
     channels: list[str],
     budget_usd: float,
+    target_languages: list[str] | None = None,
 ):
     """Execute the LangGraph campaign pipeline and emit SSE events."""
     queue = _campaign_streams.get(campaign_id)
@@ -155,6 +184,7 @@ async def _run_campaign_pipeline(
         "org_id": org_id,
         "channels": channels,
         "budget_usd": budget_usd,
+        "target_languages": list(target_languages or []),
         "brand_context": brand_ctx,
         "status": "running",
         "errors": [],
@@ -168,7 +198,7 @@ async def _run_campaign_pipeline(
     agent_order = [
         "orchestrate", "strategise", "seo_research",
         "create_content", "write_ads", "human_review",
-        "qa_check", "compile_output",
+        "qa_check", "compile_output", "analytics",
     ]
 
     try:
@@ -439,6 +469,76 @@ async def list_campaigns(
     return CampaignListResponse(items=campaigns, total=total, page=page, per_page=per_page)
 
 
+@router.get("/trends")
+async def get_trends(
+    platform: str | None = None,
+    user=Depends(get_current_user),
+):
+    """Get trending topics for campaign inspiration."""
+    from agency.services.trends import get_trending_topics
+
+    trends = await get_trending_topics(platform)
+    return {"items": trends}
+
+
+@router.post("/autonomous")
+async def create_autonomous_campaign(
+    body: dict,
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """Create an autonomous campaign that runs on weekly cycles."""
+    goal = body.get("goal", "")
+    client_id = body.get("client_id")
+    if not client_id or not goal:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "client_id and goal required"
+        )
+
+    result = await db.execute(
+        select(Client)
+        .where(Client.id == UUID(str(client_id)), Client.org_id == org_id)
+        .options(selectinload(Client.brand_profile))
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
+
+    brand_context = {
+        "brand_name": client.brand_name,
+        "industry": client.industry or "",
+    }
+
+    from agency.agents.autonomous_operator import plan_autonomous_cycle
+
+    plan = await plan_autonomous_cycle(goal, brand_context)
+
+    today = datetime.now(timezone.utc).date()
+    campaign = Campaign(
+        client_id=UUID(str(client_id)),
+        org_id=org_id,
+        name=f"Autonomous: {goal[:50]}",
+        objective=goal,
+        channels=["twitter", "linkedin", "instagram"],
+        start_date=today,
+        end_date=today,
+        budget={},
+        status="autonomous",
+        agent_plan=plan,
+    )
+    db.add(campaign)
+    await db.commit()
+    await db.refresh(campaign)
+
+    return {
+        "id": str(campaign.id),
+        "name": campaign.name,
+        "status": "autonomous",
+        "plan": plan,
+    }
+
+
 @router.get("/{campaign_id}", response_model=CampaignResponse)
 async def get_campaign(
     campaign_id: UUID,
@@ -533,7 +633,7 @@ async def _resume_pipeline(
     agent_order = [
         "orchestrate", "strategise", "seo_research",
         "create_content", "write_ads", "human_review",
-        "qa_check", "compile_output",
+        "qa_check", "compile_output", "analytics",
     ]
 
     try:

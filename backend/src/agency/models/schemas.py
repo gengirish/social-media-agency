@@ -135,6 +135,7 @@ class CampaignBrief(BaseModel):
     start_date: date
     end_date: date
     additional_context: str = ""
+    languages: list[str] = Field(default_factory=list)
 
 
 class CampaignResponse(BaseModel):

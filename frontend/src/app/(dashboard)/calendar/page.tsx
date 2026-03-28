@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
 import {
   addMonths,
+  addWeeks,
   eachDayOfInterval,
   endOfMonth,
   endOfWeek,
@@ -14,6 +15,7 @@ import {
   startOfMonth,
   startOfWeek,
   subMonths,
+  subWeeks,
 } from "date-fns";
 import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -22,49 +24,87 @@ import { api, type CalendarEntry } from "@/lib/api";
 
 function platformPillClass(platform: string) {
   const p = platform.toLowerCase();
-  if (p === "linkedin") return "bg-indigo-100 text-indigo-800 border-indigo-200 hover:bg-indigo-200/80";
-  if (p === "twitter") return "bg-sky-100 text-sky-800 border-sky-200 hover:bg-sky-200/80";
-  if (p === "instagram") return "bg-pink-100 text-pink-800 border-pink-200 hover:bg-pink-200/80";
-  if (p === "facebook") return "bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-200/80";
-  return "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200/80";
+  if (p === "linkedin") return "bg-indigo-100 text-indigo-800 border-l-4 border-l-indigo-500 border-indigo-200 hover:bg-indigo-200/80";
+  if (p === "twitter" || p === "x")
+    return "bg-sky-100 text-sky-800 border-l-4 border-l-sky-500 border-sky-200 hover:bg-sky-200/80";
+  if (p === "instagram") return "bg-pink-100 text-pink-800 border-l-4 border-l-pink-500 border-pink-200 hover:bg-pink-200/80";
+  if (p === "facebook" || p === "meta")
+    return "bg-blue-100 text-blue-800 border-l-4 border-l-blue-600 border-blue-200 hover:bg-blue-200/80";
+  if (p === "tiktok") return "bg-slate-100 text-slate-800 border-l-4 border-l-slate-600 border-slate-200 hover:bg-slate-200/80";
+  return "bg-slate-100 text-slate-700 border-l-4 border-l-slate-400 border-slate-200 hover:bg-slate-200/80";
 }
+
+const PLATFORM_LEGEND: { key: string; label: string }[] = [
+  { key: "linkedin", label: "LinkedIn" },
+  { key: "twitter", label: "X / Twitter" },
+  { key: "instagram", label: "Instagram" },
+  { key: "facebook", label: "Facebook" },
+  { key: "tiktok", label: "TikTok" },
+  { key: "other", label: "Other" },
+];
+
+const CAL_DRAG_TYPE = "application/x-campaignforge-content";
 
 function dayKey(d: Date) {
   return format(d, "yyyy-MM-dd");
 }
 
+type CalendarView = "month" | "week";
+
 export default function CalendarPage() {
+  const [view, setView] = useState<CalendarView>("month");
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 0 }));
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<CalendarEntry | null>(null);
 
-  const loadRange = useCallback(async (month: Date) => {
-    const start = startOfWeek(startOfMonth(month), { weekStartsOn: 0 });
-    const end = endOfWeek(endOfMonth(month), { weekStartsOn: 0 });
-    const startStr = format(start, "yyyy-MM-dd");
-    const endStr = format(end, "yyyy-MM-dd");
-    setLoading(true);
-    try {
-      const { items } = await api.getCalendar(startStr, endStr);
-      setEntries(items);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to load calendar");
-      setEntries([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const loadRange = useCallback(
+    async (opts: { mode: CalendarView; month: Date; weekAnchor: Date }) => {
+      let start: Date;
+      let end: Date;
+      if (opts.mode === "month") {
+        const monthStart = startOfMonth(opts.month);
+        const monthEnd = endOfMonth(opts.month);
+        start = startOfWeek(monthStart, { weekStartsOn: 0 });
+        end = endOfWeek(monthEnd, { weekStartsOn: 0 });
+      } else {
+        start = startOfWeek(opts.weekAnchor, { weekStartsOn: 0 });
+        end = endOfWeek(opts.weekAnchor, { weekStartsOn: 0 });
+      }
+      const startStr = format(start, "yyyy-MM-dd");
+      const endStr = format(end, "yyyy-MM-dd");
+      setLoading(true);
+      try {
+        const { items } = await api.getCalendar(startStr, endStr);
+        setEntries(items);
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : "Failed to load calendar");
+        setEntries([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
-    loadRange(currentMonth);
-  }, [currentMonth, loadRange]);
+    loadRange({ mode: view, month: currentMonth, weekAnchor: weekStart });
+  }, [currentMonth, weekStart, view, loadRange]);
 
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
   const calStart = startOfWeek(monthStart, { weekStartsOn: 0 });
   const calEnd = endOfWeek(monthEnd, { weekStartsOn: 0 });
-  const gridDays = eachDayOfInterval({ start: calStart, end: calEnd });
+  const monthGridDays = eachDayOfInterval({ start: calStart, end: calEnd });
+  const weekGridStart = startOfWeek(weekStart, { weekStartsOn: 0 });
+  const weekGridEnd = endOfWeek(weekStart, { weekStartsOn: 0 });
+  const weekGridDays = eachDayOfInterval({ start: weekGridStart, end: weekGridEnd });
+  const gridDays = view === "month" ? monthGridDays : weekGridDays;
+  const headerLabel =
+    view === "month"
+      ? format(currentMonth, "MMMM yyyy")
+      : `${format(weekGridStart, "MMM d")} – ${format(weekGridEnd, "MMM d, yyyy")}`;
 
   const byDay = useMemo(() => {
     const map = new Map<string, CalendarEntry[]>();
@@ -82,33 +122,130 @@ export default function CalendarPage() {
 
   const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+  function buildRescheduledIso(targetDay: Date, entry: CalendarEntry): string {
+    let hours = 12;
+    let minutes = 0;
+    if (entry.scheduled_at) {
+      const prev = parseISO(entry.scheduled_at);
+      if (isValid(prev)) {
+        hours = prev.getHours();
+        minutes = prev.getMinutes();
+      }
+    }
+    const d = new Date(targetDay);
+    d.setHours(hours, minutes, 0, 0);
+    return d.toISOString();
+  }
+
+  const handleDragStart = (e: DragEvent, item: CalendarEntry) => {
+    e.dataTransfer.setData(CAL_DRAG_TYPE, JSON.stringify({ id: item.id, scheduled_at: item.scheduled_at }));
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOverDay = (e: DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDropOnDay = async (e: DragEvent, targetDay: Date) => {
+    e.preventDefault();
+    const raw = e.dataTransfer.getData(CAL_DRAG_TYPE);
+    if (!raw) return;
+    let payload: { id: string; scheduled_at: string | null };
+    try {
+      payload = JSON.parse(raw) as { id: string; scheduled_at: string | null };
+    } catch {
+      return;
+    }
+    const entry = entries.find((x) => x.id === payload.id);
+    const scheduledAt = buildRescheduledIso(
+      targetDay,
+      entry ?? { ...payload, title: "", platform: "", status: "" }
+    );
+    try {
+      await api.rescheduleContent(payload.id, scheduledAt);
+      toast.success("Rescheduled");
+      await loadRange({ mode: view, month: currentMonth, weekAnchor: weekStart });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Could not reschedule");
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Content Calendar</h1>
           <p className="mt-1 text-slate-500">Scheduled and published posts by day</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+            <span className="font-semibold text-slate-600">Platforms:</span>
+            {PLATFORM_LEGEND.map(({ key, label }) => (
+              <span
+                key={key}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-medium capitalize",
+                  platformPillClass(key)
+                )}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setCurrentMonth((m) => subMonths(m, 1))}
-            className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm hover:bg-slate-50"
-            aria-label="Previous month"
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </button>
-          <span className="min-w-[10rem] text-center text-sm font-semibold text-slate-900">
-            {format(currentMonth, "MMMM yyyy")}
-          </span>
-          <button
-            type="button"
-            onClick={() => setCurrentMonth((m) => addMonths(m, 1))}
-            className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm hover:bg-slate-50"
-            aria-label="Next month"
-          >
-            <ChevronRight className="h-5 w-5" />
-          </button>
+        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:flex-wrap sm:justify-end">
+          <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setView("month");
+                setCurrentMonth(startOfMonth(weekStart));
+              }}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+                view === "month" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              Month
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setView("week");
+                setWeekStart(startOfWeek(currentMonth, { weekStartsOn: 0 }));
+              }}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+                view === "week" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              Week
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (view === "month") setCurrentMonth((m) => subMonths(m, 1));
+                else setWeekStart((w) => subWeeks(w, 1));
+              }}
+              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm hover:bg-slate-50"
+              aria-label={view === "month" ? "Previous month" : "Previous week"}
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <span className="min-w-[12rem] text-center text-sm font-semibold text-slate-900">{headerLabel}</span>
+            <button
+              type="button"
+              onClick={() => {
+                if (view === "month") setCurrentMonth((m) => addMonths(m, 1));
+                else setWeekStart((w) => addWeeks(w, 1));
+              }}
+              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm hover:bg-slate-50"
+              aria-label={view === "month" ? "Next month" : "Next week"}
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -131,13 +268,16 @@ export default function CalendarPage() {
           {gridDays.map((day) => {
             const k = dayKey(day);
             const dayEntries = byDay.get(k) ?? [];
-            const inMonth = isSameMonth(day, currentMonth);
+            const inMonth = view === "week" || isSameMonth(day, currentMonth);
             return (
               <div
                 key={k}
+                onDragOver={handleDragOverDay}
+                onDrop={(e) => handleDropOnDay(e, day)}
                 className={cn(
-                  "min-h-[7.5rem] border-b border-r border-slate-100 p-1.5 last:border-r-0",
-                  !inMonth && "bg-slate-50/80"
+                  "min-h-[7.5rem] border-b border-r border-slate-100 p-1.5 transition-colors last:border-r-0",
+                  !inMonth && "bg-slate-50/80",
+                  "hover:bg-indigo-50/30"
                 )}
               >
                 <div
@@ -153,9 +293,11 @@ export default function CalendarPage() {
                     <button
                       key={item.id}
                       type="button"
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, item)}
                       onClick={() => setSelected(item)}
                       className={cn(
-                        "truncate rounded-md border px-1.5 py-0.5 text-left text-[10px] font-medium leading-tight transition-colors sm:text-xs",
+                        "cursor-grab truncate rounded-md border px-1.5 py-0.5 text-left text-[10px] font-medium leading-tight transition-colors active:cursor-grabbing sm:text-xs",
                         platformPillClass(item.platform)
                       )}
                     >

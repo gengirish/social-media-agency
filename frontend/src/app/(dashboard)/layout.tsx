@@ -15,8 +15,10 @@ import {
   Menu,
   Calendar,
   CreditCard,
+  LayoutTemplate,
 } from "lucide-react";
 import { useState } from "react";
+import { NotificationsBell } from "@/components/notifications-bell";
 
 const navItems = [
   { label: "Overview", href: "/campaigns", icon: LayoutDashboard },
@@ -89,7 +91,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Menu className="h-6 w-6 text-slate-600" />
           </button>
           <div className="flex-1" />
-          <UserButton />
+          <div className="flex items-center gap-2">
+            <NotificationsBell />
+            <UserButton />
+          </div>
         </header>
 
         <main className="p-4 sm:p-6 lg:p-8">{children}</main>

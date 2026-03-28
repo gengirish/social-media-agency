@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # Stripe
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    stripe_price_starter: str = ""
+    stripe_price_growth: str = ""
+    stripe_price_agency: str = ""
 
     # Storage
     s3_bucket_name: str = "campaignforge-media"
@@ -41,6 +44,24 @@ class Settings(BaseSettings):
     # AgentMail
     agentmail_api_key: str = ""
     agentmail_default_domain: str = ""
+
+    # OAuth
+    twitter_client_id: str = ""
+    twitter_client_secret: str = ""
+    linkedin_client_id: str = ""
+    linkedin_client_secret: str = ""
+    meta_app_id: str = ""
+    meta_app_secret: str = ""
+
+    # Image Generation
+    fal_api_key: str = ""
+
+    # Trends / Search
+    exa_api_key: str = ""
+
+    # Slack
+    slack_bot_token: str = ""
+    slack_signing_secret: str = ""
 
     # CORS — accepts JSON array string or comma-separated string
     cors_origins: str = "http://localhost:3000"

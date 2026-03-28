@@ -1,5 +1,5 @@
 # Frontend Components
-<!-- verified: 260324 -->
+<!-- verified: 260328 -->
 
 Reusable components in `frontend/src/components/`.
 
@@ -8,6 +8,12 @@ Reusable components in `frontend/src/components/`.
 **File**: `components/dashboard-content.tsx`
 
 Dashboard home stats grid. Fetches `api.getStats()` and displays 6 metric cards: total clients, campaigns, content pieces, agent runs, campaigns running, content drafts.
+
+## NotificationsBell
+**Status**: [LIVE]
+**File**: `components/notifications-bell.tsx`
+
+Bell icon with unread count badge. Dropdown notification panel. Polls every 30s. Mark read / mark all read.
 
 ## ClerkTokenSync
 **Status**: [LIVE]
@@ -51,7 +57,7 @@ Real-time agent pipeline visualization for campaign execution.
 ## Library Modules
 
 ### `lib/api.ts`
-API client singleton. Uses `NEXT_PUBLIC_API_URL` (default `http://localhost:8001`). Clerk token injected via `setClerkTokenGetter()`. 22 methods covering all backend endpoints.
+API client singleton. Uses `NEXT_PUBLIC_API_URL` (default `http://localhost:8001`). Clerk token injected via `setClerkTokenGetter()`. **45+ methods** covering backend endpoints (dashboard, content, campaigns, integrations, notifications, portal helpers, etc.).
 
 ### `lib/agent-stream.ts`
 `connectAgentStream(campaignId, token, onEvent, onError?)` — Opens EventSource to SSE endpoint with JWT in query param. Returns teardown function.

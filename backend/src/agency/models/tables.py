@@ -249,6 +249,8 @@ class WhiteLabel(Base):
     primary_color = Column(String(7), default="#4f46e5")
     company_name = Column(String(255))
     support_email = Column(String(255))
+    portal_enabled = Column(Boolean, default=False)
+    email_from_name = Column(String(255))
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -270,6 +272,20 @@ class CampaignTemplate(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class Notification(Base):
+    __tablename__ = "notification"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False)
+    type = Column(String(50), nullable=False)
+    title = Column(String(500), nullable=False)
+    body = Column(Text, default="")
+    data = Column(JSONB, default={})
+    read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class ApiKey(Base):
     __tablename__ = "api_key"
 
@@ -281,4 +297,18 @@ class ApiKey(Base):
     permissions = Column(ARRAY(Text), default=["read"])
     is_active = Column(Boolean, default=True)
     last_used_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    action = Column(String(100), nullable=False)
+    resource_type = Column(String(100))
+    resource_id = Column(String(255))
+    details = Column(JSONB, default={})
+    ip_address = Column(String(45))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

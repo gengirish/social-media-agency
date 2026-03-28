@@ -129,6 +129,164 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, role }),
     }),
+
+  // Feature 12: Calendar reschedule
+  rescheduleContent: (contentId: string, scheduledAt: string) =>
+    request(`/api/v1/publishing/${contentId}/schedule`, {
+      method: "POST",
+      body: JSON.stringify({ scheduled_at: scheduledAt }),
+    }),
+
+  // Feature 14: Repurpose
+  repurposeContent: (contentId: string, targetPlatforms: string[]) =>
+    request<{ status: string; platforms: string[]; count: number }>(
+      `/api/v1/content/${contentId}/repurpose`,
+      { method: "POST", body: JSON.stringify({ target_platforms: targetPlatforms }) }
+    ),
+
+  // Feature 15: Reports
+  generateReport: (clientId: string, period: string) =>
+    request<Record<string, unknown>>(`/api/v1/reports/clients/${clientId}`, {
+      method: "POST",
+      body: JSON.stringify({ period }),
+    }),
+  getReportPeriods: (clientId: string) =>
+    request<{ items: { period: string; label: string }[] }>(`/api/v1/reports/clients/${clientId}`),
+
+  // Feature 16: Settings
+  getSettings: () =>
+    request<{ name: string; domain: string; settings: Record<string, unknown> }>(
+      "/api/v1/integrations/settings"
+    ),
+  updateSettings: (data: Record<string, unknown>) =>
+    request("/api/v1/integrations/settings", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  getApiKeys: () => request<{ items: unknown[] }>("/api/v1/integrations/api-keys"),
+  createApiKey: (name: string, permissions: string[]) =>
+    request("/api/v1/integrations/api-keys", {
+      method: "POST",
+      body: JSON.stringify({ name, permissions }),
+    }),
+  revokeApiKey: (keyId: string) =>
+    request(`/api/v1/integrations/api-keys/${keyId}`, { method: "DELETE" }),
+  getPlatformAccounts: () => request<{ items: unknown[] }>("/api/v1/integrations/platform-accounts"),
+
+  // Feature 17: OAuth
+  getOAuthUrl: (platform: string) =>
+    request<{ authorize_url: string; platform: string }>(`/api/v1/oauth/${platform}/authorize`),
+  oauthCallback: (platform: string, data: Record<string, string>) =>
+    request(`/api/v1/oauth/${platform}/callback`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // Feature 22: Comments
+  getComments: (contentId: string) =>
+    request<{ items: unknown[] }>(`/api/v1/comments/content/${contentId}`),
+  addComment: (contentId: string, body: string) =>
+    request(`/api/v1/comments/content/${contentId}`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+  deleteComment: (commentId: string) =>
+    request(`/api/v1/comments/${commentId}`, { method: "DELETE" }),
+
+  // Feature 23: Notifications
+  getNotifications: () =>
+    request<{ items: unknown[]; unread_count: number }>("/api/v1/notifications"),
+  markNotificationRead: (id: string) =>
+    request(`/api/v1/notifications/${id}/read`, { method: "PATCH" }),
+  markAllNotificationsRead: () =>
+    request("/api/v1/notifications/read-all", { method: "PATCH" }),
+
+  // Feature 20: Templates
+  getTemplates: (category?: string) =>
+    request<{ items: unknown[] }>(
+      `/api/v1/integrations/templates${category ? `?category=${encodeURIComponent(category)}` : ""}`
+    ),
+  getTemplate: (id: string) => request<unknown>(`/api/v1/integrations/templates/${id}`),
+  launchTemplate: (templateId: string, data: Record<string, unknown>) =>
+    request(`/api/v1/integrations/templates/${templateId}/launch`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // Feature 25: Trends
+  getTrends: (platform?: string) =>
+    request<{ items: unknown[] }>(
+      `/api/v1/campaigns/trends${platform ? `?platform=${encodeURIComponent(platform)}` : ""}`
+    ),
+
+  // Feature 26: Brand Intelligence
+  getClientIntelligence: (clientId: string) =>
+    request<Record<string, unknown>>(`/api/v1/brand-analytics/clients/${clientId}/intelligence`),
+
+  // Feature 28: Cross-Learning
+  getCrossLearning: (industry?: string) =>
+    request<{ insights: unknown[]; benchmarks: unknown }>(
+      `/api/v1/brand-analytics/cross-learning${
+        industry ? `?industry=${encodeURIComponent(industry)}` : ""
+      }`
+    ),
+
+  // Feature 33: Competitive Intelligence
+  runCompetitiveScan: (clientId: string, competitors?: string) =>
+    request<Record<string, unknown>>(`/api/v1/competitive/clients/${clientId}/scan`, {
+      method: "POST",
+      body: JSON.stringify(competitors != null ? { competitors } : {}),
+    }),
+
+  // Feature 35: Image Generation
+  generateImage: (contentId: string, prompt?: string) =>
+    request<{ status: string; image_url: string | null }>(
+      `/api/v1/content/${contentId}/generate-image`,
+      {
+        method: "POST",
+        body: JSON.stringify({ prompt }),
+      }
+    ),
+
+  // Feature 36: Autonomous Campaigns
+  createAutonomousCampaign: (clientId: string, goal: string) =>
+    request<Record<string, unknown>>("/api/v1/campaigns/autonomous", {
+      method: "POST",
+      body: JSON.stringify({ client_id: clientId, goal }),
+    }),
+
+  // Feature 37: Client Acquisition
+  generateOutreach: (data: { prospect_name: string; industry: string; pain_points: string[] }) =>
+    request<Record<string, unknown>>("/api/v1/acquisition/outreach", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // Feature 39: Video Scripts
+  createVideoScript: (data: { format: string; topic: string; client_id?: string }) =>
+    request<Record<string, unknown>>("/api/v1/content/video-script", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // Feature 40: Audit Logs
+  getAuditLogs: (params?: Record<string, string>) => {
+    const qs = params ? `?${new URLSearchParams(params)}` : "";
+    return request<{ items: unknown[] }>(`/api/v1/audit${qs}`);
+  },
+
+  // Feature 21: Content Variants
+  generateVariants: (contentId: string, count?: number) =>
+    request<{ variant_group: string; variants: string[] }>(
+      `/api/v1/content/${contentId}/variants`,
+      {
+        method: "POST",
+        body: JSON.stringify({ count: count ?? 2 }),
+      }
+    ),
+
+  // Feature 24: Content Suggestions
+  getContentSuggestions: () => request<{ items: unknown[] }>("/api/v1/content/suggestions"),
 };
 
 // --- Types ---

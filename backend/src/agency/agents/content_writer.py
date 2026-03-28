@@ -77,7 +77,9 @@ Return a JSON array of content pieces:
     }}
 ]
 
-Generate {post_count} total pieces across the requested platforms."""
+Generate {post_count} total pieces across the requested platforms.
+
+{language_instructions}"""
 
 
 async def content_writer_node(state: CampaignState) -> dict:
@@ -103,6 +105,21 @@ async def content_writer_node(state: CampaignState) -> dict:
     }
     guidelines_str = json.dumps(relevant_guidelines, indent=2)
 
+    target_languages = state.get("target_languages") or []
+    if target_languages:
+        language_instructions = (
+            "## Multi-language requirement\n"
+            f"Target languages: {', '.join(target_languages)}.\n"
+            "For each logical post, produce one JSON object per language (same platform/title intent), "
+            "or include a \"language\" field on each piece with the full body and hashtags in that language. "
+            "Cover every requested platform for each target language."
+        )
+    else:
+        language_instructions = (
+            "## Language\n"
+            "Generate all content in the primary language of the brand brief unless the brief specifies otherwise."
+        )
+
     messages = [
         SystemMessage(content=SYSTEM_PROMPT.format(
             brand_context=brand_str,
@@ -110,6 +127,7 @@ async def content_writer_node(state: CampaignState) -> dict:
             seo_keywords=seo_str,
             platform_guidelines=guidelines_str,
             post_count=post_count,
+            language_instructions=language_instructions,
         )),
         ("human", f"Create {post_count} content pieces for platforms: {', '.join(channels)}"),
     ]
