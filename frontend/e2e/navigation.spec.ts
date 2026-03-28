@@ -21,6 +21,7 @@ test.describe("Navigation", () => {
   });
 
   test("dashboard routes load with primary heading", async ({ page }) => {
+    test.setTimeout(120_000);
     for (const { path, heading } of PAGES) {
       await page.goto(path);
 

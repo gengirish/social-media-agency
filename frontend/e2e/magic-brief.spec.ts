@@ -9,6 +9,7 @@ test.describe("Magic Brief", () => {
 
   test("scan website produces brand profile", async ({ page }) => {
     test.setTimeout(180000);
+    test.skip(!process.env.RUN_LLM_TESTS, "Skipped: set RUN_LLM_TESTS=1 to run LLM-dependent tests");
 
     await page.goto("/campaigns/new/magic-brief");
     await expect(page.getByRole("heading", { name: /^magic brief$/i })).toBeVisible();

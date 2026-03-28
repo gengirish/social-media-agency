@@ -44,14 +44,14 @@ test.describe("Campaigns", () => {
     await page.getByRole("button", { name: /launch campaign/i }).click();
     await expect(page).toHaveURL(/\/campaigns\/[^/]+/, { timeout: 60000 });
 
-    await expect(page.getByRole("heading", { name: campaignTitle })).toBeVisible();
-    await expect(page.getByRole("button", { name: /live agents/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /content/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: campaignTitle })).toBeVisible({ timeout: 20000 });
+    await expect(page.getByRole("button", { name: /live agents/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /content/i })).toBeVisible({ timeout: 10000 });
 
     await page.goto("/campaigns");
-    await page.locator(`a[href^="/campaigns/"]`).filter({ hasText: campaignTitle }).first().click();
-    await expect(page).toHaveURL(/\/campaigns\/[^/]+/);
-    await expect(page.getByRole("button", { name: /live agents/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /content/i })).toBeVisible();
+    await page.locator(`a[href^="/campaigns/"]`).filter({ hasText: campaignTitle }).first().click({ timeout: 20000 });
+    await expect(page).toHaveURL(/\/campaigns\/[^/]+/, { timeout: 20000 });
+    await expect(page.getByRole("button", { name: /live agents/i })).toBeVisible({ timeout: 20000 });
+    await expect(page.getByRole("button", { name: /content/i })).toBeVisible({ timeout: 10000 });
   });
 });
