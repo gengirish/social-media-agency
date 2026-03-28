@@ -4,30 +4,55 @@
 Living documentation of all platform features. Updated whenever the codebase changes.
 
 ## Quick Stats
-- **API Endpoints**: —
-- **Database Tables**: 10
+- **API Endpoints**: 36 across 10 routers
+- **Database Tables**: 15
 - **Services**: 8
-- **Background Workers**: 4
-- **Frontend Pages**: 12+
-- **Platform Integrations**: 5
-
-> Stats are approximate until first full scan. Run the `feature-docs` skill to populate.
+- **Background Workers**: 3 (asyncio-based, no Celery)
+- **Frontend Pages**: 15
+- **Frontend Components**: 3 reusable
+- **Platform Integrations**: 5 (Clerk, Stripe, AgentMail, Social, LLM)
+- **LangGraph Agent Nodes**: 8
 
 ## Documents
 
 | Document | Description | Last Updated |
 |----------|-------------|-------------|
-| [api-endpoints.md](api-endpoints.md) | REST API routes | — |
-| [database-schema.md](database-schema.md) | Tables and relationships | — |
-| [services.md](services.md) | Business logic layer | — |
-| [workers.md](workers.md) | Celery background jobs | — |
-| [integrations.md](integrations.md) | Social platform connectors | — |
-| [websocket.md](websocket.md) | Real-time features | — |
-| [frontend-pages.md](frontend-pages.md) | UI routes and pages | — |
-| [frontend-components.md](frontend-components.md) | Reusable UI components | — |
-| [auth-and-rbac.md](auth-and-rbac.md) | Auth, roles, permissions | — |
-| [billing.md](billing.md) | Stripe billing features | — |
+| [api-endpoints.md](api-endpoints.md) | All 36 REST API endpoints | 260324 |
+| [database-schema.md](database-schema.md) | 15 tables, columns, relationships | 260324 |
+| [services.md](services.md) | 8 business logic services | 260324 |
+| [workers.md](workers.md) | Asyncio background tasks | 260324 |
+| [integrations.md](integrations.md) | Social, Stripe, Clerk, AgentMail, LLM | 260324 |
+| [websocket.md](websocket.md) | SSE real-time agent streaming | 260324 |
+| [frontend-pages.md](frontend-pages.md) | 15 UI pages and routes | 260324 |
+| [frontend-components.md](frontend-components.md) | Reusable components + lib modules | 260324 |
+| [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, roles, multi-tenancy | 260324 |
+| [billing.md](billing.md) | Stripe billing, 4 plan tiers | 260324 |
 | [changelog.md](changelog.md) | Chronological change log | 260324 |
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Frontend (Next.js 14 + Clerk)                       │
+│  Vercel Edge · 15 pages · Tailwind + Inter           │
+└────────────────────┬────────────────────────────────┘
+                     │ HTTPS + SSE
+┌────────────────────▼────────────────────────────────┐
+│  Backend (FastAPI)                                    │
+│  Fly.io · 36 endpoints · Clerk JWT + HS256 fallback  │
+├──────────────────────────────────────────────────────┤
+│  LangGraph Agent Pipeline                            │
+│  Orchestrator → [Strategy ∥ SEO] → [Content ∥ Ads]  │
+│  → Human Review → QA/Brand → Output                 │
+├──────────────────────────────────────────────────────┤
+│  Services: Billing · Publishing · Scheduler · LLM    │
+│  Brand Learning · Magic Brief · Team · API Keys      │
+└────────────────────┬────────────────────────────────┘
+                     │
+┌────────────────────▼────────────────────────────────┐
+│  PostgreSQL (Neon) · 15 tables · Multi-tenant        │
+└─────────────────────────────────────────────────────┘
+```
 
 ## How This Works
 
