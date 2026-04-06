@@ -115,21 +115,31 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Analytics</h1>
+          <p className="mt-1 text-slate-500">Campaign performance and platform insights</p>
+        </div>
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        </div>
       </div>
     );
   }
 
-  if (error) {
+  if (error || !stats) {
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-700">
-        Failed to load analytics: {error}
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Analytics</h1>
+          <p className="mt-1 text-slate-500">Campaign performance and platform insights</p>
+        </div>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-700">
+          {error || "No data available"}
+        </div>
       </div>
     );
   }
-
-  if (!stats) return null;
 
   const kpis = [
     {

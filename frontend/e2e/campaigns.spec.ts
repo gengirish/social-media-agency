@@ -14,11 +14,18 @@ test.describe("Campaigns", () => {
     const campaignTitle = `E2E Campaign ${Date.now()}`;
 
     await page.goto("/clients", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: /^clients$/i })).toBeVisible({ timeout: 20000 });
     await page.getByRole("button", { name: /add client/i }).click();
     await page.getByLabel(/^brand name/i).fill(brandName);
     await page.getByLabel(/^industry/i).fill("SaaS");
+
+    const clientResponse = page.waitForResponse(
+      (r) => r.url().includes("/clients") && r.request().method() === "POST",
+      { timeout: 30000 }
+    );
     await page.getByRole("button", { name: /create client/i }).click();
-    await expect(page.getByText(brandName, { exact: true })).toBeVisible({ timeout: 20000 });
+    await clientResponse;
+    await expect(page.getByText(brandName, { exact: true })).toBeVisible({ timeout: 30000 });
 
     await page.goto("/campaigns/new", { waitUntil: "domcontentloaded" });
     await expect(page.getByText(/step 1 of 3/i)).toBeVisible({ timeout: 20000 });
