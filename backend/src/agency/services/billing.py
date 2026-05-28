@@ -71,13 +71,17 @@ class BillingService:
         db: AsyncSession,
         org_id: UUID,
         plan_tier: str,
-        success_url: str,
-        cancel_url: str,
+        success_url: str | None = None,
+        cancel_url: str | None = None,
     ) -> dict:
         """Create a Stripe Checkout session for subscription."""
         plan = PLAN_CONFIG.get(plan_tier)
         if not plan or plan_tier == "free":
             return {"error": "Invalid plan"}
+
+        base = (_s.frontend_url or "http://localhost:3000").rstrip("/")
+        success_url = success_url or f"{base}/settings?checkout=success"
+        cancel_url = cancel_url or f"{base}/pricing?checkout=cancel"
 
         result = await db.execute(select(Subscription).where(Subscription.org_id == org_id))
         sub = result.scalar_one_or_none()
@@ -178,10 +182,11 @@ class BillingService:
         )
         sub = result.scalar_one_or_none()
         if sub:
+            free = PLAN_CONFIG["free"]
             sub.status = "cancelled"
             sub.plan_tier = "free"
-            sub.clients_limit = 1
-            sub.posts_limit = 30
+            sub.clients_limit = free["clients_limit"]
+            sub.posts_limit = free["posts_limit"]
             await db.commit()
         return {"status": "cancelled"}
 
@@ -211,6 +216,15 @@ class BillingService:
         if resource == "posts":
             return sub.posts_used < sub.posts_limit
         return True
+
+    async def record_post_published(self, db: AsyncSession, org_id: UUID) -> None:
+        """Increment monthly post usage after a successful publish."""
+        result = await db.execute(select(Subscription).where(Subscription.org_id == org_id))
+        sub = result.scalar_one_or_none()
+        if not sub:
+            logger.warning("record_post_published_no_subscription", org_id=str(org_id))
+            return
+        sub.posts_used = (sub.posts_used or 0) + 1
 
     def get_plans(self) -> list:
         return [{"tier": k, **v} for k, v in PLAN_CONFIG.items()]

@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import ContentPiece, PlatformAccount
+from agency.services.billing import billing
 from agency.services.publishing import publisher
 from agency.services.scheduler import scheduler
 
@@ -56,6 +57,21 @@ async def publish_now(
     if not piece:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
 
+    if piece.status == "published":
+        meta = piece.metadata_ or {}
+        return {
+            "status": "published",
+            "content_id": str(content_id),
+            "post_id": meta.get("post_id"),
+            "url": meta.get("post_url"),
+        }
+
+    if not await billing.check_quota(db, org_id, resource="posts"):
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            "Monthly post limit reached for your plan. Upgrade to publish more.",
+        )
+
     acc_result = await db.execute(
         select(PlatformAccount).where(
             PlatformAccount.client_id == piece.client_id,
@@ -92,6 +108,7 @@ async def publish_now(
                 "post_url": pub_result.get("url"),
             },
         )
+        await billing.record_post_published(db, org_id)
     else:
         piece.status = "failed"
         _merge_metadata(piece, {"publish_error": pub_result.get("error")})

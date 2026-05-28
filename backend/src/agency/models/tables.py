@@ -56,7 +56,7 @@ class Subscription(Base):
     stripe_customer_id = Column(String(255))
     stripe_subscription_id = Column(String(255))
     plan_tier = Column(String(50), nullable=False, default="free")
-    clients_limit = Column(Integer, default=3)
+    clients_limit = Column(Integer, default=1)
     posts_limit = Column(Integer, default=30)
     posts_used = Column(Integer, default=0)
     current_period_start = Column(DateTime(timezone=True))

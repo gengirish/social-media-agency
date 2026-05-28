@@ -11,6 +11,7 @@ from sqlalchemy import select
 from agency.config import get_settings
 from agency.models.database import get_session_factory
 from agency.models.tables import Organization, Subscription, User
+from agency.services.billing import PLAN_CONFIG
 
 logger = structlog.get_logger()
 security = HTTPBearer()
@@ -75,6 +76,21 @@ async def _get_clerk_user_info(clerk_user_id: str, secret_key: str) -> dict:
         return data
 
 
+def _demo_org_id_for_email(settings, email: str) -> UUID | None:
+    """If DEMO_ORG_ID + DEMO_ORG_ALLOWLIST match, return that org UUID (seed/demo data)."""
+    raw_id = (settings.demo_org_id or "").strip()
+    raw_list = (settings.demo_org_allowlist or "").strip()
+    if not raw_id or not raw_list:
+        return None
+    allow = {e.strip().lower() for e in raw_list.split(",") if e.strip()}
+    if email.strip().lower() not in allow:
+        return None
+    try:
+        return UUID(raw_id)
+    except ValueError:
+        return None
+
+
 async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
     clerk_user_id = clerk_payload["sub"]
 
@@ -92,24 +108,54 @@ async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
         user = result.scalar_one_or_none()
 
         if not user:
-            logger.info("clerk_user_auto_provision", email=email, clerk_id=clerk_user_id)
-            org = Organization(name=f"{full_name}'s Org")
-            db.add(org)
-            await db.flush()
+            demo_org_id = _demo_org_id_for_email(settings, email)
+            if demo_org_id:
+                org_check = await db.execute(
+                    select(Organization.id).where(Organization.id == demo_org_id)
+                )
+                if org_check.scalar_one_or_none():
+                    logger.info(
+                        "clerk_user_demo_org",
+                        email=email,
+                        org_id=str(demo_org_id),
+                        clerk_id=clerk_user_id,
+                    )
+                    user = User(
+                        org_id=demo_org_id,
+                        email=email,
+                        password_hash="clerk-managed",
+                        full_name=full_name,
+                        role="admin",
+                    )
+                    db.add(user)
+                    await db.commit()
+                    await db.refresh(user)
 
-            user = User(
-                org_id=org.id,
-                email=email,
-                password_hash="clerk-managed",
-                full_name=full_name,
-                role="admin",
-            )
-            db.add(user)
+            if not user:
+                logger.info("clerk_user_auto_provision", email=email, clerk_id=clerk_user_id)
+                org = Organization(name=f"{full_name}'s Org")
+                db.add(org)
+                await db.flush()
 
-            sub = Subscription(org_id=org.id, plan_tier="free", clients_limit=2, posts_limit=30)
-            db.add(sub)
-            await db.commit()
-            await db.refresh(user)
+                user = User(
+                    org_id=org.id,
+                    email=email,
+                    password_hash="clerk-managed",
+                    full_name=full_name,
+                    role="admin",
+                )
+                db.add(user)
+
+                free = PLAN_CONFIG["free"]
+                sub = Subscription(
+                    org_id=org.id,
+                    plan_tier="free",
+                    clients_limit=free["clients_limit"],
+                    posts_limit=free["posts_limit"],
+                )
+                db.add(sub)
+                await db.commit()
+                await db.refresh(user)
 
     return {
         "sub": str(user.id),

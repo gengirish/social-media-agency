@@ -9,14 +9,14 @@
 
 | Tier | Monthly Price | Clients | Posts/mo | Target |
 |------|--------------|---------|----------|--------|
-| Free | $0 | 2 | 30 | Trial users |
-| Starter | $49 | 5 | 100 | Solo marketers |
-| Growth | $149 | 15 | 500 | Growing teams |
+| Free | $0 | 1 | 30 | Trial users |
+| Starter | $49 | 3 | 200 | Solo marketers |
+| Growth | $149 | 10 | 1000 | Growing teams |
 | Agency | $399 | Unlimited | Unlimited | Agencies |
 
 ### Checkout Flow
 
-1. Frontend calls `POST /api/v1/billing/checkout` with `plan_tier`, `success_url`, `cancel_url`
+1. Frontend calls `POST /api/v1/billing/checkout` with `plan_tier` (required); `success_url` / `cancel_url` optional — when omitted, defaults are `{FRONTEND_URL}/settings?checkout=success` and `{FRONTEND_URL}/pricing?checkout=cancel`
 2. Backend creates Stripe Checkout Session via `billing.create_checkout_session()`
 3. Returns `{checkout_url}` — frontend redirects to Stripe
 4. On completion, Stripe sends webhook to `POST /api/v1/billing/webhook`
@@ -32,7 +32,7 @@
 
 ### Quota Enforcement
 
-`billing.check_quota(db, org_id, resource="posts")` — Checks `posts_used < posts_limit` before allowing content creation.
+`billing.check_quota(db, org_id, resource="posts")` — Checks `posts_used < posts_limit` before publishing (immediate and scheduled). On successful publish, `billing.record_post_published()` increments `posts_used`.
 
 ### Frontend
 
@@ -50,3 +50,4 @@
 |----------|---------|
 | `STRIPE_SECRET_KEY` | Stripe API key |
 | `STRIPE_WEBHOOK_SECRET` | Webhook signature verification |
+| `FRONTEND_URL` | Base URL for default Stripe Checkout return URLs (default `http://localhost:3000`) |

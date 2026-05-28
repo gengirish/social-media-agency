@@ -11,7 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from agency.agents.graph import get_compiled_graph
+from agency.agents.graph_runtime import get_runtime_compiled_graph
 from agency.agents.state import BrandContext, CampaignState
 from agency.config import get_settings
 from agency.dependencies import (
@@ -192,7 +192,7 @@ async def _run_campaign_pipeline(
         "messages": [],
     }
 
-    graph = get_compiled_graph()
+    graph = get_runtime_compiled_graph()
     config = {"configurable": {"thread_id": campaign_id}}
 
     agent_order = [
@@ -266,7 +266,7 @@ async def _persist_campaign_results(
 ):
     """Save agent outputs to the database after pipeline completes."""
     try:
-        state = graph.get_state(config)
+        state = await graph.aget_state(config)
         if not state or not state.values:
             return
 
@@ -589,15 +589,16 @@ async def submit_human_review(
     if not campaign:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Campaign not found")
 
-    graph = get_compiled_graph()
+    graph = get_runtime_compiled_graph()
     config = {"configurable": {"thread_id": str(campaign_id)}}
 
-    graph.update_state(
+    await graph.aupdate_state(
         config,
         {
             "human_review": decision.get("decision", "approved"),
             "human_feedback": decision.get("feedback", ""),
         },
+        as_node="human_review",
     )
 
     # Resume the pipeline

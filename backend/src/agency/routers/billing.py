@@ -5,7 +5,7 @@ from uuid import UUID
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from stripe import SignatureVerificationError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agency.config import get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
@@ -16,8 +16,14 @@ router = APIRouter(prefix="/billing", tags=["Billing"])
 
 class CheckoutRequest(BaseModel):
     plan_tier: str
-    success_url: str
-    cancel_url: str
+    success_url: str | None = Field(
+        default=None,
+        description="Optional; defaults to {FRONTEND_URL}/settings?checkout=success",
+    )
+    cancel_url: str | None = Field(
+        default=None,
+        description="Optional; defaults to {FRONTEND_URL}/pricing?checkout=cancel",
+    )
 
 
 @router.get("/plans")

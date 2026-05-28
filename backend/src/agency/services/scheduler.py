@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.models.database import get_session_factory
 from agency.models.tables import ContentPiece, PlatformAccount
+from agency.services.billing import billing
 from agency.services.publishing import publisher
 
 logger = structlog.get_logger()
@@ -84,13 +85,23 @@ class SchedulerEngine:
             await db.commit()
             return
 
+        if not await billing.check_quota(db, piece.org_id, resource="posts"):
+            logger.warning("post_quota_exceeded_scheduler", content_id=str(piece.id))
+            piece.status = "failed"
+            _merge_metadata(
+                piece,
+                {"publish_error": "Monthly post limit reached for your plan."},
+            )
+            await db.commit()
+            return
+
         content_data = {
             "body": piece.body,
             "hashtags": piece.hashtags or [],
             "title": piece.title,
         }
         credentials = {
-            "access_token": account.access_token_enc,  # In production, decrypt this
+            "access_token": account.access_token_enc,
             "page_id": account.account_handle,
         }
 
@@ -106,6 +117,7 @@ class SchedulerEngine:
                     "post_url": pub_result.get("url"),
                 },
             )
+            await billing.record_post_published(db, piece.org_id)
         else:
             piece.status = "failed"
             _merge_metadata(piece, {"publish_error": pub_result.get("error")})

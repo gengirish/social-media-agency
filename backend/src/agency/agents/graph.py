@@ -136,7 +136,12 @@ def build_campaign_graph() -> StateGraph:
 
 
 def get_compiled_graph(checkpointer=None):
-    """Compile the graph with optional checkpointer and human-in-the-loop interrupt."""
+    """Compile the graph with optional checkpointer (tests, scripts).
+
+    Production API uses ``agency.agents.graph_runtime.get_runtime_compiled_graph``
+    after ``init_campaign_graph_runtime()`` (Postgres via ``neon_database_url`` or
+    ``MemorySaver`` fallback).
+    """
     graph = build_campaign_graph()
     return graph.compile(
         checkpointer=checkpointer,

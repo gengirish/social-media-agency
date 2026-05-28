@@ -8,6 +8,7 @@ import httpx
 import structlog
 
 from agency.config import get_settings
+from agency.utils.encryption import decrypt_token
 
 logger = structlog.get_logger()
 
@@ -21,8 +22,8 @@ class PlatformPublisher:
         self.settings = get_settings()
 
     def _decrypt_token(self, encrypted: str) -> str:
-        """Decrypt platform token. Currently passthrough — add Fernet in production."""
-        return encrypted
+        """Decrypt platform token; legacy plaintext rows fall back with a warning."""
+        return decrypt_token(encrypted)
 
     async def _with_http_retries(
         self,

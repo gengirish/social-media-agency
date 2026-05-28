@@ -11,6 +11,7 @@ from sqlalchemy import select
 from agency.config import get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import PlatformAccount
+from agency.utils.encryption import encrypt_token
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
 
@@ -121,8 +122,11 @@ async def oauth_callback(
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Token exchange failed: {token_resp.text}")
 
     token_data = token_resp.json()
-    access_token = token_data.get("access_token", "")
-    refresh_token = token_data.get("refresh_token", "")
+    access_token = token_data.get("access_token", "") or ""
+    refresh_token = token_data.get("refresh_token", "") or ""
+
+    access_stored = encrypt_token(access_token) if access_token else None
+    refresh_stored = encrypt_token(refresh_token) if refresh_token else None
 
     account_handle = body.get("account_handle", f"{platform}_user")
     display_name = body.get("display_name", account_handle)
@@ -137,8 +141,8 @@ async def oauth_callback(
         platform=platform,
         account_handle=account_handle,
         display_name=display_name,
-        access_token_enc=access_token,
-        refresh_token_enc=refresh_token,
+        access_token_enc=access_stored,
+        refresh_token_enc=refresh_stored,
         status="connected",
     )
     db.add(account)

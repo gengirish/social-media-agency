@@ -92,9 +92,19 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup():
+        from agency.agents.graph_runtime import init_campaign_graph_runtime
         from agency.services.scheduler import scheduler
 
+        await init_campaign_graph_runtime()
         await scheduler.start()
+
+    @app.on_event("shutdown")
+    async def shutdown():
+        from agency.agents.graph_runtime import shutdown_campaign_graph_runtime
+        from agency.services.scheduler import scheduler
+
+        await scheduler.stop()
+        await shutdown_campaign_graph_runtime()
 
     return app
 

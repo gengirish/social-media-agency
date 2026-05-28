@@ -3,6 +3,13 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings
 
 
+def generate_token_encryption_key() -> str:
+    """Return a new url-safe Fernet key suitable for TOKEN_ENCRYPTION_KEY."""
+    from cryptography.fernet import Fernet
+
+    return Fernet.generate_key().decode()
+
+
 class Settings(BaseSettings):
     app_env: str = "dev"
     debug: bool = False
@@ -22,6 +29,10 @@ class Settings(BaseSettings):
     # Clerk
     clerk_secret_key: str = ""
     clerk_jwks_url: str = ""
+
+    # Optional: first-time Clerk sign-ins for these emails attach to this org (see db/seed.sql).
+    demo_org_id: str = ""
+    demo_org_allowlist: str = ""
 
     # LLM Providers
     google_api_key: str = ""
@@ -53,6 +64,9 @@ class Settings(BaseSettings):
     meta_app_id: str = ""
     meta_app_secret: str = ""
 
+    # OAuth tokens at rest (Fernet). In dev, a built-in fallback is used if unset (see utils.encryption).
+    token_encryption_key: str = ""
+
     # Image Generation
     fal_api_key: str = ""
 
@@ -65,6 +79,9 @@ class Settings(BaseSettings):
 
     # CORS — accepts JSON array string or comma-separated string
     cors_origins: str = "http://localhost:3000"
+
+    # Stripe Checkout return URLs when the client omits success_url / cancel_url
+    frontend_url: str = "http://localhost:3000"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

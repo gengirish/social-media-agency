@@ -10,6 +10,7 @@ from agency.config import get_settings
 from agency.dependencies import get_db
 from agency.models.schemas import LoginRequest, SignupRequest, TokenResponse
 from agency.models.tables import Organization, Subscription, User
+from agency.services.billing import PLAN_CONFIG
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -62,11 +63,12 @@ async def signup(request: SignupRequest, db=Depends(get_db)):
     )
     db.add(user)
 
+    free = PLAN_CONFIG["free"]
     subscription = Subscription(
         org_id=org.id,
         plan_tier="free",
-        clients_limit=2,
-        posts_limit=30,
+        clients_limit=free["clients_limit"],
+        posts_limit=free["posts_limit"],
     )
     db.add(subscription)
 

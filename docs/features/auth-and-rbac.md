@@ -15,7 +15,7 @@
 3. **Auto-provision** if user not in local DB:
    - Create `Organization` named `"{full_name}'s Org"`
    - Create `User` with `password_hash="clerk-managed"`, role `admin`
-   - Create `Subscription` with `plan_tier="free"`, 2 clients, 30 posts
+   - Create `Subscription` with `plan_tier="free"` and limits from `PLAN_CONFIG["free"]` (1 client, 30 posts/mo)
 4. Return dict: `{sub, email, role, org_id}`
 
 ### Fallback: Legacy JWT (HS256)
