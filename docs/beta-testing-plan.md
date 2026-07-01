@@ -11,7 +11,7 @@ CampaignForge is an AI-powered marketing platform with 7 specialized agents that
 **Beta Duration:** 4 weeks (Weeks 1–4 post-invite)
 **Beta Cohort Size:** 20–50 users
 **Environments:**
-- Frontend: `campaignforge-ai-three.vercel.app`
+- Frontend: `campaignforge.intelliforge.tech`
 - Backend: `campaignforge-api.fly.dev`
 
 ---

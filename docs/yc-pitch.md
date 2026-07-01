@@ -11,7 +11,7 @@ CampaignForge is an AI-native marketing platform where 7 specialized agents coll
 
 **Agents:** Strategist, SEO Researcher, Content Writer, Ad Copywriter, Human Review, QA/Brand, Analytics
 
-**Live:** [campaignforge-ai-three.vercel.app](https://campaignforge-ai-three.vercel.app) | **API:** [campaignforge-api.fly.dev](https://campaignforge-api.fly.dev)
+**Live:** [campaignforge.intelliforge.tech](https://campaignforge.intelliforge.tech) | **API:** [campaignforge-api.fly.dev](https://campaignforge-api.fly.dev)
 
 ---
 
