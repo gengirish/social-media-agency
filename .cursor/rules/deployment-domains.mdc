@@ -1,0 +1,9 @@
+---
+description: Project deployment domains and configured hosts
+alwaysApply: true
+---
+
+# Deployment Domains
+
+- Production domain: `campaignforge.intelliforge.tech` — **configured** and live.
+  Use this as the canonical app/site URL for the Social Media Agency project (links, env vars, OG/canonical URLs, redirects, sitemaps, email links).
