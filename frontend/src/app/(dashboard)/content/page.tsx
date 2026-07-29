@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type ContentPiece } from "@/lib/api";
+import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
 import { Loader2, FileText, CheckCircle2, Filter, Send, Layers, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -84,6 +85,7 @@ export default function ContentPage() {
     setPublishBusyId(piece.id);
     try {
       await api.publishContent(piece.id);
+      trackFeature("content-publish", { platform: piece.platform });
       toast.success("Publish requested");
       loadContent();
     } catch (e: unknown) {

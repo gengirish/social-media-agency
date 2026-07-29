@@ -36,6 +36,7 @@ from agency.models.tables import (
     Subscription,
     Workflow,
 )
+from agency.services import product_analytics as pa
 from agency.services.billing import PLAN_CONFIG
 
 router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
@@ -108,6 +109,17 @@ async def create_campaign(
         status="running",
     )
     db.add(workflow)
+
+    # Anchors time-to-first-campaign and the completion-rate denominator.
+    await pa.track(
+        db,
+        name=pa.CAMPAIGN_CREATED,
+        org_id=org_id,
+        user_id=user.get("sub"),
+        campaign_id=campaign.id,
+        properties={"channels": brief.channels, "plan_tier": plan_tier},
+    )
+
     await db.commit()
     await db.refresh(campaign)
 
@@ -160,6 +172,73 @@ Languages: {', '.join(brief.languages) if brief.languages else 'Default (brief l
     )
 
     return campaign
+
+
+async def _record_agent_step(
+    campaign_id: str, org_id: str, node_name: str, node_output
+) -> None:
+    """Persist the agent run and its analytics event. Never breaks the pipeline."""
+    try:
+        factory = get_session_factory()
+        async with factory() as tracking_db:
+            tracking_db.add(
+                AgentRun(
+                    campaign_id=UUID(campaign_id),
+                    org_id=UUID(org_id),
+                    agent_name=node_name,
+                    status="completed",
+                    output=(
+                        json.dumps(node_output)
+                        if isinstance(node_output, dict)
+                        else str(node_output)
+                    ),
+                )
+            )
+            await tracking_db.commit()
+    except Exception:
+        pass  # Don't let tracking failures break the pipeline
+
+    await pa.track_detached(
+        name=pa.AGENT_STEP_COMPLETED,
+        org_id=org_id,
+        campaign_id=campaign_id,
+        properties={"agent": node_name},
+    )
+
+
+async def _mark_campaign_failed(campaign_id: str, org_id: str, error: str) -> None:
+    """Move a crashed pipeline out of 'running' and record the failure.
+
+    Without this a pipeline exception leaves the campaign 'running' forever,
+    which both misleads the user and hides the failure from the failure-rate
+    metric.
+    """
+    try:
+        factory = get_session_factory()
+        async with factory() as db:
+            result = await db.execute(select(Campaign).where(Campaign.id == UUID(campaign_id)))
+            campaign = result.scalar_one_or_none()
+            if campaign:
+                campaign.status = "failed"
+
+            result = await db.execute(
+                select(Workflow).where(Workflow.campaign_id == UUID(campaign_id))
+            )
+            workflow = result.scalar_one_or_none()
+            if workflow:
+                workflow.status = "failed"
+                workflow.completed_at = datetime.now(timezone.utc)
+
+            await db.commit()
+    except Exception:
+        pass
+
+    await pa.track_detached(
+        name=pa.CAMPAIGN_FAILED,
+        org_id=org_id,
+        campaign_id=campaign_id,
+        properties={"error": error[:500]},
+    )
 
 
 async def _run_campaign_pipeline(
@@ -224,24 +303,7 @@ async def _run_campaign_pipeline(
 
                 # Track agent run in DB
                 if node_name != "__interrupt__":
-                    try:
-                        factory = get_session_factory()
-                        async with factory() as tracking_db:
-                            agent_run = AgentRun(
-                                campaign_id=UUID(campaign_id),
-                                org_id=UUID(org_id),
-                                agent_name=node_name,
-                                status="completed",
-                                output=(
-                                    json.dumps(node_output)
-                                    if isinstance(node_output, dict)
-                                    else str(node_output)
-                                ),
-                            )
-                            tracking_db.add(agent_run)
-                            await tracking_db.commit()
-                    except Exception:
-                        pass  # Don't let tracking failures break the pipeline
+                    await _record_agent_step(campaign_id, org_id, node_name, node_output)
 
         await queue.put(AgentStreamEvent(
             type="complete",
@@ -253,12 +315,20 @@ async def _run_campaign_pipeline(
         # Persist content pieces to DB
         await _persist_campaign_results(campaign_id, org_id, client_id, graph, config)
 
+        await pa.track_detached(
+            name=pa.CAMPAIGN_COMPLETED,
+            org_id=org_id,
+            campaign_id=campaign_id,
+            properties={"resumed": False},
+        )
+
     except Exception as e:
         await queue.put(AgentStreamEvent(
             type="error",
             agent="pipeline",
             content=f"Pipeline error: {str(e)}",
         ).model_dump_json())
+        await _mark_campaign_failed(campaign_id, org_id, str(e))
 
 
 async def _persist_campaign_results(
@@ -601,6 +671,16 @@ async def submit_human_review(
         as_node="human_review",
     )
 
+    await pa.track(
+        db,
+        name=pa.HUMAN_REVIEW_SUBMITTED,
+        org_id=org_id,
+        user_id=user.get("sub"),
+        campaign_id=campaign_id,
+        properties={"decision": decision.get("decision", "approved")},
+    )
+    await db.commit()
+
     # Resume the pipeline
     campaign_id_str = str(campaign_id)
     if campaign_id_str not in _campaign_streams:
@@ -658,24 +738,7 @@ async def _resume_pipeline(
                     progress=progress,
                 ).model_dump_json())
 
-                try:
-                    factory = get_session_factory()
-                    async with factory() as tracking_db:
-                        agent_run = AgentRun(
-                            campaign_id=UUID(campaign_id),
-                            org_id=UUID(org_id),
-                            agent_name=node_name,
-                            status="completed",
-                            output=(
-                                json.dumps(node_output)
-                                if isinstance(node_output, dict)
-                                else str(node_output)
-                            ),
-                        )
-                        tracking_db.add(agent_run)
-                        await tracking_db.commit()
-                except Exception:
-                    pass
+                await _record_agent_step(campaign_id, org_id, node_name, node_output)
 
         await queue.put(AgentStreamEvent(
             type="complete",
@@ -686,9 +749,17 @@ async def _resume_pipeline(
 
         await _persist_campaign_results(campaign_id, org_id, client_id, graph, config)
 
+        await pa.track_detached(
+            name=pa.CAMPAIGN_COMPLETED,
+            org_id=org_id,
+            campaign_id=campaign_id,
+            properties={"resumed": True},
+        )
+
     except Exception as e:
         await queue.put(AgentStreamEvent(
             type="error",
             agent="pipeline",
             content=f"Error after review: {str(e)}",
         ).model_dump_json())
+        await _mark_campaign_failed(campaign_id, org_id, str(e))

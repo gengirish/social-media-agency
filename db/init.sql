@@ -274,3 +274,25 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_org ON audit_log(org_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_org_created ON audit_log(org_id, created_at DESC);
+
+-- Product analytics event stream (beta metrics — see docs/beta-testing-plan.md §7)
+CREATE TABLE IF NOT EXISTS product_event (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID REFERENCES organization(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    session_id VARCHAR(64) DEFAULT '',
+    name VARCHAR(100) NOT NULL,
+    category VARCHAR(30) NOT NULL DEFAULT 'feature',
+    path VARCHAR(500) DEFAULT '',
+    campaign_id UUID,
+    duration_ms INTEGER,
+    properties JSONB DEFAULT '{}',
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_event_org_occurred ON product_event(org_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_product_event_name_occurred ON product_event(name, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_product_event_user_occurred ON product_event(user_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_product_event_campaign ON product_event(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_product_event_session ON product_event(session_id);

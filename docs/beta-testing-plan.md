@@ -175,15 +175,26 @@ CampaignForge is an AI-powered marketing platform with 7 specialized agents that
 
 ### In-App Analytics (Tracked Automatically)
 
-| Metric | What It Tells Us |
-|--------|-----------------|
-| Time-to-first-campaign | Onboarding friction |
-| Campaign completion rate | Pipeline reliability |
-| Agent step drop-offs | Where users lose confidence |
-| Feature adoption | Which features resonate |
-| Session duration | Engagement depth |
-| Return rate (D1, D7, D14) | Retention signal |
-| Error rate by endpoint | Backend reliability |
+Read via `GET /api/v1/beta-metrics?window_days=28` (org-scoped, auth required).
+Events land in the `product_event` table; see `services/product_analytics.py`.
+
+| Metric | What It Tells Us | Response Key |
+|--------|-----------------|--------------|
+| Time-to-first-campaign | Onboarding friction | `time_to_first_campaign` (median + p90 seconds) |
+| Campaign completion rate | Pipeline reliability | `campaign_outcomes.completion_rate` |
+| Pipeline failure rate | Reliability against the < 5% goal | `campaign_outcomes.failure_rate` |
+| Agent step drop-offs | Where users lose confidence | `agent_step_dropoff` (per graph node) |
+| Feature adoption | Which features resonate | `feature_adoption` (distinct users + uses) |
+| Session duration | Engagement depth | `session_duration` |
+| Return rate (D1, D7, D14) | Retention signal | `return_rate` |
+| Error rate by endpoint | Backend reliability | `errors_by_endpoint` + `request_rates` |
+
+**Caveats when reading the numbers:**
+- `request_rates` counts requests in memory and resets on restart or redeploy. Fly's `auto_stop_machines` makes that frequent — treat it as a live gauge, not a beta-long total. `errors_by_endpoint` is DB-backed and does persist.
+- 401 and 404 responses are not persisted (auth probes and unmatched routes are noise), so they will not appear in `errors_by_endpoint`.
+- `return_rate` excludes users who signed up too recently to qualify for the window rather than counting them as churned.
+- Feature adoption only covers instrumented flows. Adding `trackFeature("name")` at a new call site is what puts it on this table.
+- Metrics are per-organization. A programme-wide rollup across all beta testers is not exposed over HTTP; query `product_event` directly for that.
 
 ---
 

@@ -184,6 +184,11 @@ In-app notification system. Fields: `user_id`, `org_id`, `type`, `title`, `body`
 ### AuditLog [LIVE]
 Enterprise audit trail. Fields: `org_id`, `user_id`, `action`, `resource_type`, `resource_id`, `details` JSONB, `ip_address`, `created_at`.
 
+### ProductEvent [LIVE]
+Product-analytics event stream behind `GET /beta-metrics`. Fields: `org_id` (nullable), `user_id` (nullable), `session_id`, `name`, `category` (`pipeline` | `session` | `feature` | `error`), `path`, `campaign_id`, `duration_ms`, `properties` JSONB, `occurred_at`, `created_at`.
+
+`org_id`/`user_id` are nullable so failures on unauthenticated requests are still recorded. Distinct from `AuditLog`: audit answers *who changed what*, this answers *how the product is used*. Indexed on `(org_id, occurred_at)`, `(name, occurred_at)`, `(user_id, occurred_at)`, `campaign_id`, `session_id`.
+
 ## Entity Relationships
 
 ```
@@ -191,6 +196,7 @@ Organization ──┬── User (many)
                ├── Subscription (one)
                ├── Notification (many)
                ├── AuditLog (many)
+               ├── ProductEvent (many)
                ├── Client (many) ──┬── BrandProfile (one)
                │                   ├── Campaign (many) ──┬── ContentPiece (many)
                │                   │                     ├── AgentRun (many)

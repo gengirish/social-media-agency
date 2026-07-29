@@ -4,6 +4,28 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260729 — Multi-Provider LLM Chain
+
+- **Added**: Six LLM providers — `anthropic` and `google` via native SDKs, plus `openai`, `nvidia` (NIM), `openrouter`, and `bonsai` as OpenAI-compatible endpoints through `ChatOpenAI(base_url=...)`. No new dependencies
+- **Added**: Runtime failover — the primary provider for a tier attaches every other configured provider via LangChain `.with_fallbacks()`, so a transient gateway 503 no longer fails a campaign
+- **Added**: `LLM_PROVIDER_ORDER`, `LLM_{TIER}_PROVIDER` (pins a tier, disabling its fallbacks), `LLM_{TIER}_MODEL` (primary only — model ids are provider-specific)
+- **Added**: `GET /api/v1/health/llm` — resolved provider, model, and fallback chain per tier; never returns key material
+- **Added**: `GEMINI_API_KEY` accepted as an alias for `GOOGLE_API_KEY`
+- **Changed**: Default Gemini model `gemini-2.0-flash` → `gemini-2.5-flash`. 2.0-flash returns HTTP 429 (quota exceeded) on current free-tier keys
+- **Changed**: NVIDIA NIM default model is `deepseek-ai/deepseek-v4-flash`; `meta/llama-4-maverick-17b-128e-instruct` reached end of life 2026-07-27 and returns HTTP 410
+- **Fixed**: With no provider key set, the old code built a client with an empty API key and died inside the first agent. `get_llm()` now raises immediately, naming the variables to set
+- **Fixed**: `GET /api/v1/health/db` always returned 500 — SQLAlchemy 2.x rejects a bare `"SELECT 1"` string; now wrapped in `text()`
+
+## 260728 — Product Analytics for Beta Metrics
+
+- **Added**: `product_event` table + `ProductEvent` model — usage event stream, separate from `audit_log` (compliance) — with indexes on org/name/user/campaign/session
+- **Added**: `services/product_analytics.py` — event capture (`track`, `track_detached`) and every metric in `docs/beta-testing-plan.md` §7: time-to-first-campaign, campaign completion/failure rate, agent step drop-off funnel, feature adoption, session duration, D1/D7/D14 return rate, errors by endpoint
+- **Added**: `POST /api/v1/events` — batched browser ingest, allowlisted to four client-writable event names so a client cannot inflate pipeline counts; client timestamps clamped to server now
+- **Added**: `GET /api/v1/beta-metrics` — §7 dashboard, always org-scoped (cross-tenant rollup is not exposed over HTTP)
+- **Added**: `RequestMetricsMiddleware` — in-memory request/error counters for true error rates, plus persisted 4xx/5xx events (401/404 skipped as noise)
+- **Added**: Frontend `lib/analytics.ts` + `AnalyticsTracker` mounted in the dashboard layout — session lifecycle, page views, `trackFeature()` on campaign create, client create, magic-brief client create, and content publish
+- **Fixed**: A crashed pipeline left its campaign stuck in `running` forever. `_mark_campaign_failed` now moves campaign and workflow to `failed` and records the failure, so the failure-rate metric reflects reality
+
 ## 260328 — 40-Feature YC Implementation (Phases 1-4)
 
 ### Phase 1: "Make Them Pay"

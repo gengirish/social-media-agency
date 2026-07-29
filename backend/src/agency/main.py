@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agency.config import get_settings
 from agency.middleware.api_key_auth import ApiKeyAuthMiddleware
+from agency.middleware.request_metrics import RequestMetricsMiddleware
 from agency.middleware.tenant import TenantMiddleware
 from agency.routers import (
     acquisition,
@@ -23,6 +24,7 @@ from agency.routers import (
     notifications,
     oauth,
     portal,
+    product_analytics,
     public_api,
     publishing,
     reports,
@@ -60,6 +62,9 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
         allow_headers=["Authorization", "Content-Type", "X-API-Key"],
     )
+    # Added first => innermost, so TenantMiddleware has already resolved
+    # request.state.org_id by the time request outcomes are recorded.
+    app.add_middleware(RequestMetricsMiddleware)
     app.add_middleware(ApiKeyAuthMiddleware)
     app.add_middleware(TenantMiddleware)
 
@@ -87,6 +92,7 @@ def create_app() -> FastAPI:
         oauth,
         brand_analytics,
         competitive,
+        product_analytics,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

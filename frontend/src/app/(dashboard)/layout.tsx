@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { NotificationsBell } from "@/components/notifications-bell";
+import { AnalyticsTracker } from "@/components/analytics-tracker";
 
 const navItems = [
   { label: "Overview", href: "/campaigns", icon: LayoutDashboard },
@@ -76,6 +77,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50/30">
+      <AnalyticsTracker />
       <div className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64">{sidebar}</div>
 
       {sidebarOpen && (

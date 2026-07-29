@@ -2,296 +2,166 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Role & Responsibilities
+## What This Repo Is
 
-Your role is to analyze marketing requirements, delegate tasks to appropriate marketing agents, and ensure cohesive delivery of campaigns that drive leads, conversions, and revenue.
+**CampaignForge AI** — a multi-tenant SaaS that runs a full marketing campaign (strategy → SEO → content → ads → QA → publish) through a LangGraph agent pipeline with a human review gate.
 
-## Workflows
+The repo has **two distinct layers**. Know which one a task belongs to before starting:
 
-### Core Workflows
-- **Marketing:** `./.claude/workflows/primary-workflow.md` - Campaign lifecycle & content pipeline
-- **Sales:** `./.claude/workflows/sales-workflow.md` - Lead qualification to deal closure
-- **CRM:** `./.claude/workflows/crm-workflow.md` - Contact lifecycle & automation sequences
+1. **The product** — `backend/` (FastAPI + LangGraph), `frontend/` (Next.js 15), `db/`, `docker/`. Normal software engineering.
+2. **The marketing agency layer** — `.cursor/` (agents, skills, commands, workflows) + `campaigns/`. Prompt/config assets used to *run* marketing work, not application code. See [Marketing Agency Layer](#marketing-agency-layer).
 
-### Supporting Workflows
-- Marketing rules: `./.claude/workflows/marketing-rules.md`
-- Orchestration protocols: `./.claude/workflows/orchestration-protocol.md`
-- Documentation management: `./.claude/workflows/documentation-management.md`
-- **Data reliability: `./.claude/workflows/data-reliability-rules.md`** (MANDATORY)
+## Deployment
 
-**CRITICAL - DATA RELIABILITY:** NEVER fabricate data. Use MCP integrations for real metrics. If data unavailable, show "⚠️ NOT AVAILABLE" with setup instructions. See `data-reliability-rules.md` for full rules.
+| Environment | URL | Platform |
+|---|---|---|
+| Frontend (production) | `https://campaignforge.intelliforge.tech` | Vercel |
+| Backend API (production) | `https://campaignforge-api.fly.dev` | Fly.io (app `campaignforge-api`, region `sin`) |
+| Database | Neon serverless PostgreSQL | Neon |
 
-**IMPORTANT:** Analyze the skills catalog and activate the skills that are needed for the task during the process.
-**IMPORTANT:** You must follow strictly the marketing rules in `./.claude/workflows/marketing-rules.md` file.
-**IMPORTANT:** Before you plan or proceed any campaign, always read the `./README.md` file first to get context.
-**IMPORTANT:** Sacrifice grammar for the sake of concision when writing reports.
-**IMPORTANT:** In reports, list any unresolved questions at the end, if any.
-**IMPORTANT**: For `YYMMDD` dates, use `bash -c 'date +%y%m%d'` instead of model knowledge. Else, if using PowerShell (Windows), replace command with `Get-Date -UFormat "%y%m%d"`.
+`campaignforge.intelliforge.tech` is the canonical app URL — use it for links, env vars, OG/canonical URLs, redirects, sitemaps, and email links (mirrors `.cursor/rules/deployment-domains.mdc`).
 
-## Marketing Agents
+Backend config lives in [backend/fly.toml](backend/fly.toml) — note `internal_port = 8080` (the container listens on 8080; local dev uses 8001). Frontend build override is in [frontend/vercel.json](frontend/vercel.json): it patches a missing `page_client-reference-manifest.js` after `next build`. Do not remove that workaround without verifying the Vercel build still succeeds.
 
-### Core Marketing Agents
-- `attraction-specialist` - Lead generation & TOFU (SEO, competitor intel, landing pages)
-- `lead-qualifier` - Intent detection, lead scoring, audience analysis
-- `email-wizard` - Email campaigns, sequences, automation
-- `sales-enabler` - Sales collateral, case studies, presentations
-- `continuity-specialist` - Retention, engagement, customer success
-- `upsell-maximizer` - Revenue expansion, cross-sell, upsell strategies
+CI is [.github/workflows/ci.yml](.github/workflows/ci.yml) (backend lint/type/test, frontend lint/build, E2E). There is **no deploy job** — deploys are manual (`fly deploy` from `backend/`, Vercel Git integration for `frontend/`).
 
-### Supporting Agents
-- `researcher` - Market research & competitive analysis
-- `brainstormer` - Campaign ideation & creative concepts
-- `planner` - Campaign planning & content calendars
-- `project-manager` - Campaign management & coordination
-- `copywriter` - Content creation & messaging
-- `docs-manager` - Marketing documentation & brand guidelines
-- `mcp-manager` - MCP server integrations & tool orchestration
+## Commands
 
-### Reviewer Agents (Quality Assurance)
-- `brand-voice-guardian` - Brand consistency and voice validation
-- `conversion-optimizer` - CRO and conversion rate optimization
-- `seo-specialist` - SEO optimization and technical review
-- `manager-maria` - Marketing manager perspective (B2B mid-size company)
-- `solo-steve` - Solopreneur perspective (freelancer/consultant)
-- `startup-sam` - Startup founder perspective (early-stage)
+### Backend (`backend/`, Python 3.12+)
 
-## Enterprise Skill System (v2.0)
+```bash
+pip install -e ".[dev]"
+uvicorn agency.main:app --reload --port 8001   # API on :8001, docs at /api/docs
 
-### Skill Selection
-Use intelligent skill selection for optimal context loading:
-- **Registry:** `.claude/skills/skills-registry.json` - Central skill catalog with semantic metadata
-- **Dependencies:** `.claude/skills/dependency-graph.md` - Skill prerequisite relationships
-- **Selector:** `/skills:select [task]` - Intelligent skill matching
-
-### Reference Data
-Common data files for consistent outputs:
-- **Benchmarks:** `.claude/skills/common/data/benchmark-metrics.yaml` - Industry standards
-- **Formulas:** `.claude/skills/common/data/conversion-formulas.yaml` - Metric calculations
-- **MCP Matrix:** `.claude/skills/common/data/mcp-mapping-matrix.yaml` - Data source mappings
-
-### Copy Templates
-Reusable marketing patterns:
-- **Headlines:** `.claude/skills/common/templates/headline-formulas.md`
-- **CTAs:** `.claude/skills/common/templates/cta-library.md`
-- **Subject Lines:** `.claude/skills/common/templates/email-subject-lines.md`
-
-### Output Schemas
-Standardized outputs: `.claude/skills/schemas/output-schemas.yaml`
-- `cro-analysis` - CRO recommendations
-- `content-plan` - Content strategy
-- `campaign-brief` - Campaign planning
-- `seo-audit` - SEO analysis
-- `email-sequence` - Email design
-- `ab-test-plan` - Test design
-
----
-
-## Skills Catalog
-
-Activate relevant skills during tasks:
-
-### Core Skills
-- `marketing-fundamentals` - Core marketing concepts, funnel stages
-- `marketing-psychology` - 70+ mental models for marketing (NEW)
-- `marketing-ideas` - 140+ proven SaaS marketing strategies (NEW)
-- `seo-mastery` - Search optimization, keyword research
-- `social-media` - Social strategies, platform best practices
-- `email-marketing` - Email automation, deliverability
-- `paid-advertising` - Ad platform strategies, ROAS optimization
-- `content-strategy` - Content planning, editorial calendars
-- `analytics-attribution` - Performance measurement, attribution models
-- `brand-building` - Brand strategy, voice, positioning
-- `problem-solving` - Marketing problem-solving techniques
-- `document-skills` - DOCX, PDF, PPTX, XLSX document creation
-
-### CRO Skills (Conversion Rate Optimization)
-- `page-cro` - Homepage, landing page, pricing page optimization (NEW)
-- `form-cro` - Lead capture, contact, demo request forms (NEW)
-- `popup-cro` - Modals, overlays, exit intent popups (NEW)
-- `signup-flow-cro` - Registration, trial signup optimization (NEW)
-- `onboarding-cro` - Post-signup activation, first-run experience (NEW)
-- `paywall-upgrade-cro` - In-app paywalls, upgrade screens (NEW)
-- `ab-test-setup` - A/B test planning and experiment design (NEW)
-
-### Content & Copy Skills
-- `copywriting` - Marketing page copy, headlines, CTAs (NEW)
-- `copy-editing` - Edit and polish existing marketing copy (NEW)
-- `email-sequence` - Drip campaigns, nurture sequences (NEW)
-
-### SEO & Growth Skills
-- `programmatic-seo` - Template pages at scale (NEW)
-- `schema-markup` - Structured data, rich snippets (NEW)
-- `competitor-alternatives` - Comparison and alternative pages (NEW)
-- `launch-strategy` - Product launches, feature announcements (NEW)
-- `pricing-strategy` - Pricing, packaging, monetization (NEW)
-- `referral-program` - Referral, affiliate, word-of-mouth (NEW)
-- `free-tool-strategy` - Engineering-as-marketing tools (NEW)
-
-## MCP Integrations (Real Data Sources)
-
-Use MCP servers for verified data. See `.claude/skills/integrations/_registry.md` for full details.
-
-| Server | Category | Use For |
-|--------|----------|---------|
-| `google-search-console` | SEO | Search performance, rankings |
-| `google-analytics` | Analytics | Web traffic, user behavior |
-| `semrush` | SEO | Keywords, backlinks, domain analysis |
-| `dataforseo` | SEO | SERP data, keyword metrics |
-| `meta-ads` | Advertising | Facebook/Instagram ads |
-| `hubspot` | CRM | Contacts, deals, marketing automation |
-| `slack` | Communication | Team notifications |
-| `notion` | Project Mgmt | Pages, databases |
-| `asana` | Project Mgmt | Tasks, projects |
-| `twitter` | Social | Tweets, search |
-| `tiktok` | Social | Video trends |
-| `line` | Regional (JP) | Japan messaging |
-
-**Usage**: `/use-mcp [task]` or delegate to `mcp-manager` agent.
-
-## Documentation Management
-
-We keep all important docs in `./docs` folder and keep updating them, structure like below:
-
-```
-./docs
-├── project-overview-pdr.md
-├── project-roadmap.md
-├── brand-guidelines.md
-├── content-style-guide.md
-├── campaign-playbooks.md
-├── channel-strategies.md
-├── analytics-setup.md
-├── usage-guide.md
-├── reviewer-agents-update.md
-├── agent-organization-update.md
-└── features/                    # Living feature docs (auto-updated with code)
-    ├── README.md                # Feature index & stats
-    ├── api-endpoints.md
-    ├── database-schema.md
-    ├── services.md
-    ├── workers.md
-    ├── integrations.md
-    ├── websocket.md
-    ├── frontend-pages.md
-    ├── frontend-components.md
-    ├── auth-and-rbac.md
-    ├── billing.md
-    └── changelog.md
+ruff check src/ tests/
+mypy src/agency/ --ignore-missing-imports      # pyproject sets strict = true
+pytest tests/ -v --tb=short
+pytest tests/test_agents/test_graph.py::test_name -v   # single test
+pytest tests/ --no-cov                                 # skip coverage output
 ```
 
-**IMPORTANT**: After code changes that add/modify/remove features, run the `feature-docs` skill to keep `docs/features/` in sync.
+`pytest` is preconfigured with `asyncio_mode = "auto"` and `--cov=src/agency`, so async tests need no marker.
 
-## Command Categories
+### Frontend (`frontend/`, Node 18+)
 
-### Campaign Management
-- `/campaign:plan` - Create comprehensive campaign plan
-- `/campaign:brief` - Generate creative brief
-- `/campaign:analyze` - Analyze campaign performance
-- `/campaign:calendar` - Generate content calendar
+```bash
+npm install
+npm run dev            # :3000
+npm run lint
+npm run build
+npm run test:e2e                            # Playwright; auto-starts dev server
+npx playwright test e2e/campaigns.spec.ts   # single spec
+npm run test:e2e:ui
+```
 
-### Content Creation
-- `/content:blog` - Create SEO-optimized blog post
-- `/content:social` - Create platform-specific social content
-- `/content:email` - Create email copy with sequences
-- `/content:landing` - Create landing page copy
-- `/content:ads` - Create ad copy for paid campaigns
-- `/content:good` - Write good creative copy
-- `/content:fast` - Write creative copy quickly
-- `/content:enhance` - Enhance existing copy
-- `/content:cro` - Optimize content for conversion
-- `/content:editing` - Edit and polish existing copy (NEW)
+E2E needs a running backend. Set `PLAYWRIGHT_SKIP_WEBSERVER=1` to test against an already-running frontend. `e2e/global-setup.ts` runs first as a Playwright project dependency.
 
-### SEO Optimization
-- `/seo:keywords` - Conduct keyword research
-- `/seo:competitor` - Analyze competitor SEO strategy
-- `/seo:optimize` - Optimize content for keywords
-- `/seo:audit` - Perform comprehensive SEO audit
-- `/seo:programmatic` - Build SEO pages at scale (NEW)
-- `/seo:schema` - Add/optimize schema markup (NEW)
+### Full stack via Docker
 
-### Social Media
-- `/social:engage` - Develop engagement strategy
-- `/social:viral` - Create viral-potential content
-- `/social:schedule` - Create posting schedule
+```bash
+docker compose -f docker/docker-compose.yml up   # postgres, redis, backend :8001, frontend :3000
+```
 
-### Email & Sequences
-- `/sequence:welcome` - Create welcome sequence
-- `/sequence:nurture` - Create lead nurture sequence
-- `/sequence:re-engage` - Create re-engagement sequence
+Postgres auto-runs `db/init.sql` then `db/seed.sql` on first boot. To reset, delete the `pgdata` volume.
 
-### Analytics & Reporting
-- `/analytics:roi` - Calculate campaign ROI
-- `/analytics:funnel` - Analyze conversion funnel
-- `/analytics:report` - Generate performance report
-- `/report:weekly` - Generate weekly report
-- `/report:monthly` - Generate monthly report
+### Dates
 
-### Sales & Leads
-- `/sales:outreach` - Generate outreach sequence
-- `/sales:pitch` - Generate sales pitch
-- `/sales:battlecard` - Create competitive battlecard
-- `/sales:qualify` - Qualify leads
-- `/leads:score` - Design lead scoring model
-- `/leads:nurture` - Design lead nurture sequence
-- `/leads:qualify` - Create qualification criteria
+Never use model knowledge for `YYMMDD` dates. Run `Get-Date -UFormat "%y%m%d"` (PowerShell) or `date +%y%m%d` (bash).
 
-### CRM & Lifecycle
-- `/crm:sequence` - Create automated sequence
-- `/crm:segment` - Create customer segment
-- `/crm:score` - Calculate lead score
-- `/crm:lifecycle` - Manage lifecycle transitions
+## Architecture
 
-### Brand Management
-- `/brand:voice` - Create brand voice guidelines
-- `/brand:book` - Generate comprehensive brand book
-- `/brand:assets` - Manage brand assets
+### Agent pipeline (`backend/src/agency/agents/`)
 
-### CRO (Conversion Rate Optimization)
-- `/cro:page` - Optimize marketing pages (homepage, landing, pricing) (NEW)
-- `/cro:form` - Optimize lead capture, contact, demo forms (NEW)
-- `/cro:popup` - Create/optimize popups, modals, overlays (NEW)
-- `/cro:signup` - Optimize signup/registration flows (NEW)
-- `/cro:onboarding` - Optimize post-signup onboarding (NEW)
-- `/cro:paywall` - Optimize in-app paywalls, upgrade screens (NEW)
+```
+Orchestrator → [Strategy ∥ SEO] → [Content ∥ Ad Copy] → Human Review → QA/Brand → Compile → Analytics
+```
 
-### Operations & Planning
-- `/ops:daily` - Daily marketing tasks
-- `/ops:weekly` - Weekly marketing review
-- `/ops:monthly` - Monthly performance review
-- `/plan:cro` - Create CRO plan
+- [graph.py](backend/src/agency/agents/graph.py) defines the LangGraph `StateGraph`. Strategy/SEO run in parallel; Content/Ad Copy run in parallel and both consume Strategy + SEO output.
+- The graph compiles with `interrupt_before=["human_review"]` — execution **pauses** there and resumes when a review decision lands via `PATCH /api/v1/campaigns/{id}/review`.
+- Two conditional routers control flow: `_route_after_human_review` (approve / revise_content / revise_ads) and `_route_after_qa`, which loops critical QA failures back to Content or Ad Copy, capped at `retry_count >= 2`.
+- [graph_runtime.py](backend/src/agency/agents/graph_runtime.py) holds the **singleton compiled graph**, initialized in the FastAPI `startup` hook. Call `get_runtime_compiled_graph()`; never recompile per request. Checkpointing uses `AsyncPostgresSaver` over `NEON_DATABASE_URL`, silently falling back to `MemorySaver` if that var is empty or the pool fails. **A memory fallback means campaigns do not survive restarts** — check logs for `langgraph_checkpointer_memory_fallback` when resume behavior looks broken.
+- `NEON_DATABASE_URL` is separate from `DATABASE_URL` because the checkpointer uses psycopg (sync-style DSN) while the app uses SQLAlchemy asyncpg. `_normalize_psycopg_conninfo` strips the `postgresql+asyncpg://` prefix.
+- Shared state shape is `CampaignState` in [state.py](backend/src/agency/agents/state.py). Adding a field there affects every node.
+- `autonomous_operator.py`, `competitive_intel.py`, and `video_script.py` are separate entry points, not nodes in the main graph.
 
-### Research & Competitive Analysis
-- `/research:market` - Conduct market research
-- `/research:persona` - Create buyer persona
-- `/research:trend` - Analyze industry trends
-- `/competitor:deep` - Deep competitor analysis
-- `/competitor:alternatives` - Create competitor comparison pages (NEW)
+### LLM routing (`services/llm_provider.py`)
 
-### Growth & Launch
-- `/growth:launch` - Plan product launch, feature announcement (NEW)
-- `/growth:referral` - Design referral/affiliate program (NEW)
-- `/growth:free-tool` - Plan free tool for marketing (NEW)
-- `/pricing:strategy` - Design pricing and packaging (NEW)
+Three tiers, provider-agnostic. Agents only ever call `get_brain_llm()`, `get_worker_llm(temperature)`, or `get_ad_copy_llm()` — keep it that way when adding agents.
 
-### Marketing Strategy
-- `/marketing:psychology` - Apply psychological principles (NEW)
-- `/marketing:ideas` - Get 140+ marketing ideas (NEW)
+| Tier | Used by | Temperature |
+|---|---|---|
+| `brain` | Orchestrator, QA/Brand | 0.3 |
+| `worker` | Strategy, SEO, Content | 0.7 |
+| `ad_copy` | Ad Copy | 0.8 |
 
-### Testing
-- `/test:ab-setup` - Plan and design A/B tests (NEW)
+Six providers are supported: `anthropic` and `google` via their native SDKs, and `openai`, `nvidia`, `openrouter`, `bonsai` as OpenAI-compatible endpoints through `ChatOpenAI(base_url=...)`. **A blank API key disables a provider** — adding a key is the whole activation step.
 
-### Audits & Checklists
-- `/audit:full` - Comprehensive marketing audit
-- `/checklist:campaign-launch` - Pre-launch checklist
-- `/checklist:social-daily` - Daily social media checklist
-- `/checklist:seo-weekly` - Weekly SEO checklist
-- `/checklist:analytics-monthly` - Monthly analytics review
-- `/checklist:ab-testing` - A/B testing framework
-- `/checklist:content-approval` - Content approval workflow
+Per tier, the first provider in `LLM_PROVIDER_ORDER` (default `anthropic,google,openai,nvidia,openrouter,bonsai`) with a key becomes primary, and the rest attach as LangChain `.with_fallbacks()` — free-tier gateways return transient 503s under load, so a second key keeps a campaign alive. `LLM_{TIER}_PROVIDER` pins a tier to one provider and **disables its fallbacks** (pinning means "use exactly this"). `LLM_{TIER}_MODEL` overrides the model for the primary only — model ids are provider-specific, so forwarding one to a fallback would guarantee it fails.
 
-### Utilities
-- `/brainstorm` - Brainstorm marketing strategies
-- `/use-mcp` - Use MCP server tools
-- `/skills:select` - Intelligent skill selection (NEW)
+If no provider is configured, `get_llm()` raises naming the variables to set. Do not restore a silent default: the previous code built a client with an empty key, which killed the pipeline inside the first agent and left campaigns stuck in `running` with no diagnostic.
 
-**IMPORTANT:** *MUST READ* and *MUST COMPLY* all *INSTRUCTIONS* in project `./CLAUDE.md`, especially *WORKFLOWS* section is *CRITICALLY IMPORTANT*, this rule is *MANDATORY. NON-NEGOTIABLE. NO EXCEPTIONS. MUST REMEMBER AT ALL TIMES!!!*
+`GET /api/v1/health/llm` (authenticated) reports the resolved provider, model, and fallback chain per tier without exposing key material.
+
+### Auth & tenant isolation
+
+Dual-mode by design — do not collapse it:
+
+1. **Clerk** (production): when both `CLERK_JWKS_URL` and `CLERK_SECRET_KEY` are set, `get_current_user` verifies the RS256 JWT against cached JWKS, then **auto-provisions** an `Organization` + `User` + free `Subscription` on first sign-in ([dependencies.py](backend/src/agency/dependencies.py)). `DEMO_ORG_ID` + `DEMO_ORG_ALLOWLIST` route allowlisted emails into the seeded demo org instead.
+2. **Local HS256 JWT** (dev/CI/tests): falls back to `POST /api/v1/auth/login` against seeded users in `db/seed.sql`.
+
+`TenantMiddleware` decodes `org_id` from the bearer token into `request.state.org_id`; `get_org_id` prefers that over the token payload. **Every org-scoped query must filter on `org_id`** — there is no row-level security in the database. `ApiKeyAuthMiddleware` handles the `X-API-Key` path for `routers/public_api.py`.
+
+Frontend auth: [middleware.ts](frontend/middleware.ts) marks only `/`, `/sign-in`, `/sign-up`, and `/api/webhooks/*` public. `ClerkTokenSync` calls `setClerkTokenGetter()` once so [lib/api.ts](frontend/src/lib/api.ts) can attach `Authorization` headers — the API client has no direct Clerk dependency.
+
+### Real-time streaming
+
+Agent progress streams over **SSE**, not WebSocket, despite `docs/features/websocket.md`. `GET /api/v1/campaigns/{id}/stream?token=...` passes the JWT as a **query param** because `EventSource` cannot set headers ([lib/agent-stream.ts](frontend/src/lib/agent-stream.ts)). The client closes the stream on `complete` or `error` events.
+
+### Product analytics
+
+`product_event` + [services/product_analytics.py](backend/src/agency/services/product_analytics.py) back `GET /api/v1/beta-metrics`. Two rules when extending it:
+
+- **Only `CLIENT_WRITABLE_EVENTS` may come from the browser.** Pipeline and error events are server-authored so a client cannot inflate completion or failure counts. `POST /api/v1/events` silently rejects anything else.
+- **`AGENT_FUNNEL_ORDER` must match the graph's node names** — a test asserts this, because a drifted funnel silently reports fake drop-off.
+
+`track()` joins the caller's session (caller commits); `track_detached()` opens its own and never raises. `RequestMetricsMiddleware` keeps request totals in memory (resets on restart) and persists only 4xx/5xx.
+
+To make a new flow show up in the adoption table, call `trackFeature("kebab-name")` from the frontend at the point of success.
+
+### Backend layering
+
+`routers/` (23 routers, all mounted under `/api/v1`) → `services/` (21 modules: billing, publishing, scheduler, brand_learning, cross_learning, white_label, webhook_dispatcher, …) → `models/` (`tables.py` SQLAlchemy, `schemas.py` Pydantic, `database.py` session factory). Keep business logic in `services/`; routers stay thin.
+
+`main.py` registers a background `scheduler` on startup alongside the graph runtime — both need matching shutdown handling.
+
+### Database
+
+Schema is raw SQL in [db/init.sql](db/init.sql) (+ `db/seed.sql`), **not** Alembic migrations, even though `alembic` is a dependency. Schema changes must be applied to both `db/init.sql` and `models/tables.py`.
+
+### CORS
+
+`CORS_ORIGINS` accepts either a JSON array string or a comma-separated string (`_parse_cors_origins` in `main.py`).
+
+## Marketing Agency Layer
+
+Marketing assets live under **`.cursor/`** (there is no `.claude/` directory in this repo):
+
+| Path | Contents |
+|---|---|
+| `.cursor/workflows/` | `primary-workflow.md`, `sales-workflow.md`, `crm-workflow.md`, `marketing-rules.md`, `orchestration-protocol.md`, `documentation-management.md`, `data-reliability-rules.md` |
+| `.cursor/agents/` | 20 marketing agents (attraction-specialist, lead-qualifier, email-wizard, copywriter, seo-specialist, reviewer personas, …) |
+| `.cursor/skills/` | 70+ skills. The `agency-*` skills (`agency-backend`, `agency-frontend`, `agency-database`, `agency-ai-engine`, `agency-deploy`, `agency-testing`, `agency-billing`, `agency-realtime`, `agency-agentmail`, `agency-project`) document **this codebase** — read the relevant one before non-trivial product work |
+| `.cursor/commands/` | 93 slash commands grouped by domain (campaign, content, seo, cro, growth, analytics, …) |
+| `campaigns/` | Campaign outputs (e.g. `ai-upskill-cohort`) |
+
+When doing marketing work: read `README.md` for context, follow `.cursor/workflows/marketing-rules.md`, and activate relevant skills from `.cursor/skills/`.
+
+**CRITICAL — data reliability:** never fabricate metrics. Use MCP integrations for real data; if unavailable, output "⚠️ NOT AVAILABLE" with setup instructions. Full rules in `.cursor/workflows/data-reliability-rules.md`.
+
+Reporting style: sacrifice grammar for concision; list unresolved questions at the end.
+
+## Documentation
+
+`docs/features/` holds living feature docs (API endpoints, database schema, services, frontend pages, auth/RBAC, billing, changelog). After adding, modifying, or removing a feature, refresh them via the `feature-docs` skill. `docs/beta-testing-plan.md` defines the beta program; `docs/yc-pitch.md` the investor narrative.
+
+Known drift to watch for: `docs/features/websocket.md` describes the realtime layer as WebSocket, but the implementation is SSE.

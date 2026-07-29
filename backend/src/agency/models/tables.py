@@ -300,6 +300,31 @@ class ApiKey(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class ProductEvent(Base):
+    """Product-analytics event stream backing the beta metrics dashboard.
+
+    Distinct from ``AuditLog``: audit records *who changed what* for compliance,
+    this records *how the product is used* for the beta success criteria in
+    ``docs/beta-testing-plan.md`` §7. ``org_id``/``user_id`` are nullable so
+    errors on unauthenticated requests are still captured.
+    """
+
+    __tablename__ = "product_event"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    session_id = Column(String(64), default="")
+    name = Column(String(100), nullable=False)
+    category = Column(String(30), nullable=False, default="feature")
+    path = Column(String(500), default="")
+    campaign_id = Column(UUID(as_uuid=True), nullable=True)
+    duration_ms = Column(Integer)
+    properties = Column(JSONB, default={})
+    occurred_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

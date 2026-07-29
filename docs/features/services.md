@@ -7,14 +7,31 @@ Business logic layer in `backend/src/agency/services/`.
 **Status**: [LIVE]
 **File**: `services/llm_provider.py`
 
-Three-tier LLM routing:
+Three-tier, provider-agnostic LLM routing. Agents call only these three:
 
-| Function | Role | Model |
-|----------|------|-------|
-| `get_brain_llm()` | Orchestrator, QA | Claude Sonnet (Anthropic) |
-| `get_worker_llm(temperature=0.7)` | Strategy, SEO, Content | Gemini 2.0 Flash (Google) |
-| `get_ad_copy_llm()` | Ad variants | Claude (Anthropic) |
-| `_get_fallback_llm(temperature=0.7)` | Fallback | GPT-4o-mini (OpenAI) |
+| Function | Tier | Role | Temperature |
+|----------|------|------|-------------|
+| `get_brain_llm()` | `brain` | Orchestrator, QA | 0.3 |
+| `get_worker_llm(temperature=0.7)` | `worker` | Strategy, SEO, Content | 0.7 |
+| `get_ad_copy_llm()` | `ad_copy` | Ad variants | 0.8 |
+
+Six providers, each enabled purely by setting its API key:
+
+| Provider | Kind | Default model |
+|----------|------|---------------|
+| `anthropic` | native SDK | `claude-sonnet-4-20250514` (`claude-3-5-haiku-20241022` for ad copy) |
+| `google` | native SDK | `gemini-2.5-flash` |
+| `openai` | OpenAI-compatible | `gpt-4o-mini` |
+| `nvidia` | OpenAI-compatible | `deepseek-ai/deepseek-v4-flash` |
+| `openrouter` | OpenAI-compatible | `openai/gpt-oss-120b` |
+| `bonsai` | OpenAI-compatible | `gpt-4o-mini` |
+
+- `resolution_chain(tier)` — providers to try, best first
+- `resolve_provider(tier)` — the primary
+- `get_llm(tier, temperature=None)` — primary with the rest attached via `.with_fallbacks()`
+- `describe_providers()` — diagnostics for `GET /health/llm`; never returns keys
+
+Order comes from `LLM_PROVIDER_ORDER` (default `anthropic,google,openai,nvidia,openrouter,bonsai`). `LLM_{TIER}_PROVIDER` pins a tier and disables its fallbacks. `LLM_{TIER}_MODEL` overrides the primary's model only. With nothing configured, `get_llm()` raises naming the variables to set.
 
 Env vars: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`
 
@@ -175,3 +192,17 @@ Bid optimization analysis (LLM-assisted).
 **File**: `services/audit.py`
 
 - `log_action()` — Audit trail logging
+
+## Product Analytics
+**Status**: [LIVE]
+**File**: `services/product_analytics.py`
+
+Backs the beta metrics dashboard (`docs/beta-testing-plan.md` §7).
+
+- `track(db, ...)` — write on the caller's session; caller commits
+- `track_detached(...)` — own session, never raises (pipeline tasks, middleware)
+- `beta_metrics(db, org_id, window_days)` — assembles the full §7 table
+- Individual metrics: `time_to_first_campaign`, `campaign_outcomes`, `agent_step_dropoff`, `feature_adoption`, `session_duration`, `return_rate`, `errors_by_endpoint`
+- `record_request()` / `request_rate_snapshot()` — in-memory request counters; reset on process restart
+
+`CLIENT_WRITABLE_EVENTS` allowlists the four events the browser may write, so pipeline and error counts stay server-authored.

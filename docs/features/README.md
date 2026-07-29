@@ -4,12 +4,12 @@
 Living documentation of all platform features. Updated whenever the codebase changes.
 
 ## Quick Stats
-- **API Endpoints**: 83 across 20 routers
-- **Database Tables**: 17 (added Notification, AuditLog)
-- **Services**: 20
+- **API Endpoints**: 86 across 21 routers
+- **Database Tables**: 18 (added Notification, AuditLog, ProductEvent)
+- **Services**: 21
 - **Background Workers**: 3 (asyncio-based, no Celery)
 - **Frontend Pages**: 19
-- **Frontend Components**: 4 reusable
+- **Frontend Components**: 5 reusable
 - **Platform Integrations**: 5 (Clerk, Stripe, AgentMail, Social, LLM)
 - **LangGraph Agent Nodes**: 11
 
@@ -17,9 +17,9 @@ Living documentation of all platform features. Updated whenever the codebase cha
 
 | Document | Description | Last Updated |
 |----------|-------------|-------------|
-| [api-endpoints.md](api-endpoints.md) | All 83 REST API endpoints | 260328 |
-| [database-schema.md](database-schema.md) | 17 tables, columns, relationships | 260328 |
-| [services.md](services.md) | 20 business logic services | 260328 |
+| [api-endpoints.md](api-endpoints.md) | All 86 REST API endpoints | 260728 |
+| [database-schema.md](database-schema.md) | 18 tables, columns, relationships | 260728 |
+| [services.md](services.md) | 21 business logic services | 260728 |
 | [workers.md](workers.md) | Asyncio background tasks | 260328 |
 | [integrations.md](integrations.md) | Social, Stripe, Clerk, AgentMail, LLM | 260328 |
 | [websocket.md](websocket.md) | SSE real-time agent streaming | 260328 |
@@ -39,18 +39,18 @@ Living documentation of all platform features. Updated whenever the codebase cha
                      │ HTTPS + SSE
 ┌────────────────────▼────────────────────────────────┐
 │  Backend (FastAPI)                                    │
-│  Fly.io · 83 endpoints · 20 routers · Clerk JWT + HS256 fallback  │
+│  Fly.io · 86 endpoints · 21 routers · Clerk JWT + HS256 fallback  │
 ├──────────────────────────────────────────────────────┤
 │  LangGraph Agent Pipeline                            │
 │  Orchestrator → [Strategy ∥ SEO] → [Content ∥ Ads]  │
 │  → Human Review → QA/Brand → Output                 │
 ├──────────────────────────────────────────────────────┤
-│  Services: 20 modules — Billing · Publishing · Scheduler · LLM   │
+│  Services: 21 modules — Billing · Publishing · Scheduler · LLM   │
 │  Brand Learning · Magic Brief · Team · API Keys · Reports · …     │
 └────────────────────┬────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────┐
-│  PostgreSQL (Neon) · 17 tables · Multi-tenant        │
+│  PostgreSQL (Neon) · 18 tables · Multi-tenant        │
 └─────────────────────────────────────────────────────┘
 ```
 

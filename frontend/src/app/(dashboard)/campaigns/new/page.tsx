@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, type BrandProfileRequest, type Client, type CreateClientRequest } from "@/lib/api";
+import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
 import { Sparkles, ArrowLeft, ArrowRight, Rocket, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -71,6 +72,7 @@ export default function NewCampaignPage() {
       const res = await api.getClients();
       setClients(res.items);
       setClientId(client.id);
+      trackFeature("magic-brief-client-create");
       toast.success("Client created from Magic Brief");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Could not create client");
@@ -104,6 +106,7 @@ export default function NewCampaignPage() {
         end_date: endDate || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
         additional_context: additionalContext,
       });
+      trackFeature("campaign-create", { channels, from_magic_brief: !!magicBriefDraft });
       toast.success("Campaign launched! Agents are running...");
       router.push(`/campaigns/${campaign.id}`);
     } catch (err: any) {

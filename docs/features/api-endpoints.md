@@ -9,6 +9,7 @@ All routes are prefixed with `/api/v1`. Authentication uses `Authorization: Bear
 |--------|------|------|---------|---------|
 | GET | `/health` | No | `health` | Liveness check: `{status, service}` |
 | GET | `/health/db` | No | `health_db` | DB probe via `SELECT 1` |
+| GET | `/health/llm` | Yes | `health_llm` | Resolved provider/model/fallbacks per tier; never returns keys |
 
 ## Auth (Legacy)
 **Status**: [LIVE]
@@ -247,4 +248,13 @@ Authentication: `X-API-Key` header (API key), not JWT.
 |--------|------|------|---------|---------|
 | GET | `/audit` | Yes | `list_audit_logs` | Audit trail (enterprise) |
 
-**Total: 83 endpoints across 20 routers**
+## Product Analytics
+**Status**: [LIVE]
+**File**: `backend/src/agency/routers/product_analytics.py`
+
+| Method | Path | Auth | Handler | Purpose |
+|--------|------|------|---------|---------|
+| POST | `/events` | Yes | `ingest_events` | Batch browser events (≤50). Only `session_started`, `session_ended`, `page_view`, `feature_used` are accepted; others counted as rejected |
+| GET | `/beta-metrics` | Yes | `get_beta_metrics` | Beta plan §7 metrics for the caller's org (`window_days`, 1–180, default 28) |
+
+**Total: 86 endpoints across 21 routers**

@@ -13,6 +13,13 @@ export function setClerkTokenGetter(getter: () => Promise<string | null>) {
   _clerkGetToken = getter;
 }
 
+/** Base URL and token, for callers that need their own fetch (e.g. keepalive). */
+export const API_BASE_URL = API_BASE;
+
+export async function getAuthToken(): Promise<string | null> {
+  return _clerkGetToken ? await _clerkGetToken() : null;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = _clerkGetToken ? await _clerkGetToken() : null;
 
@@ -287,6 +294,10 @@ export const api = {
 
   // Feature 24: Content Suggestions
   getContentSuggestions: () => request<{ items: unknown[] }>("/api/v1/content/suggestions"),
+
+  // Beta metrics (docs/beta-testing-plan.md §7), scoped to the caller's org
+  getBetaMetrics: (windowDays = 28) =>
+    request<BetaMetrics>(`/api/v1/beta-metrics?window_days=${windowDays}`),
 };
 
 // --- Types ---
@@ -452,4 +463,63 @@ export interface TeamMember {
   is_active?: boolean;
   permissions?: string[];
   created_at?: string | null;
+}
+
+export interface BetaMetrics {
+  window_days: number;
+  since: string;
+  scope: string;
+  time_to_first_campaign: {
+    users_with_campaign: number;
+    median_seconds: number | null;
+    p90_seconds: number | null;
+    target_seconds: number;
+  };
+  campaign_outcomes: {
+    created: number;
+    completed: number;
+    failed: number;
+    in_flight: number;
+    completion_rate: number | null;
+    failure_rate: number | null;
+    completion_target: number;
+    failure_target: number;
+  };
+  agent_step_dropoff: {
+    agent: string;
+    campaigns_reached: number;
+    share_of_started: number | null;
+    dropped_from_previous: number;
+  }[];
+  feature_adoption: { feature: string; users: number; uses: number }[];
+  session_duration: {
+    sessions: number;
+    median_seconds: number | null;
+    mean_seconds: number | null;
+  };
+  return_rate: {
+    day: number;
+    eligible_users: number;
+    returned_users: number;
+    rate: number | null;
+  }[];
+  errors_by_endpoint: {
+    endpoint: string;
+    method: string;
+    errors: number;
+    server_errors: number;
+  }[];
+  request_rates: {
+    note: string;
+    total_requests: number;
+    total_errors: number;
+    error_rate: number | null;
+    by_endpoint: {
+      endpoint: string;
+      method: string;
+      requests: number;
+      errors: number;
+      error_rate: number;
+    }[];
+  };
 }

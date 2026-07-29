@@ -226,3 +226,27 @@ class DashboardStats(BaseModel):
     total_agent_runs: int = 0
     campaigns_running: int = 0
     content_drafts: int = 0
+
+
+# --- Product analytics ---
+
+
+class ProductEventIn(BaseModel):
+    """A single browser-authored analytics event."""
+
+    name: str = Field(max_length=100)
+    session_id: str = Field(default="", max_length=64)
+    path: str = Field(default="", max_length=500)
+    feature: str = Field(default="", max_length=100)
+    duration_ms: int | None = Field(default=None, ge=0, le=86_400_000)
+    occurred_at: datetime | None = None
+    properties: dict = Field(default_factory=dict)
+
+
+class ProductEventBatch(BaseModel):
+    events: list[ProductEventIn] = Field(min_length=1, max_length=50)
+
+
+class ProductEventAck(BaseModel):
+    accepted: int = 0
+    rejected: int = 0
