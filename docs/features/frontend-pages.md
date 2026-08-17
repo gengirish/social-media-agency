@@ -1,7 +1,7 @@
 # Frontend Pages
-<!-- verified: 260328 -->
+<!-- verified: 260817 -->
 
-Next.js 14 App Router. All dashboard routes protected by Clerk middleware.
+Next.js 15 (`^15.5.14`) + React 19 App Router, Clerk `^7.0.6`. All dashboard routes protected by Clerk middleware — only `/`, `/sign-in`, `/sign-up`, and `/api/webhooks/*` are public.
 
 ## Layout Hierarchy
 
@@ -17,9 +17,13 @@ RootLayout (server)
 
 ## Pages
 
-### Root `/`
-**File**: `src/app/page.tsx` | **Client**
-Clerk auth check → redirect to `/campaigns` (signed in) or `/sign-in`.
+### Root `/` — Marketing Landing Page
+**File**: `src/app/page.tsx` | **Client** | ~541 lines
+Public marketing site, not a redirect. Renders a hero, the 7-agent pipeline visualisation (`agents` array with lanes), a 4-tier `plans` grid, feature sections, and social proof. Uses `useAuth()` to swap CTAs for signed-in visitors.
+
+> **[STUB] social proof:** the logo strip and both testimonials are placeholders, and the page says so on its face — "Placeholder logos — add your customers here" (L464) and "— Placeholder quote, Marketing Lead" / "Agency founder" (L480, L484). So nothing is passed off as a real customer. Still not launch-ready: the section heading above them reads "Trusted by teams who ship campaigns weekly" (L463), which asserts traction that does not exist, and the "$6k/mo retainer" line (L478) reads as a real result to a skimming visitor. Replace with real permissioned quotes or delete the section — hardening backlog P1-1.
+>
+> Pricing on this page is hardcoded separately from `PLAN_CONFIG` and must be kept in sync by hand. Free currently reads "1 client / 30 posts", which matches.
 
 ### Sign In `/sign-in/[[...sign-in]]`
 **File**: `src/app/sign-in/[[...sign-in]]/page.tsx` | **Server**

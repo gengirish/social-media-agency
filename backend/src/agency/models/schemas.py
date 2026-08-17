@@ -2,7 +2,7 @@ from datetime import date, datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Enums ---
@@ -250,3 +250,76 @@ class ProductEventBatch(BaseModel):
 class ProductEventAck(BaseModel):
     accepted: int = 0
     rejected: int = 0
+
+
+# --- Webhooks ---
+
+
+class WebhookCreate(BaseModel):
+    """Registration payload. ``events`` empty means "every supported event"."""
+
+    url: str = Field(..., min_length=8, max_length=2000)
+    events: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("url")
+    @classmethod
+    def _must_be_http(cls, value: str) -> str:
+        url = value.strip()
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("url must start with http:// or https://")
+        return url
+
+    @field_validator("events")
+    @classmethod
+    def _known_events(cls, value: list[str]) -> list[str]:
+        from agency.services.webhook_dispatcher import SUPPORTED_EVENTS
+
+        unknown = [e for e in value if e not in SUPPORTED_EVENTS]
+        if unknown:
+            raise ValueError(
+                f"unsupported events: {', '.join(sorted(unknown))}. "
+                f"supported: {', '.join(sorted(SUPPORTED_EVENTS))}"
+            )
+        return list(dict.fromkeys(value))
+
+
+class WebhookResponse(BaseModel):
+    """Safe representation — deliberately carries no ``secret``."""
+
+    id: UUID
+    org_id: UUID
+    url: str
+    events: list[str]
+    is_active: bool
+    created_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class WebhookCreatedResponse(WebhookResponse):
+    """Registration response — the only place the signing secret is ever shown."""
+
+    secret: str
+
+
+class WebhookListResponse(BaseModel):
+    items: list[WebhookResponse]
+    total: int
+
+
+class WebhookDeliveryResponse(BaseModel):
+    id: UUID
+    webhook_id: UUID
+    event_type: str
+    attempt: int
+    status: str
+    response_code: int | None = None
+    error: str | None = ""
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class WebhookDeliveryListResponse(BaseModel):
+    items: list[WebhookDeliveryResponse]
+    total: int

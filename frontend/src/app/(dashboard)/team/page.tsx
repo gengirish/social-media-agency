@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, UserPlus } from "lucide-react";
+import { AlertTriangle, Loader2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { api, type TeamMember } from "@/lib/api";
@@ -59,8 +59,21 @@ export default function TeamPage() {
     if (!inviteEmail.trim()) return;
     setInviting(true);
     try {
-      await api.inviteTeamMember(inviteEmail.trim(), inviteRole);
-      toast.success("Invitation sent");
+      const res = await api.inviteTeamMember(inviteEmail.trim(), inviteRole);
+      // The backend only sends an email when AgentMail is configured for this
+      // org. Report what it actually did — the old copy always said "Invitation
+      // sent", which was usually false.
+      const emailed = res.message?.includes("Invitation email sent");
+      if (emailed) {
+        toast.success(res.message);
+      } else {
+        toast.warning(res.message ?? "User created, but no invitation email was sent.", {
+          description: res.temp_password
+            ? `Temporary password: ${res.temp_password}`
+            : undefined,
+          duration: 30000,
+        });
+      }
       setInviteEmail("");
       setShowInvite(false);
       load();
@@ -147,6 +160,18 @@ export default function TeamPage() {
           </div>
         </form>
       )}
+
+      {/* `services/team.py::check_permission` exists but no route calls it, so a
+          role badge is a label, not a restriction. Say so rather than let the
+          badge imply enforced access control. */}
+      <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+        <p className="text-sm text-amber-900">
+          <span className="font-medium">Roles are not enforced yet.</span> Every member of this
+          organization can currently read and change everything in it — the role shown below is a
+          label only. Invite people accordingly.
+        </p>
+      </div>
 
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         <ul className="divide-y divide-slate-100">

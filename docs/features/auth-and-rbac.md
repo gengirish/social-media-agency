@@ -1,5 +1,5 @@
 # Authentication & RBAC
-<!-- verified: 260328 -->
+<!-- verified: 260817 -->
 
 ## Auth Flow
 **Status**: [LIVE]
@@ -42,6 +42,19 @@ If Clerk verification fails or is not configured:
 - `TenantMiddleware` decodes legacy HS256 JWTs and sets `request.state.org_id`
 - `get_org_id` dependency: uses `request.state.org_id` OR falls back to `user["org_id"]` from `get_current_user` (needed for Clerk JWTs which bypass TenantMiddleware)
 - All data queries are scoped by `org_id`
+
+### Middleware Stack
+
+Registered in `main.py`. Added first = innermost, so `TenantMiddleware` has already resolved `request.state.org_id` by the time outcomes are recorded.
+
+| Middleware | File | Role |
+|------------|------|------|
+| `TenantMiddleware` | `middleware/tenant.py` | Decodes `org_id` into `request.state` |
+| `ApiKeyAuthMiddleware` | `middleware/api_key_auth.py` | Handles the `X-API-Key` path for `routers/public_api.py` |
+| `RequestMetricsMiddleware` | `middleware/request_metrics.py` | In-memory request counters; persists 4xx/5xx only |
+| `CORSMiddleware` | — | `CORS_ORIGINS` accepts a JSON array string **or** a comma-separated string |
+
+> ⚠️ **There is no row-level security in the database.** Tenant isolation is enforced entirely in application code, so **every org-scoped query must filter on `org_id`**. A missed filter is a silent cross-tenant data leak. `backend/tests/test_tenancy.py` exists to assert org A cannot read org B's data but currently fails to import — see hardening backlog P0-2.
 
 ## Roles
 

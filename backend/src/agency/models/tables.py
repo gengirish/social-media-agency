@@ -1,20 +1,89 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     Date,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
+    UniqueConstraint,
+    Uuid,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.types import UserDefinedType
+
+# Postgres-native types carrying a SQLite variant. Behaviour on Postgres is
+# byte-for-byte the same as the bare types used elsewhere in this module (uuid,
+# text[]); the variant only exists so the webhook tables can be exercised
+# against an in-memory SQLite database in unit tests, where the rest of the
+# schema (JSONB, arrays) cannot be created.
+PortableUUID = UUID(as_uuid=True).with_variant(Uuid(as_uuid=True), "sqlite")
+PortableTextArray = ARRAY(Text).with_variant(JSON(), "sqlite")
+PortableJSONB = JSONB().with_variant(JSON(), "sqlite")
+
+# Every embedding column is this wide regardless of which provider produced the
+# vector. pgvector fixes the dimension per column, but the configured embedding
+# provider can change (Google returns 768, OpenAI 1536), so shorter vectors are
+# zero-padded to this width on write and on query. Cosine similarity is
+# unchanged by padding both operands with the same trailing zeros — the dot
+# product and both norms are identical — so this costs storage, not accuracy.
+# ``knowledge_embedding.embedding_dim`` records the true, unpadded width and
+# every query filters on the model that produced the row, so vectors from two
+# different providers are never compared.
+EMBEDDING_STORAGE_DIM = 1536
+
+
+class PgVector(UserDefinedType[list[float]]):
+    """Minimal ``pgvector`` column type.
+
+    Hand-rolled rather than imported from the ``pgvector`` package so the schema
+    adds no Python dependency: the single prerequisite is
+    ``CREATE EXTENSION IF NOT EXISTS vector`` on the database. Values move over
+    the wire in pgvector's text form (``[0.1,0.2]``).
+    """
+
+    cache_ok = True
+
+    def __init__(self, dim: int = EMBEDDING_STORAGE_DIM) -> None:
+        self.dim = dim
+
+    def get_col_spec(self, **kw: Any) -> str:
+        return f"vector({self.dim})"
+
+    def bind_processor(self, dialect: Any) -> Any:
+        def process(value: Any) -> Any:
+            if value is None:
+                return None
+            return "[" + ",".join(repr(float(v)) for v in value) + "]"
+
+        return process
+
+    def result_processor(self, dialect: Any, coltype: Any) -> Any:
+        def process(value: Any) -> Any:
+            if value is None:
+                return None
+            if isinstance(value, list | tuple):
+                return [float(v) for v in value]
+            return [float(v) for v in str(value).strip("[] ").split(",") if v.strip()]
+
+        return process
+
+
+# SQLite has no vector type; the variant stores the same list as JSON so the
+# retrieval path can be exercised in unit tests (similarity is then computed in
+# Python — see ``services/knowledge_base.py``).
+PortableVector = PgVector(EMBEDDING_STORAGE_DIM).with_variant(JSON(), "sqlite")
 
 
 class Base(DeclarativeBase):
@@ -146,6 +215,9 @@ class Campaign(Base):
     agent_runs = relationship("AgentRun", back_populates="campaign")
     workflow = relationship("Workflow", back_populates="campaign", uselist=False)
 
+    # Mirrors db/init.sql — the campaign list endpoint filters (org_id, status).
+    __table_args__ = (Index("idx_campaign_org_status", "org_id", "status"),)
+
 
 class ContentPiece(Base):
     __tablename__ = "content_piece"
@@ -171,6 +243,18 @@ class ContentPiece(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     campaign = relationship("Campaign", back_populates="content_pieces")
+
+    # Mirrors db/init.sql. The partial index serves the scheduler's once-a-minute
+    # sweep for due content — the highest-frequency query in the system.
+    __table_args__ = (
+        Index(
+            "idx_content_piece_due",
+            "status",
+            "scheduled_at",
+            postgresql_where=text("status = 'scheduled'"),
+        ),
+        Index("idx_content_piece_org_status", "org_id", "status"),
+    )
 
 
 class AgentRun(Base):
@@ -323,6 +407,84 @@ class ProductEvent(Base):
     properties = Column(JSONB, default={})
     occurred_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class Webhook(Base):
+    """A tenant-registered outbound HTTP endpoint.
+
+    ``secret`` is the per-webhook HMAC-SHA256 signing key. It is returned to the
+    caller exactly once, at registration, and never echoed by list responses —
+    the receiver needs the same value to verify ``X-Webhook-Signature``, so it is
+    stored in plaintext rather than hashed.
+    """
+
+    __tablename__ = "webhook"
+
+    id = Column(PortableUUID, primary_key=True, default=uuid.uuid4)
+    org_id = Column(PortableUUID, ForeignKey("organization.id"), nullable=False)
+    url = Column(Text, nullable=False)
+    events = Column(PortableTextArray, default=[])
+    secret = Column(String(128), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class WebhookDelivery(Base):
+    """One row per delivery *attempt* — the audit trail behind a webhook."""
+
+    __tablename__ = "webhook_delivery"
+
+    id = Column(PortableUUID, primary_key=True, default=uuid.uuid4)
+    webhook_id = Column(
+        PortableUUID, ForeignKey("webhook.id", ondelete="CASCADE"), nullable=False
+    )
+    org_id = Column(PortableUUID, ForeignKey("organization.id"), nullable=False)
+    event_type = Column(String(100), nullable=False)
+    attempt = Column(Integer, nullable=False, default=1)
+    status = Column(String(20), nullable=False, default="failed")
+    response_code = Column(Integer)
+    error = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class KnowledgeEmbedding(Base):
+    """One embedded chunk of the marketing skill library — the RAG index.
+
+    Not org-scoped: the skill library ships with the product and is identical
+    for every tenant, so there is no tenant data here and nothing to filter on.
+    If per-tenant documents are ever indexed, add ``org_id`` and scope the
+    query in :mod:`agency.services.knowledge_base` — there is no RLS.
+
+    ``embedding_provider``/``embedding_model``/``embedding_dim`` are stored per
+    row because vectors from different models are not comparable. Retrieval
+    filters on the model currently configured, so switching providers makes the
+    old rows invisible rather than silently returning nonsense; re-run
+    ``backend/scripts/index_knowledge_base.py`` after a switch.
+    """
+
+    __tablename__ = "knowledge_embedding"
+
+    id = Column(PortableUUID, primary_key=True, default=uuid.uuid4)
+    # Stable per source file (md5 of the relative path), so a re-index replaces
+    # rather than duplicates.
+    document_id = Column(String(64), nullable=False)
+    source_path = Column(Text, nullable=False)
+    title = Column(String(500), nullable=False, default="")
+    category = Column(String(100), nullable=False, default="general")
+    chunk_index = Column(Integer, nullable=False, default=0)
+    chunk_text = Column(Text, nullable=False)
+    embedding_provider = Column(String(50), nullable=False)
+    embedding_model = Column(String(100), nullable=False)
+    embedding_dim = Column(Integer, nullable=False)
+    embedding = Column(PortableVector, nullable=False)
+    metadata_ = Column("metadata", PortableJSONB, default={})
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "embedding_model", "document_id", "chunk_index", name="uq_knowledge_embedding_chunk"
+        ),
+    )
 
 
 class AuditLog(Base):

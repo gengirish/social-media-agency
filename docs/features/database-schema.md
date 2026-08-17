@@ -1,9 +1,11 @@
 # Database Schema
-<!-- verified: 260328 -->
+<!-- verified: 260817 -->
 
-PostgreSQL (Neon serverless) via SQLAlchemy async. 17 tables total.
+PostgreSQL (Neon serverless) via SQLAlchemy async. 18 tables total.
 
 **File**: `backend/src/agency/models/tables.py`
+
+Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations, despite `alembic` being a dependency. Any schema change must be applied to **both** `db/init.sql` and `models/tables.py` or the two drift apart silently.
 
 ## Organization
 **Status**: [LIVE]

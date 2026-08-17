@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, status
+import structlog
 from jose import JWTError, jwt as jose_jwt
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import func, select
@@ -38,6 +39,9 @@ from agency.models.tables import (
 )
 from agency.services import product_analytics as pa
 from agency.services.billing import PLAN_CONFIG
+from agency.services.webhook_dispatcher import EVENT_CAMPAIGN_COMPLETED, dispatch_webhook
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
 
@@ -322,6 +326,12 @@ async def _run_campaign_pipeline(
             properties={"resumed": False},
         )
 
+        await dispatch_webhook(
+            org_id,
+            EVENT_CAMPAIGN_COMPLETED,
+            {"campaign_id": str(campaign_id), "client_id": str(client_id), "resumed": False},
+        )
+
     except Exception as e:
         await queue.put(AgentStreamEvent(
             type="error",
@@ -410,19 +420,22 @@ async def _persist_campaign_results(
                     ),
                 }
                 if values.get("seo_keywords"):
-                    content_summary["best_performing_topics"] = [
+                    # These are the SEO agent's *target* keywords, not measured
+                    # performance. They used to be stored as
+                    # ``best_performing_topics``, which read as an analytics result.
+                    content_summary["seo_target_keywords"] = [
                         kw.get("keyword", "")
                         for kw in values.get("seo_keywords", [])[:5]
                     ]
                 await update_brand_learnings(
                     db, UUID(client_id), content_summary
                 )
-            except Exception:
-                pass  # Brand learning is non-critical
+            except Exception as e:  # noqa: BLE001 — brand learning is non-critical
+                logger.warning("brand_learning_update_failed", error=str(e))
 
             await db.commit()
-    except Exception:
-        pass  # Log error in production
+    except Exception as e:  # noqa: BLE001 — post-run bookkeeping must not crash the run
+        logger.error("campaign_completion_bookkeeping_failed", error=str(e))
 
 
 @router.get("/{campaign_id}/stream")
@@ -544,11 +557,15 @@ async def get_trends(
     platform: str | None = None,
     user=Depends(get_current_user),
 ):
-    """Get trending topics for campaign inspiration."""
+    """Get trending topics for campaign inspiration (live Exa search).
+
+    Passes the service payload through unchanged: on failure or a missing
+    ``EXA_API_KEY`` this returns ``{"status": "unavailable", "reason": ...}``
+    with an empty ``items`` list, never fabricated topics.
+    """
     from agency.services.trends import get_trending_topics
 
-    trends = await get_trending_topics(platform)
-    return {"items": trends}
+    return await get_trending_topics(platform)
 
 
 @router.post("/autonomous")
@@ -754,6 +771,12 @@ async def _resume_pipeline(
             org_id=org_id,
             campaign_id=campaign_id,
             properties={"resumed": True},
+        )
+
+        await dispatch_webhook(
+            org_id,
+            EVENT_CAMPAIGN_COMPLETED,
+            {"campaign_id": str(campaign_id), "client_id": str(client_id), "resumed": True},
         )
 
     except Exception as e:

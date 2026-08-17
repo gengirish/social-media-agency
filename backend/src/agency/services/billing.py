@@ -27,7 +27,9 @@ PLAN_CONFIG = {
         "posts_limit": 200,
         "campaigns_limit": 20,
         "amount": 4900,
-        "features": ["3 clients", "20 campaigns/mo", "2 platforms", "Email reports"],
+        # No report is ever emailed (nothing in reports.py sends mail), so
+        # "Email reports" was dropped in the 260817 stub audit.
+        "features": ["3 clients", "20 campaigns/mo", "2 platforms"],
     },
     "growth": {
         "price_id": _s.stripe_price_growth or "price_growth",
@@ -40,7 +42,9 @@ PLAN_CONFIG = {
             "Unlimited campaigns",
             "All platforms",
             "Analytics",
-            "Team (3 seats)",
+            # No seat limit exists in PLAN_CONFIG or is enforced anywhere, so
+            # "Team (3 seats)" was dropped in the 260817 stub audit.
+            "Team workspaces",
         ],
     },
     "agency": {

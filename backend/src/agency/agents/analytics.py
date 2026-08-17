@@ -38,8 +38,31 @@ Return ONLY valid JSON:
 
 async def analytics_node(state: CampaignState) -> dict:
     engagement = state.get("engagement_data") or {}
+
+    # ``engagement_data`` is only populated once a campaign's content has been
+    # published AND platform metrics have been fetched. On a fresh campaign it is
+    # empty, and an LLM handed `{}` will happily invent "LinkedIn gets 3x
+    # engagement". Return an explicit unavailable result instead of calling the
+    # model — never fabricate performance analysis.
+    if not engagement:
+        return {
+            "analytics_insights": {
+                "status": "unavailable",
+                "reason": (
+                    "No measured engagement data for this campaign yet. Publish "
+                    "content to a connected platform account and wait for the "
+                    "daily metrics refresh; recommendations require real numbers."
+                ),
+                "summary": None,
+                "recommendations": [],
+                "by_platform": {},
+                "risks_or_gaps": [],
+            },
+            "current_agent": "analytics",
+        }
+
     llm = get_worker_llm(temperature=0.4)
-    engagement_json = json.dumps(engagement, indent=2, default=str)
+    engagement_json = json.dumps(engagement, separators=(",", ":"), default=str)
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT.format(engagement_json=engagement_json)),
@@ -51,6 +74,7 @@ async def analytics_node(state: CampaignState) -> dict:
     response = await llm.ainvoke(messages)
     raw = response.content if isinstance(response.content, str) else str(response.content)
 
+    insights: dict
     try:
         insights = json.loads(raw)
     except json.JSONDecodeError:
@@ -65,6 +89,9 @@ async def analytics_node(state: CampaignState) -> dict:
                 "by_platform": {},
                 "risks_or_gaps": ["Could not parse structured analytics output."],
             }
+
+    if isinstance(insights, dict):
+        insights.setdefault("status", "available")
 
     return {
         "analytics_insights": insights,

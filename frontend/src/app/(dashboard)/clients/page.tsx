@@ -6,7 +6,6 @@ import { api, type Client } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
 import { Plus, Users, Loader2, Globe, Mail, Building2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -33,8 +32,8 @@ export default function ClientsPage() {
       setShowForm(false);
       setFormData({ brand_name: "", industry: "", description: "", website_url: "", contact_email: "" });
       loadClients();
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setCreating(false);
     }

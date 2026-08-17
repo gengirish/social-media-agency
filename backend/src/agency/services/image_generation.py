@@ -20,10 +20,17 @@ async def generate_social_image(
     platform: str = "twitter",
     style: str = "professional",
 ) -> dict:
-    """Generate a social media image via fal.ai API.
+    """Generate a social media image via fal.ai's text-to-image API.
 
-    Returns dict with image_url or error message.
-    In production, calls fal.ai's text-to-image API.
+    This is a real HTTP call, not a stub. Returns one of three shapes, and
+    ``image_url`` is ``None`` in every case except success:
+
+    - ``{"status": "skipped"}``  — ``FAL_API_KEY`` is blank, so the feature is off.
+    - ``{"status": "error"}``    — the call was made and failed.
+    - ``{"status": "generated", "image_url": ...}`` — success.
+
+    Callers must branch on ``status``; never treat a missing ``image_url`` as an
+    image that simply has not loaded yet.
     """
     settings = get_settings()
     if not settings.fal_api_key:

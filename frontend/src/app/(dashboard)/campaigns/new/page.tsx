@@ -7,6 +7,7 @@ import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
 import { Sparkles, ArrowLeft, ArrowRight, Rocket, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { canPublish } from "@/lib/platforms";
 
 const MAGIC_BRIEF_STORAGE_KEY = "campaignforge_magic_brief_client";
 
@@ -109,8 +110,8 @@ export default function NewCampaignPage() {
       trackFeature("campaign-create", { channels, from_magic_brief: !!magicBriefDraft });
       toast.success("Campaign launched! Agents are running...");
       router.push(`/campaigns/${campaign.id}`);
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -240,9 +241,19 @@ export default function NewCampaignPage() {
                 >
                   <span className="text-lg">{ch.emoji}</span>
                   {ch.label}
+                  {!canPublish(ch.id) && (
+                    <span className="ml-auto rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                      draft only
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
+            <p className="mt-2 text-xs text-slate-500">
+              CampaignForge writes and schedules content for every channel above. Channels marked
+              &ldquo;draft only&rdquo; cannot be published to automatically yet — you post those
+              yourself.
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>

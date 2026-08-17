@@ -13,15 +13,27 @@ import {
   Loader2,
   TrendingUp,
   Clock,
+  AlertTriangle,
 } from "lucide-react";
 
 type AnalyticsTab = "overview" | "trends" | "benchmarks";
 
 interface TrendItem {
   topic: string;
-  volume: string;
-  category: string;
-  platform?: string;
+  url?: string;
+  source?: string | null;
+  platform?: string | null;
+  published_date?: string | null;
+  recency_days?: number | null;
+}
+
+interface TrendsResponse {
+  status?: string;
+  reason?: string;
+  source?: string;
+  provenance?: string;
+  fetched_at?: string;
+  items?: TrendItem[];
 }
 
 interface CrossInsight {
@@ -57,6 +69,8 @@ export default function AnalyticsPage() {
   const [trends, setTrends] = useState<TrendItem[]>([]);
   const [trendsLoading, setTrendsLoading] = useState(false);
   const [trendsError, setTrendsError] = useState("");
+  const [trendsUnavailable, setTrendsUnavailable] = useState("");
+  const [trendsProvenance, setTrendsProvenance] = useState("");
   const [trendPlatform, setTrendPlatform] = useState("");
 
   const [crossLoading, setCrossLoading] = useState(false);
@@ -80,11 +94,19 @@ export default function AnalyticsPage() {
     if (tab !== "trends") return;
     setTrendsLoading(true);
     setTrendsError("");
+    setTrendsUnavailable("");
+    setTrendsProvenance("");
     api
       .getTrends(trendPlatform || undefined)
       .then((data) => {
-        const items = (data.items || []) as TrendItem[];
-        setTrends(items);
+        const payload = data as TrendsResponse;
+        if (payload.status === "unavailable") {
+          setTrends([]);
+          setTrendsUnavailable(payload.reason || "Trend data source is not available.");
+          return;
+        }
+        setTrends(payload.items || []);
+        setTrendsProvenance(payload.provenance || "");
       })
       .catch((e: unknown) =>
         setTrendsError(e instanceof Error ? e.message : "Failed to load trends")
@@ -341,13 +363,22 @@ export default function AnalyticsPage() {
             </div>
           </div>
 
+          {/* No code path ever populates this panel — there is no per-platform
+              analytics view in the dashboard. Say so instead of implying that
+              connecting an account unlocks it. */}
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="mb-2 font-semibold text-slate-900">Platform Insights</h3>
+            <div className="mb-2 flex items-center gap-2">
+              <h3 className="font-semibold text-slate-900">Platform Insights</h3>
+              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+                Not available yet
+              </span>
+            </div>
             <p className="text-sm text-slate-500">
-              Connect social platform accounts in Settings to see per-platform engagement metrics, optimal
-              posting times, and content performance analytics.
+              Per-platform engagement, ROI, and optimal-posting-time breakdowns are not built yet.
+              Live metrics for individual posts are fetched from connected accounts and shown on
+              each content piece; there is no roll-up view here.
             </p>
-            <div className="mt-4 flex gap-4 text-sm text-slate-400">
+            <div className="mt-4 flex gap-4 text-sm text-slate-300">
               <div className="flex items-center gap-1">
                 <TrendingUp className="h-4 w-4" /> Engagement
               </div>
@@ -383,7 +414,7 @@ export default function AnalyticsPage() {
               </select>
             </div>
             <p className="text-sm text-slate-500">
-              Topic signals from the trends service (demo data until external feeds are connected).
+              Live web results from the Exa search API. Every row links to its source.
             </p>
           </div>
 
@@ -395,33 +426,73 @@ export default function AnalyticsPage() {
             <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {trendsError}
             </div>
+          ) : trendsUnavailable ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+              <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>Not available — {trendsUnavailable}</span>
+              </p>
+              <p className="mt-2 pl-6 text-sm text-amber-800">
+                No trend data is shown rather than estimated topics. Once a key is configured, this
+                tab lists real, source-linked results.
+              </p>
+            </div>
           ) : trends.length === 0 ? (
             <p className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
               No trend rows returned.
             </p>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-slate-100 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Topic</th>
-                    <th className="px-4 py-3">Platform</th>
-                    <th className="px-4 py-3">Volume</th>
-                    <th className="px-4 py-3">Category</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trends.map((row, i) => (
-                    <tr key={`${row.topic}-${row.platform}-${i}`} className="border-b border-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-900">{row.topic}</td>
-                      <td className="px-4 py-3 capitalize text-slate-600">{row.platform ?? "—"}</td>
-                      <td className="px-4 py-3 text-slate-600">{row.volume}</td>
-                      <td className="px-4 py-3 text-slate-600">{row.category}</td>
+            <>
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-slate-100 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3">Topic</th>
+                      <th className="px-4 py-3">Platform</th>
+                      <th className="px-4 py-3">Published</th>
+                      <th className="px-4 py-3">Source</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {trends.map((row, i) => (
+                      <tr
+                        key={`${row.topic}-${row.url ?? ""}-${i}`}
+                        className="border-b border-slate-50"
+                      >
+                        <td className="px-4 py-3 font-medium text-slate-900">
+                          {row.url ? (
+                            <a
+                              href={row.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-indigo-700 hover:underline"
+                            >
+                              {row.topic}
+                            </a>
+                          ) : (
+                            row.topic
+                          )}
+                        </td>
+                        <td className="px-4 py-3 capitalize text-slate-600">
+                          {row.platform ?? "All platforms"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {typeof row.recency_days === "number"
+                            ? row.recency_days === 0
+                              ? "Today"
+                              : `${row.recency_days}d ago`
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{row.source ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {trendsProvenance && (
+                <p className="text-xs text-slate-400">{trendsProvenance}</p>
+              )}
+            </>
           )}
         </div>
       )}

@@ -15,7 +15,6 @@ import {
   Menu,
   Calendar,
   CreditCard,
-  LayoutTemplate,
 } from "lucide-react";
 import { useState } from "react";
 import { NotificationsBell } from "@/components/notifications-bell";

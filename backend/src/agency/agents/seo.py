@@ -9,7 +9,7 @@ import json
 from langchain_core.messages import SystemMessage
 
 from agency.agents.state import CampaignState
-from agency.services.llm_provider import get_worker_llm
+from agency.services.llm_provider import get_lite_llm
 
 SYSTEM_PROMPT = """You are the SEO Agent of CampaignForge, a digital marketing agency AI.
 
@@ -26,6 +26,8 @@ Return a JSON document:
 {{
     "primary_keywords": [
         {{"keyword": "...", "search_volume": "high|medium|low", "difficulty": "high|medium|low", "intent": "informational|commercial|transactional"}}
+        // search_volume and difficulty are YOUR estimates — no search API is called.
+        // Omit either field if you have no basis for it. Never state a numeric volume.
     ],
     "long_tail_keywords": ["keyword phrase 1", "keyword phrase 2"],
     "hashtag_strategy": {{
@@ -50,12 +52,14 @@ Return a JSON document:
 
 
 async def seo_node(state: CampaignState) -> dict:
-    llm = get_worker_llm(temperature=0.4)
+    # Keyword research and structural SEO is extraction, not reasoning — it runs
+    # on the cheap tier. Strategy and Content stay on ``worker``.
+    llm = get_lite_llm(temperature=0.4)
     brand_ctx = state.get("brand_context", {})
     plan = state.get("execution_plan", {})
 
     brand_str = "\n".join(f"- {k}: {v}" for k, v in brand_ctx.items() if v)
-    plan_str = json.dumps(plan, indent=2) if isinstance(plan, dict) else str(plan)
+    plan_str = json.dumps(plan, separators=(",", ":")) if isinstance(plan, dict) else str(plan)
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT.format(
@@ -80,7 +84,19 @@ async def seo_node(state: CampaignState) -> dict:
 
     keywords = seo_data.get("primary_keywords", [])
     if isinstance(keywords, list) and keywords and isinstance(keywords[0], str):
-        keywords = [{"keyword": k, "search_volume": "medium", "difficulty": "medium"} for k in keywords]
+        # Do NOT fill search_volume/difficulty with a constant here. The previous
+        # version stamped every bare keyword with "medium"/"medium", which reads as
+        # keyword-research data but is a literal.
+        keywords = [{"keyword": k} for k in keywords]
+
+    # No search API is called by this agent, so any volume/difficulty band present
+    # is the model's own estimate. Label it so no consumer mistakes it for measured
+    # search data.
+    if isinstance(keywords, list):
+        keywords = [
+            {**kw, "metrics_source": "llm_estimate"} if isinstance(kw, dict) else kw
+            for kw in keywords
+        ]
 
     return {
         "seo_keywords": keywords,

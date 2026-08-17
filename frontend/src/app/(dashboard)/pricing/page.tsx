@@ -26,7 +26,9 @@ const DISPLAY_PLANS: {
     name: "Starter",
     price: "$49",
     subtitle: "per month",
-    features: ["3 clients", "20 campaigns / mo", "2 platforms", "Email reports", "200 posts / mo"],
+    // "Email reports" removed 260817 — no report is ever emailed; reports are
+    // generated on request in the dashboard.
+    features: ["3 clients", "20 campaigns / mo", "2 platforms", "200 posts / mo"],
   },
   {
     tier: "growth",
@@ -34,12 +36,14 @@ const DISPLAY_PLANS: {
     price: "$149",
     subtitle: "per month",
     highlight: true,
+    // "Team (3 seats)" removed 260817 — no seat limit is defined or enforced
+    // anywhere; team members are unlimited on every paid tier today.
     features: [
       "10 clients",
       "Unlimited campaigns",
       "All platforms",
       "Analytics",
-      "Team (3 seats)",
+      "Team workspaces",
       "1,000 posts / mo",
     ],
   },

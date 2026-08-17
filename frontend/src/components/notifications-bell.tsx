@@ -113,7 +113,16 @@ export function NotificationsBell() {
           </div>
           <div className="max-h-80 overflow-y-auto">
             {notifications.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-slate-500">No notifications</p>
+              // Nothing in the backend produces notifications yet (no caller of
+              // create_notification), so an empty list must not read as
+              // "you're all caught up".
+              <div className="px-4 py-6 text-center">
+                <p className="text-sm text-slate-500">No notifications</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Notifications are not generated yet — this list stays empty regardless of
+                  campaign activity.
+                </p>
+              </div>
             ) : (
               notifications.map((n) => (
                 <button

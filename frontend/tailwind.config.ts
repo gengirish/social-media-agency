@@ -24,6 +24,10 @@ const config: Config = {
       },
     },
   },
+  // tailwindcss-animate is CJS and ships no type declarations, so an ESM `import` here
+  // breaks `tsc --noEmit` (TS7016). Tailwind loads this config through jiti, where
+  // require() is the supported form.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   plugins: [require("tailwindcss-animate")],
 };
 export default config;

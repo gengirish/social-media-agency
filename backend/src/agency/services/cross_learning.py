@@ -25,13 +25,40 @@ async def get_industry_benchmarks(
         .where(Client.industry == industry)
     )
     row = result.one()
+    sample_size = int(row[4] or 0)
+
+    def _avg(value: object) -> float | None:
+        """Round a SQL AVG, keeping ``NULL`` as ``None``.
+
+        Never coerce a missing average to ``0.0`` — a benchmark of zero reads as
+        a measurement ("this industry gets no impressions") rather than "we have
+        no data for this industry".
+        """
+        return None if value is None else round(float(value), 1)  # type: ignore[arg-type]
+
+    if sample_size == 0:
+        return {
+            "industry": industry,
+            "status": "unavailable",
+            "reason": (
+                "No analytics snapshots exist for this industry yet. Benchmarks "
+                "require published content with fetched platform metrics."
+            ),
+            "avg_impressions": None,
+            "avg_engagement": None,
+            "avg_clicks": None,
+            "avg_likes": None,
+            "sample_size": 0,
+        }
+
     return {
         "industry": industry,
-        "avg_impressions": round(float(row[0] or 0), 1),
-        "avg_engagement": round(float(row[1] or 0), 1),
-        "avg_clicks": round(float(row[2] or 0), 1),
-        "avg_likes": round(float(row[3] or 0), 1),
-        "sample_size": row[4] or 0,
+        "status": "available",
+        "avg_impressions": _avg(row[0]),
+        "avg_engagement": _avg(row[1]),
+        "avg_clicks": _avg(row[2]),
+        "avg_likes": _avg(row[3]),
+        "sample_size": sample_size,
     }
 
 

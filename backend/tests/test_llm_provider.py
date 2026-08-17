@@ -12,8 +12,9 @@ PROVIDER_ENV = [
     "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY",
     "NVIDIA_NIM_API_KEY", "OPENROUTER_API_KEY", "BONSAI_API_KEY",
     "LLM_PROVIDER_ORDER", "LLM_BRAIN_PROVIDER", "LLM_WORKER_PROVIDER",
-    "LLM_AD_COPY_PROVIDER", "LLM_BRAIN_MODEL", "LLM_WORKER_MODEL",
-    "LLM_AD_COPY_MODEL", "NVIDIA_NIM_MODEL", "GEMINI_MODEL",
+    "LLM_AD_COPY_PROVIDER", "LLM_LITE_PROVIDER", "LLM_BRAIN_MODEL",
+    "LLM_WORKER_MODEL", "LLM_AD_COPY_MODEL", "LLM_LITE_MODEL",
+    "NVIDIA_NIM_MODEL", "GEMINI_MODEL",
 ]
 
 
@@ -151,8 +152,37 @@ def test_provider_model_env_overrides_the_built_in_default(env):
 
 
 def test_every_tier_has_generation_settings():
-    assert set(lp.TIER_SETTINGS) == {lp.BRAIN, lp.WORKER, lp.AD_COPY}
+    """Assert the invariant, not the literal list, so adding a tier stays cheap."""
+    assert set(lp.TIER_SETTINGS) == set(lp.ALL_TIERS)
     assert lp.TIER_SETTINGS[lp.BRAIN]["temperature"] < lp.TIER_SETTINGS[lp.AD_COPY]["temperature"]
+
+
+def test_every_provider_serves_every_tier(env):
+    """A tier missing from a provider's model map is a KeyError at request time."""
+    env(ANTHROPIC_API_KEY="a", GOOGLE_API_KEY="g", OPENAI_API_KEY="o",
+        NVIDIA_NIM_API_KEY="n", OPENROUTER_API_KEY="r", BONSAI_API_KEY="b")
+    for name, spec in lp._provider_specs().items():
+        assert set(spec.models) == set(lp.ALL_TIERS), f"{name} is missing a tier"
+
+
+def test_lite_tier_is_cheaper_and_tighter_than_worker(env):
+    """The point of the lite tier: a smaller ceiling, and a distinct model on Anthropic."""
+    env(ANTHROPIC_API_KEY="a")
+    assert lp.TIER_SETTINGS[lp.LITE]["max_tokens"] < lp.TIER_SETTINGS[lp.WORKER]["max_tokens"]
+    spec = lp.resolve_provider(lp.LITE)
+    assert spec.models[lp.LITE] != spec.models[lp.WORKER]
+
+
+def test_lite_tier_can_be_pinned_independently(env):
+    env(ANTHROPIC_API_KEY="a", NVIDIA_NIM_API_KEY="nv", LLM_LITE_PROVIDER="nvidia")
+    assert lp.resolve_provider(lp.LITE).name == "nvidia"
+    assert lp.resolve_provider(lp.WORKER).name == "anthropic"
+
+
+def test_no_retired_anthropic_models_are_pinned(env):
+    """claude-3-5-haiku-20241022 retired 2026-02-19 and 404s; guard against regression."""
+    retired = {"claude-3-5-haiku-20241022", "claude-sonnet-4-20250514"}
+    assert not (set(lp._provider_specs()["anthropic"].models.values()) & retired)
 
 
 def test_default_order_covers_every_known_provider(env):

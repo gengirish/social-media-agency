@@ -1,7 +1,7 @@
 # Frontend Components
-<!-- verified: 260328 -->
+<!-- verified: 260817 -->
 
-Reusable components in `frontend/src/components/`.
+Five reusable components in `frontend/src/components/`, plus four modules in `frontend/src/lib/`.
 
 ## DashboardContent
 **Status**: [LIVE]
@@ -20,6 +20,14 @@ Bell icon with unread count badge. Dropdown notification panel. Polls every 30s.
 **File**: `components/clerk-token-sync.tsx`
 
 Registers Clerk's `getToken()` function with the API client via `setClerkTokenGetter()`. Mounted in root layout. No visual output.
+
+## AnalyticsTracker
+**Status**: [LIVE]
+**File**: `components/analytics-tracker.tsx`
+
+Mounted in the dashboard layout. Emits product-analytics events — session lifecycle (`session_started`, `session_ended`) and `page_view` — to `POST /api/v1/events` via `lib/analytics.ts`. No visual output.
+
+Only the four `CLIENT_WRITABLE_EVENTS` are accepted by the backend; pipeline and error events are server-authored so a client cannot inflate completion or failure counts.
 
 ## LiveAgentDashboard
 **Status**: [LIVE]
@@ -61,6 +69,9 @@ API client singleton. Uses `NEXT_PUBLIC_API_URL` (default `http://localhost:8001
 
 ### `lib/agent-stream.ts`
 `connectAgentStream(campaignId, token, onEvent, onError?)` — Opens EventSource to SSE endpoint with JWT in query param. Returns teardown function.
+
+### `lib/analytics.ts`
+Product-analytics client. Batches events to `POST /api/v1/events` (max 50 per request). `trackFeature("kebab-name")` is the call to add at the point of success for any new flow that should appear in the adoption table. Currently fired on campaign create, client create, magic-brief client create, and content publish.
 
 ### `lib/utils.ts`
 `cn(...inputs)` — `clsx` + `tailwind-merge` for class name composition.

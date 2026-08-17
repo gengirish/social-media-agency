@@ -1,13 +1,27 @@
-import json
 import uuid as uuid_module
+from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import structlog
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.schemas import ContentPieceResponse, ContentUpdateRequest
 from agency.models.tables import Client, ContentPiece
+from agency.services.webhook_dispatcher import EVENT_CONTENT_APPROVED, dispatch_webhook
+
+logger = structlog.get_logger()
+
+#: Per-platform repurposing guidance. Module scope so it is built once, not
+#: rebuilt on every repurpose request.
+PLATFORM_GUIDELINES = {
+    "twitter": "Max 280 chars. Conversational, punchy. Use 1-3 hashtags. Thread-friendly.",
+    "linkedin": "Professional tone. 1300 char sweet spot. Use line breaks for readability.",
+    "instagram": "Visual-first caption. Storytelling. 5-10 relevant hashtags at end.",
+    "facebook": "Conversational, community-oriented. Questions drive engagement.",
+    "tiktok": "Gen-Z friendly. Hook in first line. Trending sounds/hashtags.",
+}
 
 router = APIRouter(prefix="/content", tags=["Content"])
 
@@ -55,14 +69,22 @@ async def content_suggestions(
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
-    """Suggest top-performing content for recycling."""
+    """Suggest top-performing content for recycling.
+
+    Only ranks pieces that actually carry a ``performance_score``. The previous
+    version ordered by ``.nulls_last()`` with no filter, so unscored posts came
+    back labelled "Top performing content" purely because they were published.
+    Nothing in the product writes ``performance_score`` yet, so this legitimately
+    returns an empty list with an explicit reason.
+    """
     result = await db.execute(
         select(ContentPiece)
         .where(
             ContentPiece.org_id == org_id,
             ContentPiece.status == "published",
+            ContentPiece.performance_score.isnot(None),
         )
-        .order_by(ContentPiece.performance_score.desc().nulls_last())
+        .order_by(ContentPiece.performance_score.desc())
         .limit(10)
     )
     pieces = result.scalars().all()
@@ -80,7 +102,17 @@ async def content_suggestions(
             }
         )
 
-    return {"items": suggestions}
+    if not suggestions:
+        return {
+            "items": [],
+            "status": "unavailable",
+            "reason": (
+                "No content has a measured performance score yet, so there is "
+                "nothing to rank. Scores are not produced by the pipeline today."
+            ),
+        }
+
+    return {"items": suggestions, "status": "available"}
 
 
 @router.post("/video-script")
@@ -98,19 +130,23 @@ async def create_video_script(
     if not topic:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "topic required")
 
-    brand_context = {"brand_name": "CampaignForge", "industry": "Marketing"}
-    if client_id:
-        result = await db.execute(
-            select(Client).where(
-                Client.id == UUID(str(client_id)), Client.org_id == org_id
-            )
-        )
-        client = result.scalar_one_or_none()
-        if client:
-            brand_context = {
-                "brand_name": client.brand_name,
-                "industry": client.industry or "",
-            }
+    # Do not silently substitute a hardcoded brand. The old default was
+    # {"brand_name": "CampaignForge", "industry": "Marketing"}, so a caller with a
+    # bad client_id got a script written for the wrong company with no signal.
+    if not client_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "client_id required")
+
+    result = await db.execute(
+        select(Client).where(Client.id == UUID(str(client_id)), Client.org_id == org_id)
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
+
+    brand_context = {
+        "brand_name": client.brand_name,
+        "industry": client.industry or "",
+    }
 
     from agency.agents.video_script import generate_script
 
@@ -144,22 +180,43 @@ async def get_content(
 @router.get("/{content_id}/analytics")
 async def get_analytics(
     content_id: UUID,
+    refresh: bool = Query(True, description="Attempt a live platform fetch first"),
     user=Depends(get_current_user),
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
-    """Get analytics for a content piece."""
-    from agency.services.analytics_fetcher import get_content_analytics
+    """Analytics for a content piece, with an explicit availability status.
+
+    Metric values are ``null`` when the platform does not expose them — that is
+    distinct from a measured ``0``. ``status`` is one of ``ok`` (fresh metrics
+    recorded), ``skipped`` (already measured today), ``unavailable`` (with a
+    ``reason``; nothing was persisted), ``error``, or ``not_refreshed``.
+    """
+    from agency.services.analytics_fetcher import fetch_content_metrics, get_content_analytics
 
     result = await db.execute(
         select(ContentPiece).where(
             ContentPiece.id == content_id, ContentPiece.org_id == org_id
         )
     )
-    if result.scalar_one_or_none() is None:
+    piece = result.scalar_one_or_none()
+    if piece is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
 
-    return {"items": await get_content_analytics(db, content_id)}
+    live: dict[str, Any] = {"status": "not_refreshed", "reason": None}
+    if refresh and piece.status == "published":
+        live = await fetch_content_metrics(db, content_id, skip_if_fetched_today=True)
+        await db.commit()
+
+    items = await get_content_analytics(db, content_id)
+    return {
+        "content_id": str(content_id),
+        "platform": piece.platform,
+        "status": live.get("status"),
+        "reason": live.get("reason"),
+        "latest": items[0] if items else None,
+        "items": items,
+    }
 
 
 @router.patch("/{content_id}", response_model=ContentPieceResponse)
@@ -215,70 +272,79 @@ async def repurpose_content(
     if not target_platforms:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "target_platforms required")
 
-    from agency.services.llm_provider import get_worker_llm
+    from agency.agents.utils import parse_llm_json
+    from agency.services.llm_provider import get_lite_llm
 
-    llm = get_worker_llm()
+    wanted = [p for p in target_platforms if p != piece.platform]
+    if not wanted:
+        return {"status": "repurposed", "platforms": [], "count": 0, "skipped": []}
 
-    PLATFORM_GUIDELINES = {
-        "twitter": "Max 280 chars. Conversational, punchy. Use 1-3 hashtags. Thread-friendly.",
-        "linkedin": "Professional tone. 1300 char sweet spot. Use line breaks for readability.",
-        "instagram": "Visual-first caption. Storytelling. 5-10 relevant hashtags at end.",
-        "facebook": "Conversational, community-oriented. Questions drive engagement.",
-        "tiktok": "Gen-Z friendly. Hook in first line. Trending sounds/hashtags.",
-    }
-
-    created = []
-    for platform in target_platforms:
-        if platform == piece.platform:
-            continue
-        guidelines = PLATFORM_GUIDELINES.get(platform, "Adapt naturally for this platform.")
-        prompt = f"""Repurpose this content for {platform}.
+    # One call for every platform, not one call each. The content writer agent
+    # already generates a whole batch per call; adapting one post to N platforms
+    # is strictly easier, and N round trips cost N times as much for no gain.
+    guideline_lines = "\n".join(
+        f"- {p}: {PLATFORM_GUIDELINES.get(p, 'Adapt naturally for this platform.')}"
+        for p in wanted
+    )
+    prompt = f"""Repurpose this content for each target platform.
 
 Original ({piece.platform}):
 {piece.body}
 
-Platform guidelines: {guidelines}
+Target platforms and their guidelines:
+{guideline_lines}
 
-Return JSON: {{"body": "...", "title": "...", "hashtags": ["..."]}}"""
+Return ONLY a JSON array with one object per target platform, in the order
+listed above. Every object must carry the platform name it belongs to:
+[{{"platform": "<name>", "title": "...", "body": "...", "hashtags": ["..."]}}]"""
 
-        response = await llm.ainvoke(prompt)
-        try:
-            text = response.content if hasattr(response, "content") else str(response)
-            if not isinstance(text, str):
-                text = str(text)
-            text = text.strip()
-            if "```" in text:
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-            data = json.loads(text)
-        except Exception:
-            raw = response.content if hasattr(response, "content") else str(response)
-            data = {
-                "body": raw if isinstance(raw, str) else str(raw),
-                "title": piece.title,
-                "hashtags": [],
-            }
+    llm = get_lite_llm()
+    response = await llm.ainvoke(prompt)
+    raw = response.content if hasattr(response, "content") else str(response)
+    parsed = parse_llm_json(raw if isinstance(raw, str) else str(raw))
 
-        new_piece = ContentPiece(
-            campaign_id=piece.campaign_id,
-            client_id=piece.client_id,
-            org_id=org_id,
-            content_type=piece.content_type,
-            platform=platform,
-            title=data.get("title", piece.title),
-            body=data.get("body", ""),
-            hashtags=data.get("hashtags", []),
-            metadata_={"repurposed_from": str(content_id)},
-            ai_generated=True,
-            status="draft",
+    by_platform: dict[str, dict] = {}
+    if isinstance(parsed, list):
+        for entry in parsed:
+            if isinstance(entry, dict) and entry.get("platform") in wanted:
+                by_platform[str(entry["platform"])] = entry
+
+    created: list[str] = []
+    for platform in wanted:
+        data = by_platform.get(platform)
+        # A platform the model omitted or returned unusably is skipped rather
+        # than written as an empty draft — a blank post is worse than no post.
+        if not data or not str(data.get("body") or "").strip():
+            continue
+        db.add(
+            ContentPiece(
+                campaign_id=piece.campaign_id,
+                client_id=piece.client_id,
+                org_id=org_id,
+                content_type=piece.content_type,
+                platform=platform,
+                title=data.get("title") or piece.title,
+                body=data["body"],
+                hashtags=data.get("hashtags") or [],
+                metadata_={"repurposed_from": str(content_id)},
+                ai_generated=True,
+                status="draft",
+            )
         )
-        db.add(new_piece)
         created.append(platform)
 
     await db.commit()
-    return {"status": "repurposed", "platforms": created, "count": len(created)}
+    skipped = [p for p in wanted if p not in created]
+    if skipped:
+        logger.warning(
+            "repurpose_incomplete", content_id=str(content_id), skipped=skipped
+        )
+    return {
+        "status": "repurposed",
+        "platforms": created,
+        "count": len(created),
+        "skipped": skipped,
+    }
 
 
 @router.post("/{content_id}/variants")
@@ -311,63 +377,78 @@ async def generate_variants(
     }
     await db.flush()
 
-    from agency.services.llm_provider import get_worker_llm
+    from agency.agents.utils import parse_llm_json
+    from agency.services.llm_provider import get_lite_llm
 
-    llm = get_worker_llm()
+    labels = ["B", "C", "D", "E"][: min(num_variants, 4)]
 
-    labels = ["B", "C", "D", "E"]
-    created = []
-
-    for i in range(min(num_variants, 4)):
-        prompt = f"""Create variant {labels[i]} of this {piece.platform} post.
-Keep the same intent but vary: tone, CTA, hook, structure, or angle.
+    # One call for all variants. Besides costing a quarter as much at four
+    # variants, it is the only way the model can see the other variants while
+    # writing each one — independent calls have no way to avoid converging on
+    # near-duplicates, which defeats the point of an A/B test.
+    prompt = f"""Create {len(labels)} distinct variants of this {piece.platform} post.
 
 Original:
 {piece.body}
 
-Return JSON: {{"body": "...", "title": "...", "hashtags": ["..."]}}"""
+Every variant keeps the original intent but differs from the original AND from
+the other variants on at least one of: tone, CTA, hook, structure, or angle.
+Label them {", ".join(labels)}.
 
-        response = await llm.ainvoke(prompt)
-        text = response.content if hasattr(response, "content") else str(response)
-        text = text.strip()
+Return ONLY a JSON array with one object per variant, in label order:
+[{{"label": "<label>", "title": "...", "body": "...", "hashtags": ["..."]}}]"""
 
-        try:
-            if "```" in text:
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-            data = json.loads(text)
-        except Exception:
-            data = {"body": text, "title": piece.title, "hashtags": []}
+    llm = get_lite_llm()
+    response = await llm.ainvoke(prompt)
+    raw = response.content if hasattr(response, "content") else str(response)
+    parsed = parse_llm_json(raw if isinstance(raw, str) else str(raw))
 
-        variant = ContentPiece(
-            campaign_id=piece.campaign_id,
-            client_id=piece.client_id,
-            org_id=org_id,
-            content_type=piece.content_type,
-            platform=piece.platform,
-            title=data.get("title", piece.title),
-            body=data.get("body", ""),
-            hashtags=data.get("hashtags", piece.hashtags),
-            metadata_={"variant_group": variant_group, "variant_label": labels[i]},
-            ai_generated=True,
-            status="draft",
+    by_label: dict[str, dict] = {}
+    if isinstance(parsed, list):
+        for entry in parsed:
+            if isinstance(entry, dict) and entry.get("label") in labels:
+                by_label[str(entry["label"])] = entry
+
+    created: list[str] = []
+    for label in labels:
+        data = by_label.get(label)
+        if not data or not str(data.get("body") or "").strip():
+            continue
+        db.add(
+            ContentPiece(
+                campaign_id=piece.campaign_id,
+                client_id=piece.client_id,
+                org_id=org_id,
+                content_type=piece.content_type,
+                platform=piece.platform,
+                title=data.get("title") or piece.title,
+                body=data["body"],
+                hashtags=data.get("hashtags") or piece.hashtags,
+                metadata_={"variant_group": variant_group, "variant_label": label},
+                ai_generated=True,
+                status="draft",
+            )
         )
-        db.add(variant)
-        created.append(labels[i])
+        created.append(label)
 
     await db.commit()
+    missing = [label for label in labels if label not in created]
+    if missing:
+        logger.warning(
+            "variants_incomplete", content_id=str(content_id), missing=missing
+        )
     return {
         "status": "variants_created",
         "variant_group": variant_group,
         "variants": created,
+        "missing": missing,
     }
 
 
 @router.post("/{content_id}/approve")
 async def approve_content(
     content_id: UUID,
+    background: BackgroundTasks,
     user=Depends(get_current_user),
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
@@ -383,6 +464,19 @@ async def approve_content(
 
     piece.status = "approved"
     await db.commit()
+
+    # After the response: retries + backoff must not sit in the request path.
+    background.add_task(
+        dispatch_webhook,
+        org_id,
+        EVENT_CONTENT_APPROVED,
+        {
+            "content_id": str(content_id),
+            "campaign_id": str(piece.campaign_id) if piece.campaign_id else None,
+            "client_id": str(piece.client_id),
+            "platform": piece.platform,
+        },
+    )
     return {"status": "approved", "content_id": str(content_id)}
 
 

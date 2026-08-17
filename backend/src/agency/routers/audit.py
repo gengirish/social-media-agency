@@ -31,7 +31,21 @@ async def list_audit_logs(
     result = await db.execute(q)
     logs = result.scalars().all()
 
+    if not logs:
+        # `services/audit.py::log_action` exists but is not called from any route,
+        # so this table is never written. An empty audit trail must not be read as
+        # "no activity occurred" — say why it is empty.
+        return {
+            "items": [],
+            "status": "unavailable",
+            "reason": (
+                "Audit logging is not wired up yet — no route writes audit "
+                "entries, so an empty result does not mean no activity occurred."
+            ),
+        }
+
     return {
+        "status": "available",
         "items": [
             {
                 "id": str(l.id),

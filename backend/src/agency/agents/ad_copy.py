@@ -67,7 +67,7 @@ async def ad_copy_node(state: CampaignState) -> dict:
     ad_platforms = ad_directives.get("platforms", ["google", "meta"])
 
     brand_str = "\n".join(f"- {k}: {v}" for k, v in brand_ctx.items() if v)
-    strategy_str = json.dumps(strategy, indent=2) if isinstance(strategy, dict) else str(strategy)
+    strategy_str = json.dumps(strategy, separators=(",", ":")) if isinstance(strategy, dict) else str(strategy)
     seo_str = json.dumps(seo[:5]) if seo else "No keywords"
 
     messages = [

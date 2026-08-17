@@ -69,11 +69,13 @@ class Settings(BaseSettings):
     llm_brain_provider: str = ""
     llm_worker_provider: str = ""
     llm_ad_copy_provider: str = ""
+    llm_lite_provider: str = ""
 
     # Override the model for a tier, whichever provider ends up serving it.
     llm_brain_model: str = ""
     llm_worker_model: str = ""
     llm_ad_copy_model: str = ""
+    llm_lite_model: str = ""
 
     # Stripe
     stripe_secret_key: str = ""

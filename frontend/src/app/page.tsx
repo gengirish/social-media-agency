@@ -62,7 +62,7 @@ const plans = [
     price: "$399",
     period: "/mo",
     blurb: "Scale without headcount",
-    features: ["Unlimited clients", "Unlimited posts", "Dedicated success", "Custom SLAs"],
+    features: ["Unlimited clients", "Unlimited posts", "White-label", "API access"],
     cta: "Talk to us",
     href: "/sign-up",
     featured: false,
@@ -87,7 +87,7 @@ const features = [
   },
   {
     title: "Multi-platform publishing",
-    desc: "Push to X, LinkedIn, and Meta (Facebook & Instagram) from one workflow.",
+    desc: "Publish straight to X, LinkedIn, and Facebook. Instagram and TikTok are drafted and scheduled for you to post.",
     icon: Zap,
   },
   {
@@ -207,7 +207,8 @@ function HeroSection({ isSignedIn }: { isSignedIn: boolean | undefined }) {
               href="#demo"
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-8 py-4 text-base font-medium text-white backdrop-blur transition hover:border-white/25 hover:bg-white/10 sm:w-auto"
             >
-              Watch Demo
+              {/* Anchors to the pipeline diagram below — there is no demo video. */}
+              See the pipeline
               <PenLine className="h-5 w-5 opacity-80" />
             </a>
           </div>
@@ -259,7 +260,7 @@ function HeroSection({ isSignedIn }: { isSignedIn: boolean | undefined }) {
               <ArrowRight className="h-3 w-3 text-slate-600" />
               <span className="rounded-md bg-emerald-500/15 px-2 py-1 text-emerald-200">QA</span>
               <ArrowRight className="h-3 w-3 text-slate-600" />
-              <span className="rounded-md bg-fuchsia-500/15 px-2 py-1 text-fuchsia-200">Publish → X · LinkedIn · Meta</span>
+              <span className="rounded-md bg-fuchsia-500/15 px-2 py-1 text-fuchsia-200">Publish → X · LinkedIn · Facebook</span>
             </div>
           </div>
         </div>
@@ -454,40 +455,11 @@ function PricingSection({ isSignedIn }: { isSignedIn: boolean | undefined }) {
   );
 }
 
-function SocialProof() {
-  const placeholders = ["Northline", "Vector Labs", "Pulse CRM", "DraftKit", "Meridian"];
-  return (
-    <section className="border-t border-white/5 py-16 sm:py-20">
-      <div className="mx-auto max-w-6xl px-4 text-center sm:px-6">
-        <p className="text-sm font-medium uppercase tracking-wider text-slate-500">Social proof</p>
-        <p className="mt-2 text-lg text-slate-300">Trusted by teams who ship campaigns weekly</p>
-        <p className="mt-1 text-sm text-slate-500">Placeholder logos — add your customers here</p>
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-4 sm:gap-8">
-          {placeholders.map((name) => (
-            <div
-              key={name}
-              className="flex h-14 min-w-[120px] items-center justify-center rounded-xl border border-white/10 bg-gradient-to-br from-slate-800/80 to-slate-900/80 px-6 text-xs font-semibold tracking-wide text-slate-400"
-            >
-              {name}
-            </div>
-          ))}
-        </div>
-        <div className="mx-auto mt-12 grid max-w-3xl gap-6 sm:grid-cols-2">
-          <blockquote className="rounded-2xl border border-white/10 bg-slate-900/40 p-6 text-left text-sm text-slate-400">
-            <p className="text-slate-200">
-              “We replaced a $6k/mo retainer with CampaignForge. Same output, five-minute briefs.”
-            </p>
-            <footer className="mt-4 text-xs text-slate-500">— Placeholder quote, Marketing Lead</footer>
-          </blockquote>
-          <blockquote className="rounded-2xl border border-white/10 bg-slate-900/40 p-6 text-left text-sm text-slate-400">
-            <p className="text-slate-200">“The SSE dashboard feels like mission control. Our clients love the transparency.”</p>
-            <footer className="mt-4 text-xs text-slate-500">— Placeholder quote, Agency founder</footer>
-          </blockquote>
-        </div>
-      </div>
-    </section>
-  );
-}
+// The SocialProof section was removed in the 260817 stub audit. It rendered five
+// invented company names under "Trusted by teams who ship campaigns weekly" plus
+// two fabricated testimonials (including a made-up "$6k/mo retainer" result).
+// Nothing replaces it: real logos and quotes go here only when real customers
+// have agreed to them. Do not reinstate placeholders.
 
 function Footer() {
   return (
@@ -533,7 +505,6 @@ export default function Home() {
         <PipelineSection />
         <FeaturesSection />
         <PricingSection isSignedIn={isSignedIn} />
-        <SocialProof />
       </main>
       <Footer />
     </div>

@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ElementType } from "react";
-import { Settings, Key, Bell, Globe, Save, Plus, Trash2, Loader2 } from "lucide-react";
+import { Settings, Key, Bell, Globe, Save, Plus, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { canPublish, publishUnavailableReason } from "@/lib/platforms";
 
 type Tab = "general" | "platforms" | "api-keys" | "notifications";
 
@@ -55,30 +56,31 @@ function isPlatformConnected(slug: string, connected: Set<string>): boolean {
   return false;
 }
 
-const DEFAULT_NOTIFICATION_PREFS = [
+// Planned notification types. There is no delivery mechanism and no persistence
+// behind any of them: nothing in the backend calls `create_notification()`, and
+// no endpoint stores these preferences. They are listed (disabled) so the roadmap
+// is visible, not rendered as working switches — the previous version showed
+// live-looking toggles whose state was lost on every reload.
+const PLANNED_NOTIFICATION_TYPES = [
   {
     id: "campaign_completed",
     label: "Campaign completed",
-    desc: "Get notified when a campaign pipeline finishes",
-    enabled: true,
+    desc: "Notify when a campaign pipeline finishes",
   },
   {
     id: "content_review",
     label: "Content ready for review",
     desc: "Alert when content needs human approval",
-    enabled: true,
   },
   {
     id: "publishing_success",
     label: "Publishing success",
     desc: "Confirmation when content is published to platforms",
-    enabled: false,
   },
   {
     id: "weekly_digest",
     label: "Weekly performance digest",
     desc: "Summary of campaign performance metrics",
-    enabled: false,
   },
 ] as const;
 
@@ -97,9 +99,6 @@ export default function SettingsPage() {
   const [platformAccounts, setPlatformAccounts] = useState<unknown[]>([]);
   const [platformsLoading, setPlatformsLoading] = useState(false);
   const [oauthBusySlug, setOauthBusySlug] = useState<string | null>(null);
-  const [notificationPrefs, setNotificationPrefs] = useState<
-    { id: string; label: string; desc: string; enabled: boolean }[]
-  >(() => DEFAULT_NOTIFICATION_PREFS.map((p) => ({ ...p })));
 
   const loadGeneral = useCallback(async () => {
     setGeneralLoading(true);
@@ -224,12 +223,6 @@ export default function SettingsPage() {
     }
   };
 
-  const toggleNotification = (id: string) => {
-    setNotificationPrefs((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p))
-    );
-  };
-
   return (
     <div className="space-y-6">
       <div>
@@ -292,15 +285,12 @@ export default function SettingsPage() {
                       No logo
                     </div>
                     <div className="text-sm text-slate-500">
-                      <button
-                        type="button"
-                        className="font-medium text-indigo-600 hover:text-indigo-700"
-                        onClick={() => toast.message("Logo upload coming soon")}
-                      >
-                        Upload
-                      </button>
-                      <span className="text-slate-400"> · </span>
-                      PNG or SVG, max 2MB (placeholder)
+                      {/* No upload endpoint exists — render the state, not a button
+                          that only fires a toast. */}
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                        Logo upload not available yet
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -341,7 +331,11 @@ export default function SettingsPage() {
           <div className="space-y-6">
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Connected Platforms</h3>
-              <p className="text-sm text-slate-500">Connect social platforms to enable direct publishing.</p>
+              <p className="text-sm text-slate-500">
+                Connect social platforms to enable direct publishing. Accounts marked
+                &ldquo;publishing unavailable&rdquo; can be connected for analytics, but posts to
+                them must still be published manually.
+              </p>
             </div>
             {platformsLoading ? (
               <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -363,6 +357,14 @@ export default function SettingsPage() {
                           className={`h-3 w-3 rounded-full ${connected ? "bg-emerald-500" : "bg-slate-300"}`}
                         />
                         <span className="font-medium text-slate-900">{platform.label}</span>
+                        {!canPublish(platform.slug) && (
+                          <span
+                            title={publishUnavailableReason(platform.slug) ?? undefined}
+                            className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800"
+                          >
+                            publishing unavailable
+                          </span>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -437,31 +439,30 @@ export default function SettingsPage() {
         {activeTab === "notifications" && (
           <div className="space-y-6">
             <h3 className="text-lg font-semibold text-slate-900">Notification Preferences</h3>
+            <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <div className="text-sm text-amber-900">
+                <p className="font-medium">Not available yet</p>
+                <p className="mt-1 text-amber-800">
+                  CampaignForge does not send notifications yet, and these preferences are not
+                  stored. The types below are listed so you can see what is planned — none of them
+                  are active today.
+                </p>
+              </div>
+            </div>
             <div className="space-y-4">
-              {notificationPrefs.map((pref) => (
+              {PLANNED_NOTIFICATION_TYPES.map((pref) => (
                 <div
                   key={pref.id}
-                  className="flex items-center justify-between rounded-lg border border-slate-200 p-4"
+                  className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4"
                 >
                   <div>
-                    <p className="font-medium text-slate-900">{pref.label}</p>
-                    <p className="mt-0.5 text-sm text-slate-500">{pref.desc}</p>
+                    <p className="font-medium text-slate-500">{pref.label}</p>
+                    <p className="mt-0.5 text-sm text-slate-400">{pref.desc}</p>
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={pref.enabled}
-                    onClick={() => toggleNotification(pref.id)}
-                    className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                      pref.enabled ? "bg-indigo-600" : "bg-slate-200"
-                    }`}
-                  >
-                    <span
-                      className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                        pref.enabled ? "translate-x-5" : ""
-                      }`}
-                    />
-                  </button>
+                  <span className="shrink-0 rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600">
+                    Planned
+                  </span>
                 </div>
               ))}
             </div>

@@ -2,6 +2,7 @@
 
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -10,6 +11,8 @@ from agency.config import get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import Organization
 from agency.services.team import invite_team_member, list_team_members, update_member_role
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/team", tags=["Team"])
 
@@ -83,16 +86,21 @@ async def invite_member(
                     labels=["team-invite"],
                 )
                 email_sent = True
-        except Exception:
-            pass  # AgentMail not configured, missing inbox, or send failed
+        except Exception as e:  # noqa: BLE001 — invite must still succeed without email
+            logger.warning("team_invite_email_failed", email=body.email, error=str(e))
 
     message = (
         "User account created. Invitation email sent."
         if email_sent
-        else "User account created. Email invitation pending AgentMail integration."
+        else (
+            "User account created, but NO invitation email was sent — AgentMail is "
+            "not configured for this org. Share the temporary password out of band."
+        )
     )
     return {
         "status": "user_created",
+        # Explicit so the UI never claims an email went out that did not.
+        "email_sent": email_sent,
         "message": message,
         "email": body.email,
         "role": result["role"],

@@ -33,6 +33,25 @@ async function createSignInToken(): Promise<string> {
   return tokenData.token;
 }
 
+/**
+ * Minimal shape of the Clerk object attached to `window` by @clerk/nextjs.
+ * Only the members this helper touches are declared.
+ */
+type ClerkWindow = Window & {
+  Clerk?: {
+    loaded?: boolean;
+    client: {
+      signIn: {
+        create(params: { strategy: string; ticket: string }): Promise<{
+          status: string;
+          createdSessionId?: string;
+        }>;
+      };
+    };
+    setActive(params: { session: string }): Promise<void>;
+  };
+};
+
 /** Authenticate via Clerk sign-in token (bypasses MFA). */
 export async function clerkAuth(page: Page) {
   await setupClerkTestingToken({ page });
@@ -40,12 +59,12 @@ export async function clerkAuth(page: Page) {
   const ticket = await createSignInToken();
 
   await page.goto("/sign-in");
-  await page.waitForFunction(() => (window as any).Clerk?.loaded, {
+  await page.waitForFunction(() => (window as ClerkWindow).Clerk?.loaded, {
     timeout: 15000,
   });
 
   await page.evaluate(async (t) => {
-    const clk = (window as any).Clerk;
+    const clk = (window as ClerkWindow).Clerk!;
     const si = await clk.client.signIn.create({ strategy: "ticket", ticket: t });
     if (si.status === "complete" && si.createdSessionId) {
       await clk.setActive({ session: si.createdSessionId });

@@ -35,6 +35,14 @@ async def list_notifications(
     unread = count_result.scalar() or 0
 
     return {
+        # `services/notifications.py::create_notification` is never called by any
+        # route or agent, so nothing produces notifications today. Flag it rather
+        # than let a permanently empty bell read as "you are all caught up".
+        "producers_wired": False,
+        "reason": (
+            "No notifications are generated yet — nothing in the backend calls "
+            "create_notification()."
+        ),
         "items": [
             {
                 "id": str(n.id),

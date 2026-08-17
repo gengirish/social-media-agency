@@ -17,8 +17,11 @@ dependencies = [
     "bcrypt>=4.0.0,<5.0.0",
     "python-multipart>=0.0.12",
     "httpx>=0.28.0",
+    # NOTE: celery was declared here but never imported — background work is
+    # asyncio (a detached task per campaign, plus the scheduler's 60s loop).
+    # redis is kept: it is the intended backing for SSE fan-out once the
+    # in-process _campaign_streams dict has to work across >1 machine.
     "redis>=5.2.0",
-    "celery>=5.4.0",
     "structlog>=24.4.0",
     "langgraph>=0.3.0",
     "langgraph-checkpoint-postgres>=3.0.0",
@@ -40,6 +43,7 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "httpx>=0.28.0",
+    "aiosqlite>=0.20.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
 ]

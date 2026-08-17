@@ -33,8 +33,14 @@ async def list_reports(
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
-    """List available report periods for a client."""
+    """List the report periods that can be generated for a client.
+
+    These are the fixed periods ``POST /reports/clients/{client_id}`` accepts —
+    NOT a list of reports already generated and stored. Nothing is persisted;
+    reports are computed on request.
+    """
     return {
+        "kind": "available_periods",
         "items": [
             {"period": "weekly", "label": "Last 7 days"},
             {"period": "monthly", "label": "Last 30 days"},

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type ContentPiece } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
-import { Loader2, FileText, CheckCircle2, Filter, Send, Layers, X } from "lucide-react";
+import { Loader2, FileText, CheckCircle2, Filter, Send, Layers, X, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { canPublish, publishUnavailableReason } from "@/lib/platforms";
 
 const REPURPOSE_PLATFORMS = [
   { id: "linkedin", label: "LinkedIn" },
@@ -41,11 +42,7 @@ export default function ContentPage() {
   const [repurposeBusy, setRepurposeBusy] = useState(false);
   const [publishBusyId, setPublishBusyId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadContent();
-  }, [filter]);
-
-  function loadContent() {
+  const loadContent = useCallback(() => {
     const params: Record<string, string> = {};
     if (filter) params.status = filter;
     api
@@ -53,7 +50,11 @@ export default function ContentPage() {
       .then((res) => setContent(res.items))
       .catch((err: Error) => toast.error(err.message))
       .finally(() => setLoading(false));
-  }
+  }, [filter]);
+
+  useEffect(() => {
+    loadContent();
+  }, [loadContent]);
 
   function openRepurpose(piece: ContentPiece) {
     const current = (piece.platform ?? "").toLowerCase();
@@ -82,11 +83,17 @@ export default function ContentPage() {
   }
 
   async function publishNow(piece: ContentPiece) {
+    const blocked = publishUnavailableReason(piece.platform);
+    if (blocked) {
+      toast.error(blocked);
+      return;
+    }
     setPublishBusyId(piece.id);
     try {
-      await api.publishContent(piece.id);
+      const res = await api.publishContent(piece.id);
       trackFeature("content-publish", { platform: piece.platform });
-      toast.success("Publish requested");
+      // Report what the API actually did rather than assuming it worked.
+      toast.success(res?.url ? `Published to ${piece.platform}` : "Publish request accepted");
       loadContent();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Publish failed");
@@ -161,21 +168,30 @@ export default function ContentPage() {
                       <CheckCircle2 className="h-3.5 w-3.5" /> Approve
                     </button>
                   )}
-                  {piece.status === "approved" && (
-                    <button
-                      type="button"
-                      disabled={publishBusyId === piece.id}
-                      onClick={() => publishNow(piece)}
-                      className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-                    >
-                      {publishBusyId === piece.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Send className="h-3.5 w-3.5" />
-                      )}
-                      Publish Now
-                    </button>
-                  )}
+                  {piece.status === "approved" &&
+                    (canPublish(piece.platform) ? (
+                      <button
+                        type="button"
+                        disabled={publishBusyId === piece.id}
+                        onClick={() => publishNow(piece)}
+                        className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+                      >
+                        {publishBusyId === piece.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Send className="h-3.5 w-3.5" />
+                        )}
+                        Publish Now
+                      </button>
+                    ) : (
+                      <span
+                        title={publishUnavailableReason(piece.platform) ?? undefined}
+                        className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800"
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Publishing unavailable
+                      </span>
+                    ))}
                   <button
                     type="button"
                     onClick={() => openRepurpose(piece)}
@@ -238,8 +254,17 @@ export default function ContentPage() {
                     }}
                   />
                   <span className="text-sm font-medium text-slate-800">{p.label}</span>
+                  {!canPublish(p.id) && (
+                    <span className="ml-auto rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                      draft only
+                    </span>
+                  )}
                 </label>
               ))}
+              <p className="pt-1 text-xs text-slate-500">
+                &ldquo;Draft only&rdquo; platforms generate and schedule content, but CampaignForge
+                cannot publish to them yet — you post those manually.
+              </p>
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <button

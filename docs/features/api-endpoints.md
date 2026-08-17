@@ -1,5 +1,5 @@
 # API Endpoints
-<!-- verified: 260328 -->
+<!-- verified: 260817 -->
 
 All routes are prefixed with `/api/v1`. Authentication uses `Authorization: Bearer <JWT>` unless noted. `ApiKeyAuthMiddleware` accepts `X-API-Key` for `/public/*` and other key-gated routes as implemented.
 
@@ -257,4 +257,6 @@ Authentication: `X-API-Key` header (API key), not JWT.
 | POST | `/events` | Yes | `ingest_events` | Batch browser events (≤50). Only `session_started`, `session_ended`, `page_view`, `feature_used` are accepted; others counted as rejected |
 | GET | `/beta-metrics` | Yes | `get_beta_metrics` | Beta plan §7 metrics for the caller's org (`window_days`, 1–180, default 28) |
 
-**Total: 86 endpoints across 21 routers**
+**Total: 82 endpoints across 24 routers** — every router file in `routers/` is mounted in `main.py` with prefix `/api/v1`.
+
+Note: `product_analytics.py` declares no router prefix, so its two routes land at `/api/v1/events` and `/api/v1/beta-metrics`. `slack.py` and `webhooks_config.py` both nest under the `/integrations` path without being part of `integrations.py`.

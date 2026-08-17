@@ -1,7 +1,7 @@
 # Services
-<!-- verified: 260328 -->
+<!-- verified: 260817 -->
 
-Business logic layer in `backend/src/agency/services/`.
+Business logic layer in `backend/src/agency/services/` — 23 modules. Routers stay thin; business logic lives here.
 
 ## LLM Provider
 **Status**: [LIVE]
@@ -33,7 +33,7 @@ Six providers, each enabled purely by setting its API key:
 
 Order comes from `LLM_PROVIDER_ORDER` (default `anthropic,google,openai,nvidia,openrouter,bonsai`). `LLM_{TIER}_PROVIDER` pins a tier and disables its fallbacks. `LLM_{TIER}_MODEL` overrides the primary's model only. With nothing configured, `get_llm()` raises naming the variables to set.
 
-Env vars: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`
+Env vars: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (`GEMINI_API_KEY` accepted as alias), `OPENAI_API_KEY`, `NVIDIA_NIM_API_KEY`, `OPENROUTER_API_KEY`, `BONSAI_API_KEY`. **A blank key disables that provider** — adding a key is the whole activation step.
 
 ## Billing Service
 **Status**: [LIVE]
@@ -43,12 +43,16 @@ Stripe subscription management. Singleton: `billing = BillingService()`.
 
 ### Plan Config
 
-| Tier | Price | Clients | Posts/mo |
-|------|-------|---------|----------|
-| free | $0 | 2 | 30 |
-| starter | $49/mo | 5 | 100 |
-| growth | $149/mo | 15 | 500 |
-| agency | $399/mo | unlimited | unlimited |
+Source of truth is `PLAN_CONFIG` in `services/billing.py`.
+
+| Tier | Price | Clients | Posts/mo | Campaigns/mo |
+|------|-------|---------|----------|--------------|
+| free | $0 | 1 | 30 | 5 (no publishing) |
+| starter | $4900 (¢) | 3 | 200 | 20 |
+| growth | $14900 (¢) | 10 | 1000 | 9999 (unlimited) |
+| agency | $39900 (¢) | 999 (unlimited) | 99999 (unlimited) | 9999 (unlimited) |
+
+"Unlimited" tiers use large sentinel numbers rather than nulls — quota checks are plain integer comparisons.
 
 ### Methods
 
@@ -65,11 +69,11 @@ Stripe subscription management. Singleton: `billing = BillingService()`.
 Platform publishing. Singleton: `publisher = PlatformPublisher()`.
 
 - `publish(platform, content, credentials)` — Routes to platform-specific handler; HTTP layer uses `_with_http_retries` (up to 3 attempts with backoff on transient `httpx` errors)
-- `_decrypt_token(encrypted)` — Token decryption stub (passthrough until Fernet/production wiring)
-- `_publish_twitter(content, credentials)` — X/Twitter API v2
-- `_publish_linkedin(content, credentials)` — LinkedIn UGC API
-- `_publish_facebook(content, credentials)` — Facebook Graph API
-- `_publish_instagram(content, credentials)` — Placeholder/stub
+- `_decrypt_token(encrypted)` — Real decryption via `decrypt_token`; legacy plaintext rows fall back with a warning
+- `_publish_twitter(content, credentials)` — X/Twitter API v2 **[LIVE]**
+- `_publish_linkedin(content, credentials)` — LinkedIn UGC API **[LIVE]**
+- `_publish_facebook(content, credentials)` — Facebook Graph API **[LIVE]**
+- `_publish_instagram(content, credentials)` — **[STUB]** returns an explicit "not available yet" message. Text-only posts are unsupported; a real implementation needs the Meta Graph container+publish flow with media
 
 ## Scheduler
 **Status**: [LIVE]
@@ -134,16 +138,35 @@ Called automatically after campaign completion in `_persist_campaign_results`. S
 - `create_notification()` — In-app notification creation
 
 ## Trends
-**Status**: [LIVE]
+**Status**: [STUB]
 **File**: `services/trends.py`
 
-- `get_trending_topics(platform)` — Platform trending topics
+- `get_trending_topics(platform)` — returns entries from a hardcoded `PLATFORM_TRENDS` dict keyed by platform. **No live data source is wired.** Backs `GET /campaigns/trends` and the Analytics → Trends tab, both of which therefore display invented topics.
 
 ## Analytics Fetcher
-**Status**: [LIVE]
+**Status**: [STUB]
 **File**: `services/analytics_fetcher.py`
 
-- `fetch_content_metrics()`, `get_content_analytics()`, `get_client_analytics_summary()`
+- `fetch_content_metrics()` — resolves the content piece and connected `PlatformAccount`, then writes an `AnalyticsSnapshot` with **all metrics hardcoded to zero**. The comment at the metrics dict marks where platform API calls belong.
+- `get_content_analytics()`, `get_client_analytics_summary()` — read back whatever snapshots exist
+
+Because zeroed snapshots are persisted, downstream reads cannot distinguish "no engagement" from "never fetched". See [Platform Metrics](#platform-metrics) for the intended replacement.
+
+## Platform Metrics
+**Status**: [IN PROGRESS] — implemented but **not wired to any caller**
+**File**: `services/platform_metrics.py`
+
+Real platform metric fetchers, written to replace the zeros in `analytics_fetcher`. Nothing in `src/` or `tests/` imports this module yet.
+
+| Function | State |
+|----------|-------|
+| `fetch_twitter_metrics(post_id, access_token)` | Real — X v2 metrics |
+| `fetch_linkedin_metrics(post_id, access_token, org_urn=None)` | Real — LinkedIn stats |
+| `fetch_facebook_metrics(post_id, access_token)` | Real — Graph insights |
+| `fetch_instagram_metrics(post_id, access_token)` | [STUB] — returns `unavailable` |
+| `fetch_post_metrics(platform, post_id, access_token, *, page_id=None, token_is_encrypted=False)` | Dispatcher |
+
+Design contract: every failure path returns an explicit `unavailable` result via `_unavailable(reason)` rather than raising, **so callers never persist fabricated data**. Retries go through `_with_retries`. Integration therefore requires the caller to *skip* writing a snapshot on `unavailable` — not to store zeros as `analytics_fetcher` does today.
 
 ## Cross Learning
 **Status**: [LIVE]
@@ -152,10 +175,11 @@ Called automatically after campaign completion in `_persist_campaign_results`. S
 - `get_industry_benchmarks()`, `get_cross_campaign_insights()`
 
 ## Knowledge Base
-**Status**: [LIVE]
+**Status**: [STUB]
 **File**: `services/knowledge_base.py`
 
-RAG knowledge retrieval from marketing skills library.
+- `_load_skills_library()` — loads the marketing skills corpus
+- `retrieve_knowledge(query, k=3)` — **keyword overlap scoring, not vector similarity.** The module docstring says "vector-indexed" and the function docstring says pgvector is used "in production"; neither is true. No embeddings are computed and pgvector is not installed. Wired into the strategy agent.
 
 ## Image Generation
 **Status**: [LIVE]

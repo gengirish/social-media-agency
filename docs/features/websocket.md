@@ -1,5 +1,7 @@
 # Real-time Features
-<!-- verified: 260328 -->
+<!-- verified: 260817 -->
+
+> **Filename note:** this file is called `websocket.md` for historical reasons. There is no WebSocket in this codebase — the realtime layer is SSE, documented accurately below.
 
 ## Server-Sent Events (SSE)
 **Status**: [LIVE]

@@ -6,7 +6,7 @@ import { api, type Campaign, type ContentPiece } from "@/lib/api";
 import { LiveAgentDashboard } from "@/components/agents/live-agent-dashboard";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Loader2, FileText, CheckCircle2, Edit3 } from "lucide-react";
+import { Loader2, FileText, CheckCircle2 } from "lucide-react";
 
 const PLATFORM_COLORS: Record<string, string> = {
   linkedin: "bg-indigo-50 text-indigo-700 border-indigo-200",

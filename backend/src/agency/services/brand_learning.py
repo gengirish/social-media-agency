@@ -39,6 +39,9 @@ async def update_brand_learnings(
         "topics_covered",
         "platforms_used",
         "ad_platforms",
+        # SEO agent target keywords. Deliberately NOT merged into
+        # ``best_performing_topics`` — nothing measures performance here.
+        "seo_target_keywords",
     ):
         if key in analytics_data:
             learned[key] = analytics_data[key]

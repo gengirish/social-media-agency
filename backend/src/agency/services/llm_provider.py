@@ -34,16 +34,28 @@ logger = structlog.get_logger()
 BRAIN = "brain"
 WORKER = "worker"
 AD_COPY = "ad_copy"
+LITE = "lite"
 
 # Native SDK providers first (best reasoning), then OpenAI-compatible gateways.
 DEFAULT_PROVIDER_ORDER = ("anthropic", "google", "openai", "nvidia", "openrouter", "bonsai")
 
 # Per-tier generation settings, independent of which provider serves the tier.
+#
+# ``lite`` exists because output tokens are ~80% of campaign cost and several
+# calls are mechanical reformatting, not reasoning: SEO keyword extraction,
+# repurposing a post to another platform, generating an A/B variant. Those do
+# not need the reasoning tier, and on Anthropic the lite model is 3x cheaper
+# ($1/$5 per MTok vs $3/$15). ``max_tokens`` is lower too — these produce one
+# short artifact, and an oversized ceiling only invites the model to fill it.
 TIER_SETTINGS: dict[str, dict[str, Any]] = {
     BRAIN: {"temperature": 0.3, "max_tokens": 4096},
     WORKER: {"temperature": 0.7, "max_tokens": 4096},
     AD_COPY: {"temperature": 0.8, "max_tokens": 2048},
+    LITE: {"temperature": 0.5, "max_tokens": 1536},
 }
+
+#: Every tier, in diagnostic order. Providers without a tier split repeat one id.
+ALL_TIERS = (BRAIN, WORKER, AD_COPY, LITE)
 
 
 @dataclass(frozen=True)
@@ -65,45 +77,48 @@ def _provider_specs() -> dict[str, ProviderSpec]:
             name="anthropic",
             kind="anthropic",
             api_key=s.anthropic_api_key,
+            # claude-3-5-haiku-20241022 was RETIRED 2026-02-19 and returns 404;
+            # claude-sonnet-4-20250514 is deprecated. Both are replaced here.
             models={
-                BRAIN: "claude-sonnet-4-20250514",
-                WORKER: "claude-sonnet-4-20250514",
-                AD_COPY: "claude-3-5-haiku-20241022",
+                BRAIN: "claude-sonnet-5",
+                WORKER: "claude-sonnet-5",
+                AD_COPY: "claude-haiku-4-5",
+                LITE: "claude-haiku-4-5",
             },
         ),
         "google": ProviderSpec(
             name="google",
             kind="google",
             api_key=s.google_api_key,
-            models=dict.fromkeys((BRAIN, WORKER, AD_COPY), s.gemini_model),
+            models=dict.fromkeys(ALL_TIERS, s.gemini_model),
         ),
         "openai": ProviderSpec(
             name="openai",
             kind="openai_compatible",
             api_key=s.openai_api_key,
             base_url=s.openai_base_url,
-            models=dict.fromkeys((BRAIN, WORKER, AD_COPY), s.openai_model),
+            models=dict.fromkeys(ALL_TIERS, s.openai_model),
         ),
         "nvidia": ProviderSpec(
             name="nvidia",
             kind="openai_compatible",
             api_key=s.nvidia_nim_api_key,
             base_url=s.nvidia_nim_base_url,
-            models=dict.fromkeys((BRAIN, WORKER, AD_COPY), s.nvidia_nim_model),
+            models=dict.fromkeys(ALL_TIERS, s.nvidia_nim_model),
         ),
         "openrouter": ProviderSpec(
             name="openrouter",
             kind="openai_compatible",
             api_key=s.openrouter_api_key,
             base_url=s.openrouter_base_url,
-            models=dict.fromkeys((BRAIN, WORKER, AD_COPY), s.openrouter_model),
+            models=dict.fromkeys(ALL_TIERS, s.openrouter_model),
         ),
         "bonsai": ProviderSpec(
             name="bonsai",
             kind="openai_compatible",
             api_key=s.bonsai_api_key,
             base_url=s.bonsai_base_url,
-            models=dict.fromkeys((BRAIN, WORKER, AD_COPY), s.bonsai_model),
+            models=dict.fromkeys(ALL_TIERS, s.bonsai_model),
         ),
     }
 
@@ -127,6 +142,7 @@ def _tier_pin(tier: str) -> str:
         BRAIN: s.llm_brain_provider,
         WORKER: s.llm_worker_provider,
         AD_COPY: s.llm_ad_copy_provider,
+        LITE: s.llm_lite_provider,
     }[tier].strip().lower()
 
 
@@ -136,6 +152,7 @@ def _tier_model_override(tier: str) -> str:
         BRAIN: s.llm_brain_model,
         WORKER: s.llm_worker_model,
         AD_COPY: s.llm_ad_copy_model,
+        LITE: s.llm_lite_model,
     }[tier].strip()
 
 
@@ -262,7 +279,7 @@ def describe_providers() -> dict[str, Any]:
     specs = _provider_specs()
     tiers: dict[str, Any] = {}
 
-    for tier in (BRAIN, WORKER, AD_COPY):
+    for tier in ALL_TIERS:
         try:
             primary, *fallbacks = resolution_chain(tier)
             tiers[tier] = {
@@ -300,3 +317,14 @@ def get_worker_llm(temperature: float = 0.7):
 def get_ad_copy_llm():
     """Model tuned for ad copy variants."""
     return get_llm(AD_COPY)
+
+
+def get_lite_llm(temperature: float | None = None):
+    """Cheap model for mechanical reformatting, not reasoning.
+
+    Use for work that transforms text it is handed rather than deciding
+    anything: SEO keyword extraction, repurposing a post to another platform,
+    generating an A/B variant. Do not use where campaign quality depends on the
+    judgement in the output — that is what ``worker`` and ``brain`` are for.
+    """
+    return get_llm(LITE, temperature=temperature)

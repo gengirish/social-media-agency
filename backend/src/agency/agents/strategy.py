@@ -58,7 +58,7 @@ async def strategy_node(state: CampaignState) -> dict:
     plan = state.get("execution_plan", {})
 
     brand_str = "\n".join(f"- {k}: {v}" for k, v in brand_ctx.items() if v)
-    plan_str = json.dumps(plan, indent=2) if isinstance(plan, dict) else str(plan)
+    plan_str = json.dumps(plan, separators=(",", ":")) if isinstance(plan, dict) else str(plan)
 
     brief_for_kb = state.get("client_brief", "") or ""
     knowledge = await retrieve_knowledge(brief_for_kb, k=2)

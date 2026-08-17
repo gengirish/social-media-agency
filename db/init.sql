@@ -296,3 +296,111 @@ CREATE INDEX IF NOT EXISTS idx_product_event_name_occurred ON product_event(name
 CREATE INDEX IF NOT EXISTS idx_product_event_user_occurred ON product_event(user_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_product_event_campaign ON product_event(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_product_event_session ON product_event(session_id);
+
+-- Outbound webhooks: tenant-registered HTTP endpoints + per-attempt delivery log.
+-- `secret` is the HMAC-SHA256 signing key handed to the customer once at
+-- registration; the receiver needs the same value to verify X-Webhook-Signature.
+CREATE TABLE IF NOT EXISTS webhook (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    events TEXT[] DEFAULT '{}',
+    secret VARCHAR(128) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS webhook_delivery (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    webhook_id UUID NOT NULL REFERENCES webhook(id) ON DELETE CASCADE,
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    event_type VARCHAR(100) NOT NULL,
+    attempt INTEGER NOT NULL DEFAULT 1,
+    status VARCHAR(20) NOT NULL DEFAULT 'failed',
+    response_code INTEGER,
+    error TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_org ON webhook(org_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_org_active ON webhook(org_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_webhook_delivery_webhook ON webhook_delivery(webhook_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_webhook_delivery_org ON webhook_delivery(org_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- RAG knowledge base (backend/src/agency/services/knowledge_base.py).
+--
+-- pgvector is an OPTIONAL prerequisite, created defensively on purpose:
+--   * Neon supports the `vector` extension but it must be enabled per database;
+--     whether it is enabled on this deployment's Neon branch is NOT verifiable
+--     from this repo — the operator must run `CREATE EXTENSION IF NOT EXISTS
+--     vector;` once and confirm `SELECT extname FROM pg_extension`.
+--   * the `postgres:16-alpine` image in docker/docker-compose.yml does not ship
+--     pgvector at all, so an unguarded CREATE EXTENSION would abort this whole
+--     init script and break local bootstrap.
+-- If the extension is missing, the table is skipped and knowledge_base.py
+-- degrades to keyword retrieval, labelled `retrieval_mode: "keyword"` in every
+-- response. It never pretends to be semantic.
+-- ---------------------------------------------------------------------------
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS vector;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pgvector unavailable (%) - knowledge_embedding skipped; RAG runs in keyword mode', SQLERRM;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+        RETURN;
+    END IF;
+
+    -- embedding is vector(1536) for every provider; shorter vectors (Google's
+    -- 768) are zero-padded by the writer. Padding both operands with the same
+    -- trailing zeros leaves cosine similarity exactly unchanged. embedding_dim
+    -- keeps the true width, and queries filter on embedding_model so vectors
+    -- from two providers are never compared.
+    CREATE TABLE IF NOT EXISTS knowledge_embedding (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        document_id VARCHAR(64) NOT NULL,
+        source_path TEXT NOT NULL,
+        title VARCHAR(500) NOT NULL DEFAULT '',
+        category VARCHAR(100) NOT NULL DEFAULT 'general',
+        chunk_index INTEGER NOT NULL DEFAULT 0,
+        chunk_text TEXT NOT NULL,
+        embedding_provider VARCHAR(50) NOT NULL,
+        embedding_model VARCHAR(100) NOT NULL,
+        embedding_dim INTEGER NOT NULL,
+        embedding vector(1536) NOT NULL,
+        metadata JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT uq_knowledge_embedding_chunk UNIQUE (embedding_model, document_id, chunk_index)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_model
+        ON knowledge_embedding(embedding_model);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_document
+        ON knowledge_embedding(document_id);
+    -- HNSW over cosine distance (<=>), matching the ORDER BY in the retriever.
+    CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_cosine
+        ON knowledge_embedding USING hnsw (embedding vector_cosine_ops);
+END
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Composite indexes for the hot read paths.
+--
+-- Postgres can bitmap-AND two single-column indexes, but these three queries
+-- run often enough to deserve a direct match:
+--   * the scheduler sweeps (status, scheduled_at) across every org once a
+--     minute, forever — this is the highest-frequency query in the system;
+--   * the content and campaign list endpoints both filter (org_id, status).
+-- ---------------------------------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_content_piece_due
+    ON content_piece(status, scheduled_at)
+    WHERE status = 'scheduled';
+CREATE INDEX IF NOT EXISTS idx_content_piece_org_status
+    ON content_piece(org_id, status);
+CREATE INDEX IF NOT EXISTS idx_campaign_org_status
+    ON campaign(org_id, status);

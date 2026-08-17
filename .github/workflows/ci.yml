@@ -65,9 +65,18 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # ESLint CLI, not `next lint`: without a config file `next lint` drops into an
+      # interactive prompt and exits 0, which silently disabled this gate. The CLI can
+      # never prompt, and --max-warnings=0 (in the npm script) fails on warnings too.
       - name: Lint
         working-directory: frontend
         run: npm run lint
+
+      # next.config.mjs sets typescript.ignoreBuildErrors, so `next build` does not
+      # type-check. This is the real type gate until that override is removed.
+      - name: Type check
+        working-directory: frontend
+        run: npx tsc --noEmit
 
       - name: Build
         working-directory: frontend

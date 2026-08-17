@@ -97,13 +97,13 @@ async def content_writer_node(state: CampaignState) -> dict:
     post_count = sum(platforms.values()) if isinstance(platforms, dict) else len(channels) * 2
 
     brand_str = "\n".join(f"- {k}: {v}" for k, v in brand_ctx.items() if v)
-    strategy_str = json.dumps(strategy, indent=2) if isinstance(strategy, dict) else str(strategy)
+    strategy_str = json.dumps(strategy, separators=(",", ":")) if isinstance(strategy, dict) else str(strategy)
     seo_str = json.dumps(seo[:10]) if seo else "No SEO keywords provided"
 
     relevant_guidelines = {
         k: v for k, v in PLATFORM_GUIDELINES.items() if k in channels
     }
-    guidelines_str = json.dumps(relevant_guidelines, indent=2)
+    guidelines_str = json.dumps(relevant_guidelines, separators=(",", ":"))
 
     target_languages = state.get("target_languages") or []
     if target_languages:

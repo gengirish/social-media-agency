@@ -70,12 +70,14 @@ def compile_output_node(state: CampaignState) -> dict:
 def human_review_node(state: CampaignState) -> dict:
     """Human-in-the-loop step; graph pauses before this node via interrupt_before.
 
-    On resume, state carries the review decision. If still pending (fallback),
-    auto-approve so routing can proceed.
+    On resume, state carries the review decision. If still pending (fallback), the
+    run proceeds — but it is recorded as ``auto_approved_no_human`` rather than
+    ``approved``, so an unreviewed campaign is never indistinguishable from one a
+    human actually signed off.
     """
     review = state.get("human_review", "pending")
     if review == "pending":
-        return {"human_review": "approved", "current_agent": "human_review"}
+        return {"human_review": "auto_approved_no_human", "current_agent": "human_review"}
     return {"current_agent": "human_review"}
 
 

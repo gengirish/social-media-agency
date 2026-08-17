@@ -14,6 +14,29 @@ logger = structlog.get_logger()
 
 T = TypeVar("T")
 
+#: Platforms the UI can offer but this service cannot actually post to.
+#:
+#: A publisher listed here is short-circuited in :meth:`PlatformPublisher.publish`
+#: so it returns an explicit failure instead of a success-shaped body. Without this
+#: guard ``_publish_instagram`` returned normally, ``publish()`` wrapped it as
+#: ``{"success": True, ...}`` and callers marked the piece ``published`` (and burned
+#: post quota) for a post that was never made.
+#:
+#: T2.1 (Instagram publishing) removes ``"instagram"`` from this set once the Graph
+#: API container→publish flow lands. ``tiktok`` has no publisher at all.
+UNAVAILABLE_PUBLISH_PLATFORMS: dict[str, str] = {
+    "instagram": (
+        "Instagram publishing is not available yet. It requires uploading media "
+        "through the Meta Graph API (container + publish flow), which is not "
+        "implemented. Export the post and publish it manually for now."
+    ),
+    "tiktok": (
+        "TikTok publishing is not available yet. TikTok content can be generated "
+        "and scheduled as a draft, but there is no TikTok publisher or OAuth "
+        "connection. Export the post and publish it manually for now."
+    ),
+}
+
 
 class PlatformPublisher:
     """Handles publishing content to social media platforms."""
@@ -51,6 +74,11 @@ class PlatformPublisher:
 
     async def publish(self, platform: str, content: dict, credentials: dict) -> dict:
         """Route to platform-specific publisher."""
+        unavailable = UNAVAILABLE_PUBLISH_PLATFORMS.get(platform)
+        if unavailable:
+            logger.info("publish_platform_unavailable", platform=platform)
+            return {"success": False, "error": unavailable}
+
         publishers = {
             "twitter": self._publish_twitter,
             "linkedin": self._publish_linkedin,

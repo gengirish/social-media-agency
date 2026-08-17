@@ -47,7 +47,9 @@ class CampaignState(TypedDict, total=False):
     analytics_insights: dict       # Recommendations and narrative insights
 
     # --- Human-in-the-loop ---
-    human_review: str              # "pending" | "approved" | "revision_needed"
+    # "pending" | "approved" | "revise_content" | "revise_ads"
+    # | "auto_approved_no_human" (resumed with no human decision recorded)
+    human_review: str
     human_feedback: str
 
     # --- Control flow ---

@@ -1,7 +1,8 @@
 """Content scheduling engine — manages timed publishing queue."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, date, datetime
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.models.database import get_session_factory
 from agency.models.tables import ContentPiece, PlatformAccount
+from agency.services.analytics_fetcher import refresh_published_metrics
 from agency.services.billing import billing
 from agency.services.publishing import publisher
 
@@ -26,6 +28,9 @@ class SchedulerEngine:
     """Runs a background loop checking for content due for publishing."""
 
     _running = False
+    #: UTC day the analytics refresh pass last completed. Keeps the daily job on
+    #: the existing one-minute loop without firing it every minute.
+    _last_metrics_refresh_day: date | None = None
 
     async def start(self):
         """Start the scheduling loop (call at app startup)."""
@@ -45,12 +50,37 @@ class SchedulerEngine:
                 await self._process_due_content()
             except Exception as e:
                 logger.error("scheduler_error", error=str(e))
+            try:
+                await self.refresh_analytics()
+            except Exception as e:
+                logger.error("metrics_refresh_error", error=str(e))
             await asyncio.sleep(60)  # Check every minute
+
+    async def refresh_analytics(self, now: datetime | None = None) -> dict[str, Any]:
+        """Refresh live platform metrics for recently published content.
+
+        Runs at most once per UTC day off the existing scheduler loop. The
+        per-content guard lives in ``analytics_fetcher`` so a mid-pass crash
+        cannot cause a post to be measured twice on the same day.
+        """
+        now = now or datetime.now(UTC)
+        today = now.date()
+        if self._last_metrics_refresh_day == today:
+            return {"status": "skipped", "reason": "Already refreshed today"}
+
+        factory = get_session_factory()
+        async with factory() as db:
+            summary = await refresh_published_metrics(db, now=now)
+            await db.commit()
+
+        self._last_metrics_refresh_day = today
+        logger.info("analytics_refresh_completed", **summary)
+        return {"status": "completed", **summary}
 
     async def _process_due_content(self):
         factory = get_session_factory()
         async with factory() as db:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             result = await db.execute(
                 select(ContentPiece)
@@ -109,7 +139,7 @@ class SchedulerEngine:
 
         if pub_result.get("success"):
             piece.status = "published"
-            piece.published_at = datetime.now(timezone.utc)
+            piece.published_at = datetime.now(UTC)
             _merge_metadata(
                 piece,
                 {

@@ -4,6 +4,29 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260817 — Documentation Reconciliation
+
+Docs-only pass. No application code changed. Every count re-derived from source rather than carried forward.
+
+- **Fixed**: Endpoint total was 86 across 21 routers; actual is **82 across 24 routers**. The per-router tables in `api-endpoints.md` were already correct — only the footer and index were wrong
+- **Fixed**: `services.md` plan limits contradicted `billing.md`. `services.md` claimed free 2 clients/30 posts, starter 5/100, growth 15/500 — all wrong. `PLAN_CONFIG` is 1/30, 3/200, 10/1000, unlimited. `billing.md` was right
+- **Fixed**: `database-schema.md` header said 17 tables while listing 18; actual is **18**
+- **Fixed**: Counts across the index — services 21 → **23**, frontend pages 19 → **17**, agent nodes 11 → **9 graph nodes** (7 LLM agents + `human_review` + `compile_output`), integrations 5 → **7**
+- **Fixed**: Next.js 14 → **15.5**, React 19, Clerk 7 in `frontend-pages.md` and root `README.md`
+- **Fixed**: Root `README.md` project structure was badly stale — claimed 10 routers/36 endpoints, 8 services, 15 tables, 15 pages, 8 agent nodes, Gemini 2.0 Flash
+- **Fixed**: `services.md` described `_decrypt_token` as a passthrough stub; it now performs real decryption
+- **Added**: `[STUB]` status label and a **Feature Honesty** table in the index, marking every feature whose route works but whose data is placeholder — analytics metrics, trends, RAG, Instagram publish, Instagram metrics (hardening backlog P0-4)
+- **Added**: `services.md` entry for `services/platform_metrics.py` — real X/LinkedIn/Facebook fetchers, written but **imported by nothing**; documents the `unavailable`-not-zeros contract that integration must honour
+- **Added**: `billing.md` section documenting Stripe webhook signature verification as implemented (raw body + `construct_event`, 503 when unconfigured, 400 on missing/invalid signature) — P0-3 is satisfied in code
+- **Added**: `auth-and-rbac.md` middleware stack table and an explicit warning that there is **no row-level security** — isolation depends entirely on every query filtering `org_id`
+- **Added**: `frontend-components.md` entries for `AnalyticsTracker` and `lib/analytics.ts`, both previously undocumented
+- **Added**: `integrations.md` entries for fal.ai image generation (verified live — real call to `queue.fal.run/fal-ai/flux/schnell`) and Slack; LLM table corrected from 3 providers to **6**, reframed as per-tier fallback chains rather than per-agent assignment
+- **Added**: `integrations.md` note that `EXA_API_KEY` is configured but read by no service
+- **Added**: `billing.md` note that `STRIPE_PRICE_STARTER` / `_GROWTH` / `_AGENCY` are read by `config.py` but absent from `.env.example`
+- **Added**: `workers.md` notes on `_mark_campaign_failed` and the silent `MemorySaver` checkpointer fallback
+- **Changed**: `frontend-pages.md` root `/` was documented as an auth redirect; it is a ~541-line marketing landing page. Its placeholder logos and testimonials are self-labelled "Placeholder" in the UI, but the "Trusted by teams who ship campaigns weekly" heading still asserts traction that does not exist (P1-1)
+- **Note**: `websocket.md` already described SSE correctly. The filename is the only WebSocket artefact left; added a header note rather than renaming
+
 ## 260729 — Multi-Provider LLM Chain
 
 - **Added**: Six LLM providers — `anthropic` and `google` via native SDKs, plus `openai`, `nvidia` (NIM), `openrouter`, and `bonsai` as OpenAI-compatible endpoints through `ChatOpenAI(base_url=...)`. No new dependencies
