@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>IntelliForge AI Bootcamp — Social Cards</title>
+<style>
+  :root{
+    --bg:#0a0e1a; --panel:#0f1626; --line:#1e2b45;
+    --cyan:#22d3ee; --indigo:#6366f1; --violet:#8b5cf6;
+    --green:#34d399; --amber:#fbbf24;
+    --ink:#f1f5f9; --muted:#94a3b8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#05070d;font-family:"Segoe UI",Inter,system-ui,sans-serif;color:var(--ink);padding:32px;display:flex;flex-wrap:wrap;gap:28px;justify-content:center}
+  .hint{width:100%;max-width:1080px;color:var(--muted);font-size:14px;line-height:1.5;border:1px dashed var(--line);padding:14px 18px;border-radius:10px;background:#0b1120}
+  .hint b{color:var(--cyan)}
+  .card{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:22px;background:
+      radial-gradient(1200px 500px at 15% -10%, rgba(99,102,241,.28), transparent 55%),
+      radial-gradient(900px 500px at 110% 120%, rgba(34,211,238,.22), transparent 55%),
+      linear-gradient(160deg,#0c1322,#0a0e1a 60%);}
+  .sq{width:1080px;height:1080px}
+  .og{width:1200px;height:630px}
+  .pad{position:absolute;inset:0;padding:80px;display:flex;flex-direction:column}
+  .pad-og{padding:64px}
+  .kicker{font-family:"Consolas",ui-monospace,monospace;letter-spacing:.22em;text-transform:uppercase;font-size:22px;color:var(--cyan)}
+  .kicker.small{font-size:18px}
+  .brandrow{display:flex;align-items:center;gap:16px}
+  .logo{width:54px;height:54px;border-radius:14px;display:grid;place-items:center;font-weight:800;font-size:24px;
+        background:linear-gradient(135deg,var(--indigo),var(--cyan));color:#04121a}
+  .brand{font-weight:700;font-size:24px;letter-spacing:.01em}
+  .spacer{flex:1}
+  h1{font-size:96px;line-height:.98;font-weight:800;letter-spacing:-.02em;margin:10px 0}
+  h1 .grad{background:linear-gradient(120deg,var(--cyan),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{font-size:34px;color:#cbd5e1;line-height:1.35;font-weight:500}
+  .pills{display:flex;flex-wrap:wrap;gap:14px;margin-top:8px}
+  .pill{border:1px solid var(--line);background:#0b1424;border-radius:999px;padding:14px 22px;font-size:26px;font-weight:600}
+  .pill.hot{border-color:transparent;background:linear-gradient(135deg,#f97316,#ef4444);color:#fff}
+  .pill.cy{border-color:rgba(34,211,238,.4);color:var(--cyan)}
+  .price{display:flex;align-items:baseline;gap:18px}
+  .price .big{font-size:110px;font-weight:800;color:#fff}
+  .price .strike{font-size:40px;color:var(--muted);text-decoration:line-through}
+  .cta{margin-top:26px;align-self:flex-start;background:linear-gradient(135deg,var(--cyan),var(--indigo));color:#04121a;font-weight:800;font-size:30px;padding:22px 40px;border-radius:16px}
+  .foot{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:24px}
+  .roi{font-size:30px;color:var(--green);font-weight:700}
+  .pnum{font-family:"Consolas",monospace;font-size:200px;font-weight:800;line-height:1;color:transparent;-webkit-text-stroke:2px rgba(148,163,184,.35);position:absolute;right:60px;top:40px}
+  .stack{display:flex;flex-wrap:wrap;gap:12px;margin-top:auto}
+  .chip{font-family:"Consolas",monospace;font-size:22px;color:#a5b4fc;border:1px solid var(--line);border-radius:8px;padding:8px 14px;background:#0b1120}
+  .wk{font-family:"Consolas",monospace;color:var(--amber);font-size:26px;font-weight:700}
+  .desc{font-size:34px;color:#cbd5e1;line-height:1.4;margin-top:14px;max-width:820px}
+  .og h1{font-size:72px}
+  .og .sub{font-size:30px}
+</style>
+</head>
+<body>
+  <div class="hint">
+    <b>How to export:</b> open this file in Chrome. Each block below is a pixel-exact card (square = 1080×1080 for Instagram/WhatsApp, wide = 1200×630 for OG/thumbnail).
+    To save a PNG: right-click a card → <b>Inspect</b> → right-click the <code>&lt;div class="card"&gt;</code> node → <b>Capture node screenshot</b>. Or screenshot at 100% zoom.
+    Colors are an inferred dark-AI palette — swap the CSS <code>:root</code> variables to match exact IntelliForge brand hex when you have them.
+  </div>
+
+  <!-- SPRINT OFFER CARD -->
+  <div class="card sq">
+    <div class="pad">
+      <div class="brandrow"><div class="logo">IF</div><div class="brand">IntelliForge AI Bootcamp</div></div>
+      <div class="spacer"></div>
+      <div class="kicker">🔥 Cohort 1 · Live on Zoom</div>
+      <h1>2-Week<br><span class="grad">AI Sprint</span></h1>
+      <div class="sub">Ship <b>2 live AI products</b> in two weekends. Not notes — deployed.</div>
+      <div class="pills" style="margin-top:22px">
+        <div class="pill hot">Starts Sat 1 Aug</div>
+        <div class="pill">Only 30 seats</div>
+        <div class="pill cy">Sat &amp; Sun · IST</div>
+      </div>
+      <div class="price" style="margin-top:28px"><span class="big">₹4,999</span></div>
+      <div class="cta">Enroll → upskill.intelliforge.tech/sprint</div>
+      <div class="spacer"></div>
+      <div class="foot"><span>Build AI agents. Ship AI products.</span><span>15-day money-back</span></div>
+    </div>
+  </div>
+
+  <!-- OG / THUMBNAIL -->
+  <div class="card og">
+    <div class="pad pad-og">
+      <div class="brandrow"><div class="logo">IF</div><div class="brand">IntelliForge AI Bootcamp</div></div>
+      <div class="spacer"></div>
+      <div class="kicker small">Dual-track · Agents + Vibe Coding</div>
+      <h1>Build AI Agents.<br><span class="grad">Ship AI Products.</span></h1>
+      <div class="sub">2-Week Sprint ₹4,999 · 12-Week Bootcamp ₹49,999 · Live weekend cohort</div>
+      <div class="spacer"></div>
+      <div class="foot"><span>upskill.intelliforge.tech</span><span>Hyderabad · Aligned with Bharat AI Mission</span></div>
+    </div>
+  </div>
+
+  <!-- PROJECT CARDS P1-P5 -->
+  <div class="card sq">
+    <div class="pad">
+      <div class="pnum">P1</div>
+      <div class="brandrow"><div class="logo">IF</div><div class="brand">5 Portfolio-Grade Projects</div></div>
+      <div class="spacer"></div>
+      <div class="wk">WEEK 05 · AGENTS</div>
+      <h1 style="font-size:64px">Compliance<br><span class="grad">Sentinel Agent</span></h1>
+      <div class="roi">Saves legal teams 40+ hrs/week</div>
+      <div class="desc">Crawls regulatory portals daily, embeds rules into a legal RAG store, and a LangGraph agent audits your codebase — producing audit-ready PDF reports with citations.</div>
+      <div class="stack"><span class="chip">LangGraph</span><span class="chip">pgvector RAG</span><span class="chip">Playwright</span><span class="chip">BullMQ</span></div>
+    </div>
+  </div>
+
+  <div class="card sq">
+    <div class="pad">
+      <div class="pnum">P2</div>
+      <div class="brandrow"><div class="logo">IF</div><div class="brand">5 Portfolio-Grade Projects</div></div>
+      <div class="spacer"></div>
+      <div class="wk">WEEK 06 · MULTI-AGENT</div>
+      <h1 style="font-size:64px">Autonomous<br><span class="grad">Code Reviewer</span></h1>
+      <div class="roi">Cuts code review time by 70%</div>
+      <div class="desc">On every GitHub PR, 4 specialised agents (Security, Style, Tests, Architecture) debate the diff in parallel; an LLM-as-judge posts a consensus review.</div>
+      <div class="stack"><span class="chip">Multi-agent</span><span class="chip">LLM-as-judge</span><span class="chip">GitHub webhooks</span><span class="chip">AST</span></div>
+    </div>
+  </div>
+
+  <div class="card sq">
+    <div class="pad">
+      <div class="pnum">P3</div>
+      <div class="brandrow"><div class="logo">IF</div><div class="brand">5 Portfolio-Grade Projects</div></div>
+      <div class="spacer"></div>
+      <div class="wk">WEEK 04 · RAG</div>
+      <h1 style="font-size:64px">Research-to-Deck<br><span class="grad">Generator</span></h1>
+      <div class="roi">3 days of research → 5 minutes</div>
+      <div class="desc">Pulls 50+ papers via Semantic Scholar, embeds them, runs multi-query RAG to synthesise findings, and exports an editable PPTX with per-claim citations.</div>
+      <div class="stack"><span class="chip">Multi-doc RAG</span><span class="chip">Semantic Scholar</span><span class="chip">PPTX gen</span><span class="chip">Async jobs</span></div>
+    </div>
+  </div>
+
+  <div class="card sq">
+    <div class="pad">
+      <div class="pnum">P4</div>
+      <div class="brandrow"><div class="logo">IF</div><div class="brand">5 Portfolio-Grade Projects</div></div>
+      <div class="spacer"></div>
+      <div class="wk">WEEK 07 · FULL-STACK</div>
+      <h1 style="font-size:64px">Recruiting<br><span class="grad">Swarm</span></h1>
+      <div class="roi">+40% interview show-up rates</div>
+      <div class="desc">Resume NER → JD fit scoring by vector similarity → personalised outreach → auto-booked interviews, with a recruiter kanban dashboard.</div>
+      <div class="stack"><span class="chip">NER</span><span class="chip">Vector match</span><span class="chip">Next.js 14</span><span class="chip">Calendar API</span></div>
+    </div>
+  </div>
+
+  <div class="card sq">
+    <div class="pad">
+      <div class="pnum">P5</div>
+      <div class="brandrow"><div class="logo">IF</div><div class="brand">5 Portfolio-Grade Projects</div></div>
+      <div class="spacer"></div>
+      <div class="wk">WEEK 10 · PROD &amp; COST</div>
+      <h1 style="font-size:64px">Cost-Aware<br><span class="grad">Agent Router</span></h1>
+      <div class="roi">Reduces inference costs by 60%</div>
+      <div class="desc">A drop-in LLM proxy that classifies query complexity, routes to the cheapest capable model, enforces per-org token budgets, and exposes Prometheus metrics.</div>
+      <div class="stack"><span class="chip">LLM gateway</span><span class="chip">Model routing</span><span class="chip">Prisma budgets</span><span class="chip">Prometheus</span></div>
+    </div>
+  </div>
+</body>
+</html>
