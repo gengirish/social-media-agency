@@ -2,8 +2,10 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
+import { toast } from "sonner";
 import { connectAgentStream } from "@/lib/agent-stream";
-import type { AgentStreamEvent } from "@/lib/api";
+import { api } from "@/lib/api";
+import type { AgentStreamEvent, ReviewDecision } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   Brain,
@@ -40,17 +42,43 @@ interface LiveAgentDashboardProps {
 export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: LiveAgentDashboardProps) {
   const { getToken } = useAuth();
 
-  const getTokenForReview = async () => {
-    const t = await getToken();
-    return t || "";
-  };
-
   const [agentStatuses, setAgentStatuses] = useState<Record<string, AgentStatus>>({});
-  const [currentAgent, setCurrentAgent] = useState<string>("");
+  // Value intentionally unread: only the setter is used, to keep the stream handler's
+  // "current agent" write path intact for future UI without an unused-variable warning.
+  const [, setCurrentAgent] = useState<string>("");
   const [progress, setProgress] = useState(0);
   const [events, setEvents] = useState<AgentStreamEvent[]>([]);
   const [isComplete, setIsComplete] = useState(false);
+  const [reviewSubmitting, setReviewSubmitting] = useState<ReviewDecision | null>(null);
   const disconnectRef = useRef<(() => void) | null>(null);
+
+  /**
+   * Resume the paused graph with a review decision.
+   *
+   * The graph compiles with `interrupt_before=["human_review"]`, so this PATCH is
+   * the only thing that restarts a campaign — a failure here strands it in
+   * `running` forever. It must therefore never fail silently: on error the gate
+   * stays on screen with the backend's own message so the decision can be retried.
+   */
+  const submitDecision = async (decision: ReviewDecision) => {
+    if (reviewSubmitting) return;
+    setReviewSubmitting(decision);
+    try {
+      await api.submitReview(campaignId, decision);
+      setAgentStatuses((prev) => ({
+        ...prev,
+        human_review: decision === "approved" ? "complete" : "running",
+      }));
+      toast.success(
+        decision === "approved" ? "Approved — resuming pipeline" : "Revisions requested"
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Could not submit review";
+      toast.error(`Review not submitted: ${message}`);
+    } finally {
+      setReviewSubmitting(null);
+    }
+  };
 
   useEffect(() => {
     let disconnectFn: (() => void) | null = null;
@@ -157,7 +185,7 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
 
       {/* Agent pipeline */}
       <div className="space-y-2">
-        {AGENT_CONFIG.map((agent, idx) => {
+        {AGENT_CONFIG.map((agent) => {
           const status = agentStatuses[agent.id] || "pending";
           const isActive = status === "running";
 
@@ -223,59 +251,19 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={async () => {
-                try {
-                  const res = await fetch(
-                    `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"}/api/v1/campaigns/${campaignId}/review`,
-                    {
-                      method: "PATCH",
-                      headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${await getTokenForReview()}`,
-                      },
-                      body: JSON.stringify({ decision: "approved" }),
-                    }
-                  );
-                  if (!res.ok) {
-                    console.error("Review submit failed", res.status, await res.text());
-                    return;
-                  }
-                  setAgentStatuses((prev) => ({ ...prev, human_review: "complete" }));
-                } catch (e) {
-                  console.error("Review submit failed", e);
-                }
-              }}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+              onClick={() => submitDecision("approved")}
+              disabled={reviewSubmitting !== null}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Approve & Continue
+              {reviewSubmitting === "approved" ? "Approving…" : "Approve & Continue"}
             </button>
             <button
               type="button"
-              onClick={async () => {
-                try {
-                  const res = await fetch(
-                    `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"}/api/v1/campaigns/${campaignId}/review`,
-                    {
-                      method: "PATCH",
-                      headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${await getTokenForReview()}`,
-                      },
-                      body: JSON.stringify({ decision: "revise_content" }),
-                    }
-                  );
-                  if (!res.ok) {
-                    console.error("Review submit failed", res.status, await res.text());
-                    return;
-                  }
-                  setAgentStatuses((prev) => ({ ...prev, human_review: "running" }));
-                } catch (e) {
-                  console.error("Review submit failed", e);
-                }
-              }}
-              className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50"
+              onClick={() => submitDecision("revise_content")}
+              disabled={reviewSubmitting !== null}
+              className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Request Revisions
+              {reviewSubmitting === "revise_content" ? "Requesting…" : "Request Revisions"}
             </button>
           </div>
         </div>
