@@ -1,7 +1,7 @@
 # CampaignForge AI — YC Application (S2027)
 
-> **Replace your marketing agency with 7 AI agents.**
-> One brief. Complete campaign. 5 minutes. $49/month.
+> **Take on more clients without hiring.**
+> Brief in, client-ready campaign out — under the agency's own logo.
 
 ---
 
@@ -105,29 +105,40 @@ Single-prompt tools can't replicate this feedback loop.
 
 ## 7. Competitive Landscape
 
-| Capability | Uplane (YC F25) | Rankai (YC S23) | Sprites (YC W22) | **CampaignForge** |
-|-----------|-----------------|-----------------|-------------------|-------------------|
-| Multi-agent orchestration | Hidden | Hidden | Hidden | **Live dashboard** |
-| Full-stack campaign | Ads only | SEO only | Acquisition | **Full pipeline** |
-| Brand voice enforcement | Basic | No | No | **Deep profiles** |
-| Human-in-the-loop | No | No | No | **Built-in** |
-| Transparent AI | Black box | Black box | Black box | **Open pipeline** |
-| Multi-platform publishing | Ad platforms | Blog/web | Varied | **4 social platforms** |
-| Agency white-label | No | No | No | **Yes** |
-| Autonomous campaigns | No | No | No | **Yes** |
+Two distinct sets of competitors. Conflating them was the flaw in the earlier version of this table.
 
-**YC has funded 3+ companies here.** They proved the market. We're the full-stack answer.
+**Ring 1 — autonomous channel agents (YC-funded, well capitalised).** Verified Aug 2026: Uplane spans ad generation, landing pages and cross-channel spend allocation and publishes a +20–50% ROAS claim; RankAI sells site-growth autopilot to "startups **and agencies**"; Sprites AI sells SEO **plus** paid ads **plus** content **plus** influencer outreach to "entrepreneurs **and agencies**". They are **not** single-function, and Uplane launched under the exact tagline this deck previously used. We do not win these on feature count.
+
+**Ring 2 — the agency platforms our ICP actually pays for today.** This is where we compete, and where the hole is real.
+
+| Capability | Cloud Campaign | Vista Social | SocialPilot | Sendible | **CampaignForge** |
+|-----------|----------------|--------------|-------------|----------|-------------------|
+| Entry price | $49 | $79 | $30 | $29 | **$49** |
+| Agency tier | $229–$349 | $149–$304 | $100–$200 | $299–$750 | **$399** |
+| White-label | Free on Team+ | Mid tiers | $100 (reports) | $299 tier + ~$315 add-on | **$399** |
+| Seats | Unlimited | 10 at Scale | Unlimited at top | Capped per tier | **3 at Growth** ⚠️ |
+| AI scope | Captions | Post-level assistant | Captions | Post-level assistant | **Strategy + SEO + ads + brand QA from one brief** |
+| Human approval gate | Approval workflow | Approval workflow | Approval workflow | Approval workflow | **Agent-level, mid-pipeline** |
+| Multi-agent transparency | No | No | No | No | **Live SSE dashboard** |
+
+**The wedge:** every incumbent's AI starts *after* the strategy exists. We generate the strategy, the SEO angle, the ad copy and the QA pass as one deliverable, then hand it to whatever they already publish with. We sit above the scheduler rather than replacing it — near-zero switching cost.
+
+**Honest gap:** seat caps are below segment norm, and analytics is not yet real (backlog P0-1). Reporting is the incumbents' core recurring value, so we do not lead with it.
 
 ---
 
 ## 8. Business Model
 
-| Plan | Price | Clients | Posts/mo | Target |
-|------|-------|---------|----------|--------|
-| Free | $0 | 2 | 30 | Trial users |
-| Starter | $49/mo | 5 | 100 | Freelancers |
-| Growth | $149/mo | 15 | 500 | Growing teams |
-| Agency | $399/mo | Unlimited | Unlimited | Agencies |
+Limits below match `PLAN_CONFIG` in `backend/src/agency/services/billing.py` and the live pricing page. Do not edit one without the others.
+
+| Plan | Price | Clients | Posts/mo | Campaigns/mo | Target |
+|------|-------|---------|----------|--------------|--------|
+| Free | $0 | 1 | 30 | 5 | Trial users |
+| Starter | $49/mo | 3 | 200 | 20 | Freelancers with a few retainers |
+| Growth | $149/mo | 10 | 1,000 | Unlimited | Small agencies |
+| Agency | $399/mo | Unlimited | Unlimited | Unlimited | Multi-client agencies |
+
+A re-meter to client workspaces with unlimited seats is queued as P1-7 in the hardening backlog — the segment prices per workspace, not per post.
 
 **Unit Economics:**
 - LLM cost per campaign: ~$0.15–0.30 (Gemini Flash for workers)
@@ -141,14 +152,16 @@ Single-prompt tools can't replicate this feedback loop.
 
 | Layer | Technology | Hosting |
 |-------|-----------|---------|
-| Frontend | Next.js 14 + Tailwind + Clerk Auth | Vercel Edge |
-| Backend | FastAPI + LangGraph | Fly.io |
-| Database | PostgreSQL (async, multi-tenant) | Neon Serverless |
+| Frontend | Next.js 15 + React 19 + Tailwind + Clerk Auth | Vercel |
+| Backend | FastAPI + LangGraph (82 endpoints, 24 routers) | Fly.io |
+| Database | PostgreSQL (async, multi-tenant, 18 tables) | Neon Serverless |
 | AI Brain | Claude Sonnet (orchestrator, QA) | Anthropic |
-| AI Workers | Gemini 2.0 Flash (content, strategy) | Google |
-| Payments | Stripe (subscriptions + webhooks) | — |
+| AI Workers | Gemini 2.5 Flash (content, strategy) | Google |
+| LLM resilience | 6 providers with per-tier automatic failover | — |
+| Payments | Stripe (subscriptions + signature-verified webhooks) | — |
 | Email | AgentMail | — |
-| CI/CD | GitHub Actions, 9 Playwright E2E tests | — |
+| Images | fal.ai (flux/schnell) | — |
+| CI/CD | GitHub Actions, Playwright E2E | — |
 
 **Capital efficient:** Total infra cost at 100 users < $50/month.
 
@@ -156,22 +169,26 @@ Single-prompt tools can't replicate this feedback loop.
 
 ## 10. Go-to-Market
 
-| Phase | Timeline | Target | Key Actions |
-|-------|----------|--------|------------|
-| **Wedge** | Weeks 1–4 | 5 paying users | Ship publishing, scheduling. Cold outreach to freelance marketers |
-| **Traction** | Weeks 5–8 | 20 users, $2K MRR | Product Hunt launch, X threads, LinkedIn case studies, Reddit |
-| **Moats** | Weeks 9–14 | 100 users, $10K MRR | Brand learning compounds, agency white-label, template marketplace |
+**ICP:** social/content agencies of 2–10 people and senior freelancers managing 3–15 client brands. They already pay for a scheduler and already do strategy in a Google Doc with ChatGPT, unbilled. Their constraint is fulfillment hours per client, not content volume.
+
+| Phase | Gate (not a date) | Build | Sell |
+|-------|-------------------|-------|------|
+| **Make it honest** | Zero non-working features on screen; 5 design partners | P0-4 label stubs, P0-2 billing + tenancy tests, remove placeholder proof | Hand-recruit 5 agencies, free for 90 days |
+| **Make it valuable** | One partner runs a full client retainer unassisted | P0-1 real analytics (X + LinkedIn), client-ready branded export | Weekly working sessions; capture before/after hours per client |
+| **Make it repeatable** | 10 paying agencies, each ≥3 active client workspaces | P1-7 re-meter to workspaces, white-label domain tested E2E | Convert partners to paid, ship comparison pages, open cold outreach |
 
 ### Distribution Channels
 
-| Channel | Tactic |
-|---------|--------|
-| Product Hunt | Launch with live agent demo video — target Top 5 |
-| X/Twitter | Daily threads: "I replaced my $5K/mo agency with AI" |
-| LinkedIn | Case studies with real before/after metrics |
-| Reddit | r/startups, r/SaaS, r/marketing — founder story |
-| Cold email | AgentMail outreach to freelance marketers |
-| YouTube | "Watch 7 AI agents build a campaign in 5 min" |
+Ranked by fit with an agency buyer — full rationale in [competitive-analysis-gtm.md](competitive-analysis-gtm.md).
+
+| Channel | Tactic | Priority |
+|---------|--------|----------|
+| Founder-led design partners | Direct outreach to 5 agencies; the only source of real logos, quotes and before/after numbers | Now |
+| Comparison SEO | "Sendible alternatives", "white-label social media management" — the segment already runs this play on itself; our own SEO agent is the dogfood story | Now |
+| Agency-owner communities | Private Slack/FB groups, r/agency, r/socialmedia — where switching decisions get discussed | Wk 4+ |
+| Cold email (AgentMail) | <50/day, warmed domain, only after a case study exists | Wk 6+ |
+| LinkedIn | Case studies with real before/after metrics from design partners | Wk 6+ |
+| Product Hunt | Launch-day spike — sends founders and prosumers, not agency owners | Later |
 
 ---
 
@@ -193,7 +210,7 @@ Single-prompt tools can't replicate this feedback loop.
 2. **Multi-agent frameworks matured** — LangGraph, CrewAI, AutoGen make orchestration production-ready
 3. **SMBs priced out of agencies** — Post-2024 recession pushed marketing budgets to tools
 4. **Social APIs opened** — X, LinkedIn, Meta now support programmatic publishing
-5. **YC competitors proved demand** — Uplane, Rankai, Sprites validated the market. We're the full-stack play
+5. **YC competitors proved demand** — Uplane, RankAI and Sprites validated that AI can run marketing execution. They sell to the brand; we sell to the agency serving 15 brands, with white-label and an approval gate they don't have
 
 ---
 
@@ -216,7 +233,7 @@ Single-prompt tools can't replicate this feedback loop.
 
 | Risk | Mitigation |
 |------|-----------|
-| "YC already funded competitors" | They're single-function. We're full-stack, transparent, multi-platform |
+| "YC already funded competitors" | Different buyer. They sell execution to the brand; we sell client-fulfillment capacity to the agency — white-label, multi-tenant, approval gate. Claiming they're "single-function" is not defensible as of Aug 2026 |
 | "LLM quality inconsistent" | QA agent + human review gate + structured JSON + retry logic |
 | "No moat — anyone can build this" | Brand learning data compounds over time; template marketplace = network effects; agency-mode = lock-in |
 | "Social API rate limits" | Queue-based publishing, per-platform rate limiting, retry with backoff |
@@ -233,7 +250,7 @@ Single-prompt tools can't replicate this feedback loop.
 25-35s: [Content Writer generates LinkedIn post, Twitter thread, Instagram caption]
 35-45s: [QA Agent scores 8.7/10, flags compliance issue, auto-fixes]
 45-55s: [Calendar view — all posts scheduled across 4 platforms]
-55-60s: "Your entire marketing team. One prompt. Five minutes. $49/month."
+55-60s: "One brief, a client-ready campaign, under your logo. Take on three more clients without hiring."
 ```
 
 ---

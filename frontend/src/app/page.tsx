@@ -41,7 +41,7 @@ const plans = [
     name: "Starter",
     price: "$49",
     period: "/mo",
-    blurb: "Solo marketers & founders",
+    blurb: "Freelancers with a few retainers",
     features: ["3 clients", "200 posts / mo", "Email support", "Brand profiles"],
     cta: "Get Starter",
     href: "/sign-up",
@@ -51,7 +51,7 @@ const plans = [
     name: "Growth",
     price: "$149",
     period: "/mo",
-    blurb: "Growing teams",
+    blurb: "Small agencies",
     features: ["10 clients", "1,000 posts / mo", "Priority support", "Org workspaces"],
     cta: "Get Growth",
     href: "/sign-up",
@@ -176,14 +176,14 @@ function HeroSection({ isSignedIn }: { isSignedIn: boolean | undefined }) {
         <div className="mx-auto max-w-3xl text-center">
           <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium uppercase tracking-wider text-cyan-300/90">
             <Sparkles className="h-3.5 w-3.5" />
-            Multi-agent marketing OS
+            White-label campaign engine for agencies
           </p>
           <h1 className="text-balance bg-gradient-to-br from-white via-slate-100 to-slate-400 bg-clip-text text-4xl font-bold tracking-tight text-transparent sm:text-5xl lg:text-6xl">
-            Replace Your Marketing Agency with 7 AI Agents
+            Take On More Clients Without Hiring
           </h1>
           <p className="mt-6 text-pretty text-lg text-slate-400 sm:text-xl">
-            One brief. Complete campaign. 5 minutes.{" "}
-            <span className="font-semibold text-cyan-400">$49/month.</span>
+            Brief in, client-ready campaign out — strategy, SEO, copy and brand QA in one pass,{" "}
+            <span className="font-semibold text-cyan-400">under your logo.</span>
           </p>
           <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
             {isSignedIn ? (
@@ -294,7 +294,7 @@ function HowItWorks() {
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">How it works</h2>
-          <p className="mt-4 text-slate-400">From blank brief to shipped campaign—without the agency overhead.</p>
+          <p className="mt-4 text-slate-400">From blank brief to client-ready campaign—without adding headcount.</p>
         </div>
         <div className="mt-14 grid gap-8 md:grid-cols-3">
           {steps.map((s) => (
