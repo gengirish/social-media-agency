@@ -7,6 +7,7 @@ import structlog
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
+from jose.exceptions import ExpiredSignatureError
 from sqlalchemy import select
 
 from agency.config import get_settings
@@ -174,30 +175,95 @@ async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
     }
 
 
+_BEARER_CHALLENGE = {"WWW-Authenticate": 'Bearer error="invalid_token"'}
+
+
+def _unverified_alg(token: str) -> str | None:
+    """The token's signing algorithm, or None if the header is unreadable.
+
+    Read before verification purely to route the token to the right verifier —
+    RS256 is Clerk, HS256 is the local login. Nothing here is trusted.
+    """
+    try:
+        return str(jwt.get_unverified_header(token).get("alg") or "") or None
+    except JWTError:
+        return None
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict:
+    """Resolve the caller from whichever auth mode issued their token.
+
+    Returns the JWT *payload dict* in both modes, never an ORM ``User`` — see
+    ``get_current_user_id``.
+
+    The mode is chosen from the token's own algorithm rather than by trying Clerk
+    and falling through on failure. The previous ordering turned an expired
+    session, an unset CLERK_SECRET_KEY, a Clerk API outage and a database error
+    during auto-provisioning into one identical ``401 Invalid token``, with the
+    real cause recorded only at debug level. An RS256 token can never verify
+    against the HS256 secret, so that fallthrough could not have succeeded — it
+    only destroyed the diagnostic.
+    """
     settings = get_settings()
     token = credentials.credentials
 
-    if settings.clerk_jwks_url and settings.clerk_secret_key:
+    if _unverified_alg(token) == "RS256":
+        if not (settings.clerk_jwks_url and settings.clerk_secret_key):
+            logger.error("clerk_token_but_clerk_unconfigured")
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Clerk authentication is not configured on this server",
+            )
         try:
             clerk_payload = await _verify_clerk_jwt(token, settings.clerk_jwks_url)
-            return await _resolve_clerk_user(clerk_payload, settings)
+        except ExpiredSignatureError as exc:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "Token expired", headers=_BEARER_CHALLENGE
+            ) from exc
         except JWTError as exc:
-            logger.debug("clerk_jwt_error", error=str(exc))
+            logger.info("clerk_jwt_rejected", error=str(exc))
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "Invalid token", headers=_BEARER_CHALLENGE
+            ) from exc
         except Exception as exc:
-            logger.warning("clerk_auth_error", error=str(exc), error_type=type(exc).__name__)
+            # JWKS unreachable. An upstream outage, not a bad credential.
+            logger.error(
+                "clerk_jwks_unavailable", error=str(exc), error_type=type(exc).__name__
+            )
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "Authentication service unavailable"
+            ) from exc
+
+        try:
+            return await _resolve_clerk_user(clerk_payload, settings)
+        except Exception as exc:
+            # Clerk Backend API call or the auto-provisioning write failed. The
+            # signature was already proven valid above, so this is never a 401.
+            logger.error(
+                "clerk_user_resolution_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "Authentication service unavailable"
+            ) from exc
 
     try:
-        payload = jwt.decode(
+        return jwt.decode(
             token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
-        return payload
+    except ExpiredSignatureError as e:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Token expired", headers=_BEARER_CHALLENGE
+        ) from e
     except JWTError as e:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from e
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Invalid token", headers=_BEARER_CHALLENGE
+        ) from e
 
 
 async def get_current_user_id(user: dict[str, Any] = Depends(get_current_user)) -> UUID:
