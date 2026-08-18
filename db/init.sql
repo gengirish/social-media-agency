@@ -223,6 +223,10 @@ CREATE TABLE IF NOT EXISTS white_label (
     primary_color VARCHAR(7) DEFAULT '#4f46e5',
     company_name VARCHAR(255),
     support_email VARCHAR(255),
+    -- Gates every /api/v1/portal/{org_slug} route. Defaults FALSE so an org that
+    -- has branding rows but has not opted in still 403s.
+    portal_enabled BOOLEAN DEFAULT FALSE,
+    email_from_name VARCHAR(255),
     is_active BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -330,6 +334,34 @@ CREATE INDEX IF NOT EXISTS idx_webhook_org ON webhook(org_id);
 CREATE INDEX IF NOT EXISTS idx_webhook_org_active ON webhook(org_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_webhook_delivery_webhook ON webhook_delivery(webhook_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_webhook_delivery_org ON webhook_delivery(org_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- In-app notifications (backend/src/agency/routers/notifications.py).
+--
+-- Declared in models/tables.py since it was written but never added here, so no
+-- provisioned database has ever had it and every notifications route 500'd in
+-- production. Scoped by BOTH user_id and org_id: user_id is the narrower key,
+-- org_id is carried so the rows obey the same tenant filter as everything else.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notification (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL,
+    title VARCHAR(500) NOT NULL,
+    body TEXT DEFAULT '',
+    data JSONB DEFAULT '{}',
+    read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- The bell polls unread-per-user constantly; the partial index keeps that off a
+-- full scan as the table grows.
+CREATE INDEX IF NOT EXISTS idx_notification_user_created
+    ON notification(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_user_unread
+    ON notification(user_id) WHERE read = FALSE;
+CREATE INDEX IF NOT EXISTS idx_notification_org ON notification(org_id);
 
 -- ---------------------------------------------------------------------------
 -- RAG knowledge base (backend/src/agency/services/knowledge_base.py).
