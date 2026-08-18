@@ -111,6 +111,13 @@ Dual-mode by design — do not collapse it:
 
 `TenantMiddleware` decodes `org_id` from the bearer token into `request.state.org_id`; `get_org_id` prefers that over the token payload. **Every org-scoped query must filter on `org_id`** — there is no row-level security in the database. `ApiKeyAuthMiddleware` handles the `X-API-Key` path for `routers/public_api.py`.
 
+Two rules that follow from having no RLS, both of which were violated in shipped code before 260817:
+
+- **Any id that arrives from the client — path param, body field, query string — must be resolved against `org_id` before it is written to or joined on.** A `client_id` taken from a request body and trusted (`routers/oauth.py`) let one tenant attach a connected social account to another tenant's client, which `publish_now` then selected because *its* lookup was also unscoped. Neither gap was exploitable alone.
+- `get_current_user` returns the **JWT payload dict** in both auth modes, never an ORM `User`. Use `get_current_user_id` for the caller's id; `user.id` raises `AttributeError` and surfaces as a 500.
+
+`backend/tests/test_tenancy_routers.py` covers these per router, and every test in it is verified to fail when its filter is deleted — keep that property when adding more.
+
 Frontend auth: [middleware.ts](frontend/middleware.ts) marks only `/`, `/sign-in`, `/sign-up`, and `/api/webhooks/*` public. `ClerkTokenSync` calls `setClerkTokenGetter()` once so [lib/api.ts](frontend/src/lib/api.ts) can attach `Authorization` headers — the API client has no direct Clerk dependency.
 
 ### Real-time streaming
@@ -130,13 +137,17 @@ To make a new flow show up in the adoption table, call `trackFeature("kebab-name
 
 ### Backend layering
 
-`routers/` (23 routers, all mounted under `/api/v1`) → `services/` (21 modules: billing, publishing, scheduler, brand_learning, cross_learning, white_label, webhook_dispatcher, …) → `models/` (`tables.py` SQLAlchemy, `schemas.py` Pydantic, `database.py` session factory). Keep business logic in `services/`; routers stay thin.
+`routers/` (24 routers, all mounted under `/api/v1`) → `services/` (24 modules: billing, publishing, scheduler, brand_learning, cross_learning, white_label, webhook_dispatcher, platform_metrics, exa_client, …) → `models/` (`tables.py` SQLAlchemy, `schemas.py` Pydantic, `database.py` session factory). Keep business logic in `services/`; routers stay thin.
 
 `main.py` registers a background `scheduler` on startup alongside the graph runtime — both need matching shutdown handling.
 
 ### Database
 
 Schema is raw SQL in [db/init.sql](db/init.sql) (+ `db/seed.sql`), **not** Alembic migrations, even though `alembic` is a dependency. Schema changes must be applied to both `db/init.sql` and `models/tables.py`.
+
+`init.sql` only runs on a **fresh** database, so a schema change is invisible to any already-provisioned environment (Neon prod, a local volume that was not reset). Alongside the two edits above, add a dated forward-only script to [db/migrations/](db/migrations/) — e.g. [260817_org_slug.sql](db/migrations/260817_org_slug.sql) — and run it by hand on Neon. Nothing applies these automatically.
+
+`organization.slug` is the portal's identity column and is `UNIQUE` deliberately: `/api/v1/portal/{org_slug}` is unauthenticated, and the previous `domain`-then-`name` resolution used non-unique columns. A null slug means that org has no portal.
 
 ### CORS
 

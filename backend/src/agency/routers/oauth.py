@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from agency.config import get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
-from agency.models.tables import PlatformAccount
+from agency.models.tables import Client, PlatformAccount
 from agency.utils.encryption import encrypt_token
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
@@ -97,6 +97,24 @@ async def oauth_callback(
     if not code:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authorization code required")
 
+    # TENANCY: ``client_id`` is attacker-controllable request body. Resolve it against
+    # the caller's org *before* the token exchange, otherwise a connected account can be
+    # attached to another tenant's client — which ``publishing.publish_now`` would then
+    # pick up. There is no RLS in this database; this check is the only thing stopping it.
+    client_id_fk = body.get("client_id")
+    if not client_id_fk:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "client_id required")
+    try:
+        client_uuid = UUID(str(client_id_fk))
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "client_id must be a UUID") from None
+
+    owner = await db.execute(
+        select(Client.id).where(Client.id == client_uuid, Client.org_id == org_id)
+    )
+    if owner.scalar_one_or_none() is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
+
     settings = get_settings()
     key_attr, secret_attr = PLATFORM_CLIENT_KEYS[platform]
     client_id = getattr(settings, key_attr, "")
@@ -119,7 +137,9 @@ async def oauth_callback(
         )
 
     if token_resp.status_code != 200:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Token exchange failed: {token_resp.text}")
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, f"Token exchange failed: {token_resp.text}"
+        )
 
     token_data = token_resp.json()
     access_token = token_data.get("access_token", "") or ""
@@ -130,13 +150,9 @@ async def oauth_callback(
 
     account_handle = body.get("account_handle", f"{platform}_user")
     display_name = body.get("display_name", account_handle)
-    client_id_fk = body.get("client_id")
-
-    if not client_id_fk:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "client_id required")
 
     account = PlatformAccount(
-        client_id=UUID(client_id_fk),
+        client_id=client_uuid,
         org_id=org_id,
         platform=platform,
         account_handle=account_handle,

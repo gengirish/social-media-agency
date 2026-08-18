@@ -198,6 +198,8 @@ The stream endpoint uses `?token=` query param because `EventSource` cannot send
 
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
+> `{org_slug}` resolves against `Organization.slug` **only** (unique, nullable). It previously fell back to `domain` then `name`, neither of which is unique — two orgs sharing a name 500'd every portal route. An org with no slug has no portal and returns 404.
+
 | GET | `/portal/{org_slug}/campaigns` | No | `portal_campaigns` | White-label campaign list |
 | GET | `/portal/{org_slug}/content` | No | `portal_content` | White-label content list |
 | PATCH | `/portal/{org_slug}/content/{content_id}` | No | `portal_review_content` | Client approve/reject |

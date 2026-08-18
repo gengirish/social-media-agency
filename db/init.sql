@@ -6,6 +6,10 @@ CREATE SCHEMA IF NOT EXISTS campaignforge;
 CREATE TABLE IF NOT EXISTS organization (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
+    -- Portal identity. UNIQUE is load-bearing: /api/v1/portal/{org_slug} is
+    -- unauthenticated, so a non-unique key lets one org shadow another's namespace.
+    -- Nullable = no portal for that org (fails closed).
+    slug VARCHAR(64) UNIQUE,
     domain VARCHAR(255),
     settings JSONB DEFAULT '{}',
     agentmail_inbox_id VARCHAR(255),

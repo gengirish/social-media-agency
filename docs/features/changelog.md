@@ -4,6 +4,29 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260817 — Tenant Isolation Sweep (T1.7) + Frontend Build Gate (T0.5)
+
+**Security — six routers were not enforcing `org_id`.** There is no row-level security in this database, so each missing filter was the isolation boundary itself.
+
+- `routers/oauth.py` — `oauth_callback` trusted the request-body `client_id` and attached a `PlatformAccount` to it without checking the client belonged to the caller's org. Now resolved against `org_id` *before* the token exchange, with a 400 for a malformed id (it previously raised a 500 out of the handler).
+- `routers/publishing.py` — `publish_now` selected `PlatformAccount` on `client_id`+`platform`+`status` with no `org_id`. Combined with the above this was live, not theoretical: an attacker could insert an account row carrying a victim's `client_id`, and the victim's publish would either 500 permanently (`scalar_one_or_none` on two rows) or post their content using the attacker's token. Now org-scoped and ordered `created_at DESC` with `.first()`, since one org may legitimately hold several accounts per client+platform.
+- `routers/comments.py` — `add_comment` did not verify `content_id` belonged to the caller's org.
+- `routers/notifications.py` — `mark_read` filtered `user_id` but not `org_id`.
+- `routers/reports.py` — `list_reports` accepted `client_id` and checked nothing.
+- `routers/portal.py` — `_resolve_org` fell back to non-unique `domain` and `name` columns on an **unauthenticated** route.
+
+**Bugs found while writing the tests:** `routers/comments.py` and `routers/notifications.py` were entirely non-functional — both did `user.id` on the value from `get_current_user`, which returns the JWT payload **dict** in both auth modes. Every route in both files returned 500. New `get_current_user_id` dependency in `dependencies.py`; `comments.py` now resolves the author's display name from the `users` table instead of reading a `full_name` key the payload never had.
+
+**Schema:** `organization.slug` (`VARCHAR(64) UNIQUE`, nullable) added to `db/init.sql`, `models/tables.py`, `db/seed.sql`. New `backend/src/agency/utils/slug.py` generates slugs on both org-creation paths (local signup, Clerk auto-provision). **`db/migrations/260817_org_slug.sql` must be run by hand on existing databases** — `init.sql` only executes on a fresh one. This is the first entry in a new `db/migrations/` directory.
+
+**Also:** `services/billing.py` `_handle_invoice_paid` no longer reports `usage_reset` when no subscription matched the Stripe customer; it returns `{"status": "ignored", "reason": "no_subscription_for_customer"}` and logs a warning.
+
+**Tests:** `backend/tests/test_tenancy_routers.py` — 16 cases, each verified to fail when its own filter is deleted. Suite 181 → **197 passing**.
+
+**Frontend (T0.5):** `typescript.ignoreBuildErrors` and `eslint.ignoreDuringBuilds` removed from `next.config.mjs`. `next build` now type-checks and lints; a planted type error fails it with exit 1. Nothing needed fixing — T0.4's lint pass had already cleared the codebase.
+
+---
+
 ## 260817 — Documentation Reconciliation
 
 Docs-only pass. No application code changed. Every count re-derived from source rather than carried forward.

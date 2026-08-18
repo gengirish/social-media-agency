@@ -1,5 +1,4 @@
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from jose import jwt
@@ -11,6 +10,7 @@ from agency.dependencies import get_db
 from agency.models.schemas import LoginRequest, SignupRequest, TokenResponse
 from agency.models.tables import Organization, Subscription, User
 from agency.services.billing import PLAN_CONFIG
+from agency.utils.slug import unique_org_slug
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -18,7 +18,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def _create_token(user_id: str, email: str, role: str, org_id: str) -> str:
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+    expire = datetime.now(UTC) + timedelta(minutes=settings.jwt_expire_minutes)
     payload = {
         "sub": user_id,
         "email": email,
@@ -50,7 +50,10 @@ async def signup(request: SignupRequest, db=Depends(get_db)):
     if existing.scalar_one_or_none():
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
 
-    org = Organization(name=request.org_name)
+    org = Organization(
+        name=request.org_name,
+        slug=await unique_org_slug(db, request.org_name),
+    )
     db.add(org)
     await db.flush()
 

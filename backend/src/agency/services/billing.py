@@ -174,9 +174,15 @@ class BillingService:
             select(Subscription).where(Subscription.stripe_customer_id == customer_id)
         )
         sub = result.scalar_one_or_none()
-        if sub:
-            sub.posts_used = 0  # Reset usage on new billing period
-            await db.commit()
+        if not sub:
+            # Do not report a reset that did not happen — an unmatched customer means the
+            # webhook is for a subscription this deployment does not know about, which is
+            # an operational signal, not a no-op.
+            logger.warning("stripe_invoice_paid_no_subscription", customer_id=str(customer_id))
+            return {"status": "ignored", "reason": "no_subscription_for_customer"}
+
+        sub.posts_used = 0  # Reset usage on new billing period
+        await db.commit()
         return {"status": "usage_reset"}
 
     async def _handle_subscription_cancelled(self, db: AsyncSession, data: dict) -> dict:

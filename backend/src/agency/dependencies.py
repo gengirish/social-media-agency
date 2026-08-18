@@ -1,4 +1,5 @@
 import time
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -12,6 +13,7 @@ from agency.config import get_settings
 from agency.models.database import get_session_factory
 from agency.models.tables import Organization, Subscription, User
 from agency.services.billing import PLAN_CONFIG
+from agency.utils.slug import unique_org_slug
 
 logger = structlog.get_logger()
 security = HTTPBearer()
@@ -96,11 +98,14 @@ async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
 
     clerk_info = await _get_clerk_user_info(clerk_user_id, settings.clerk_secret_key)
     email_list = clerk_info.get("email_addresses", [])
+    primary_id = clerk_info.get("primary_email_address_id")
     email = next(
-        (e["email_address"] for e in email_list if e.get("id") == clerk_info.get("primary_email_address_id")),
+        (e["email_address"] for e in email_list if e.get("id") == primary_id),
         email_list[0]["email_address"] if email_list else f"{clerk_user_id}@clerk.local",
     )
-    full_name = f"{clerk_info.get('first_name') or ''} {clerk_info.get('last_name') or ''}".strip() or "User"
+    first = clerk_info.get("first_name") or ""
+    last = clerk_info.get("last_name") or ""
+    full_name = f"{first} {last}".strip() or "User"
 
     factory = get_session_factory()
     async with factory() as db:
@@ -133,7 +138,11 @@ async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
 
             if not user:
                 logger.info("clerk_user_auto_provision", email=email, clerk_id=clerk_user_id)
-                org = Organization(name=f"{full_name}'s Org")
+                org_name = f"{full_name}'s Org"
+                org = Organization(
+                    name=org_name,
+                    slug=await unique_org_slug(db, org_name),
+                )
                 db.add(org)
                 await db.flush()
 
@@ -187,8 +196,26 @@ async def get_current_user(
             algorithms=[settings.jwt_algorithm],
         )
         return payload
-    except JWTError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+    except JWTError as e:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from e
+
+
+async def get_current_user_id(user: dict[str, Any] = Depends(get_current_user)) -> UUID:
+    """The authenticated user's id.
+
+    ``get_current_user`` returns the JWT *payload dict* in both the Clerk and the local
+    HS256 path, so routers must never do attribute access on it — ``user.id`` raises
+    AttributeError and surfaces as a 500. Depend on this instead.
+    """
+    raw = user.get("sub")
+    if not raw:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token missing subject")
+    try:
+        return UUID(str(raw))
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Token subject is not a user id"
+        ) from None
 
 
 async def get_org_id(

@@ -12,8 +12,8 @@
 -- a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
 
 -- Demo Organization
-INSERT INTO organization (id, name, domain) VALUES
-('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'CampaignForge Demo', 'demo.campaignforge.ai')
+INSERT INTO organization (id, name, slug, domain) VALUES
+('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'CampaignForge Demo', 'campaignforge-demo', 'demo.campaignforge.ai')
 ON CONFLICT (id) DO NOTHING;
 
 -- Demo Users (password: "password123" — bcrypt hash; JWT / legacy auth only)

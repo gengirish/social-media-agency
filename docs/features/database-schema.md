@@ -13,8 +13,9 @@ Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | UUID PK | |
-| `name` | String | |
-| `domain` | String | |
+| `name` | String | Not unique — never resolve an org by it |
+| `slug` | String(64) **UNIQUE**, nullable | Portal identity. `/api/v1/portal/{org_slug}` is unauthenticated, so this is the only column it resolves on. Null = that org has no portal (fail-closed). Added 260817 — run `db/migrations/260817_org_slug.sql` on existing databases |
+| `domain` | String | Not unique |
 | `settings` | JSONB | |
 | `agentmail_inbox_id` | String | AgentMail integration |
 | `agentmail_email` | String | AgentMail address |

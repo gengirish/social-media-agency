@@ -12,24 +12,30 @@ router = APIRouter(prefix="/portal", tags=["Client Portal"])
 
 
 async def _resolve_org(db, org_slug: str):
-    """Resolve org from slug (domain or name-based)."""
+    """Resolve an org from its portal slug.
+
+    ``Organization.slug`` only. The previous implementation fell back to ``domain`` and
+    then ``name``, neither of which is unique — two orgs sharing a name made
+    ``scalar_one_or_none()`` raise and 500 the whole portal, and a name could shadow
+    another org's slug namespace on an unauthenticated route. An org with no slug has
+    no portal, which is the correct fail-closed default.
+    """
+    if not org_slug:
+        return None
     result = await db.execute(
-        select(Organization).where(Organization.domain == org_slug)
-    )
-    org = result.scalar_one_or_none()
-    if not org:
-        result = await db.execute(
-            select(Organization).where(Organization.name == org_slug)
+        select(Organization).where(
+            Organization.slug == org_slug,
+            Organization.is_active == True,  # noqa: E712 — SQL boolean, not Python
         )
-        org = result.scalar_one_or_none()
-    return org
+    )
+    return result.scalar_one_or_none()
 
 
 async def _require_portal_branding(db, org_id: UUID) -> WhiteLabel:
     result = await db.execute(
         select(WhiteLabel).where(
             WhiteLabel.org_id == org_id,
-            WhiteLabel.is_active == True,
+            WhiteLabel.is_active.is_(True),
         )
     )
     branding = result.scalar_one_or_none()

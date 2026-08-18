@@ -95,6 +95,8 @@ class Organization(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
+    # Portal identity — see db/init.sql. Unique, nullable (null = portal disabled).
+    slug = Column(String(64), unique=True)
     domain = Column(String(255))
     settings = Column(JSONB, default={})
     agentmail_inbox_id = Column(String(255))

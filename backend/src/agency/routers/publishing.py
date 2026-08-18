@@ -1,6 +1,6 @@
 """Publishing API — immediate publish, schedule, calendar."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -72,14 +72,22 @@ async def publish_now(
             "Monthly post limit reached for your plan. Upgrade to publish more.",
         )
 
+    # TENANCY: the ``org_id`` filter is load-bearing, not defence-in-depth — without it a
+    # PlatformAccount row belonging to another tenant but carrying this client's id would
+    # be selected here and the post published with that tenant's token.
+    # ``first()`` (not ``scalar_one_or_none``) because an org may legitimately hold more
+    # than one account for a client+platform; newest connection wins instead of a 500.
     acc_result = await db.execute(
-        select(PlatformAccount).where(
+        select(PlatformAccount)
+        .where(
+            PlatformAccount.org_id == org_id,
             PlatformAccount.client_id == piece.client_id,
             PlatformAccount.platform == piece.platform,
             PlatformAccount.status == "connected",
         )
+        .order_by(PlatformAccount.created_at.desc())
     )
-    account = acc_result.scalar_one_or_none()
+    account = acc_result.scalars().first()
     if not account:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -100,7 +108,7 @@ async def publish_now(
 
     if pub_result.get("success"):
         piece.status = "published"
-        piece.published_at = datetime.now(timezone.utc)
+        piece.published_at = datetime.now(UTC)
         _merge_metadata(
             piece,
             {

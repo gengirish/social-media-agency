@@ -14,51 +14,44 @@ Rules for the operator:
 - **Parallel only within a phase**, and only tasks with no overlapping file in `Files:`. Overlaps are flagged as `Conflicts:`.
 - Tasks touching >1 file that another parallel agent also edits → run with `isolation: "worktree"`.
 - **Schema changes must land in BOTH `db/init.sql` and `backend/src/agency/models/tables.py`** (no Alembic in this repo).
-- **Green bar, corrected 260817:** the repo is **not** clean today — `ruff check src/ tests/` fails across ~40 untouched files (E501 in agent prompts, B008 on every FastAPI `Depends` default, I001) and `mypy src/agency/ --ignore-missing-imports` reports **427 errors in 66 files**. So the achievable bar per agent is: **clean on the files you touched, and zero new violations repo-wide.** Do not ask an agent to fix the baseline as a side quest — that is T4.5.
-- `pytest tests/ -v` must pass **in full** — but see T0.3: it currently aborts at collection, so until that lands agents can only run a subset.
+- **Green bar, corrected 260817 (second pass):** `ruff check src/ tests/` is now down to **1** finding (`SIM222` in `services/llm_provider.py`) after the lint-config change described in the status section — but `mypy src/agency/ --ignore-missing-imports` still reports **413 errors in 61 files**, almost all `no-untyped-def` / `type-arg` on FastAPI handlers. So the achievable bar per agent is: **clean on the files you touched, and zero new violations repo-wide.** Note that adding a *correct* annotation to previously-unannotated code can itself add a mypy finding — `user: dict` earns `type-arg`. Write `dict[str, Any]`. Do not ask an agent to fix the baseline as a side quest — that is T4.5, and it needs re-scoping.
+- `pytest tests/ -v` must pass **in full**. It does as of 260817: **197 passed, 0 errors**. Any agent reporting a subset run is reporting a regression, not a constraint.
+- **Schema changes need three edits, not two:** `db/init.sql`, `models/tables.py`, **and** a dated forward-only script in `db/migrations/`. `init.sql` runs only on a fresh database, so without the third file the change silently never reaches Neon prod.
 - **Data reliability is non-negotiable:** no fabricated metrics. Unavailable data returns an explicit unavailable/`⚠️ NOT AVAILABLE` state, never zeros or invented numbers (`.cursor/workflows/data-reliability-rules.md`).
 
 Legend — Effort: **S** ≤1d · **M** 2–4d · **L** 1–2wk. Impact: 🔴 blocker · 🟠 high · 🟡 medium.
 
 ---
 
-## Status — 260817
+## Status — 260817 (revised)
 
 **Phase 0 complete. Phase 1 complete except T1.6.** Verified by running the gates directly, not from agent reports:
 
-| Metric | Before | After |
-|---|---|---|
-| Tests passing | 39 (suite aborted at collection) | **172, 0 errors** |
-| ruff `src/ tests/` | 286 | 291 (+5: `B008` on `Depends` defaults, `UP017` — same patterns as every existing router) |
-| mypy `src/agency/` | 427 errors / 66 files | **410 / 61** |
+| Metric | 260701 baseline | Previously reported | Actual now |
+|---|---|---|---|
+| Tests passing | 39 (suite aborted at collection) | 172 | **197, 0 errors** |
+| ruff `src/ tests/` | 286 | 291 | **1** (see below) |
+| mypy `src/agency/` | 427 / 66 files | 410 / 61 | **413 / 61** |
 
-Done: T0.1 · T0.2 · T0.3 · T0.4 · T1.1 · T1.2 · T1.3 · T1.4 · T1.5. Remaining in Phase 1: **T1.6** (stub audit sweep — run last, alone).
+⚠️ **The ruff number moved for a reason unrelated to T1.7, and the working tree is not stable.** `backend/pyproject.toml` gained `[tool.ruff.lint.per-file-ignores]` (E501 on the ten prompt-heavy agent/service modules) and `flake8-bugbear.extend-immutable-calls` (FastAPI `Depends`/`Query`/`Body`/… so B008 stops firing on the DI idiom) **during** this pass, by an edit outside it. That is what took 291 → 1; the one remaining finding is `SIM222` in `services/llm_provider.py`, untouched here. The change looks right — B008 alone was 217 of 294 findings — but it means **T4.5 (fix the ruff baseline) is now largely done and should be re-scoped before anyone picks it up.** Several other files (`services/platform_metrics.py`, `frontend/src/app/page.tsx`) also changed concurrently, so re-measure before trusting any number in this table.
+
+Done: T0.1 · T0.2 · T0.3 · T0.4 · **T0.5** · T1.1 · T1.2 · T1.3 · T1.4 · T1.5 · **T1.7**. Remaining in Phase 1: **T1.6** (stub audit sweep — run last, alone).
+
+Corrections applied to this document on 260817, second pass:
+
+- **"Phase 0 complete" was false when written** — T0.5 was open and absent from the Done list. It is now genuinely done (see T0.5).
+- T1.7 was filed under the Phase 0 heading, beneath an empty `Bugs found by the newly-live tests` header. Moved to Phase 1 where it belongs.
+- **T1.7-old deleted.** It was marked superseded but remained a complete, valid-looking task block — a hazard in a document whose whole premise is verbatim copy-paste hand-off.
+- T2.3 and T2.4 reordered into numeric order.
+- Counts corrected: **24 routers · 24 services** (this doc said 23 services; `CLAUDE.md` said 23 routers / 21 modules and has been fixed).
+- `backend/tests/test_content_batching.py` exists and passes but was never in this plan — folded into the T1.x record below.
 
 **Operator actions required before any of this is real in production:**
-1. Create `backend/.env` from the new `backend/.env.example` (nothing runs locally without it). Note `extra="forbid"` — one unknown key aborts startup, and blank ≠ unset.
+1. Create `backend/.env` from `backend/.env.example` (nothing runs locally without it). Note `extra="forbid"` — one unknown key aborts startup, and blank ≠ unset. **T0.1's acceptance is still unverified**: the example file shipped, but no `.env` has ever been created, so the boot path it describes has not been executed once.
 2. Run `CREATE EXTENSION IF NOT EXISTS vector;` on the Neon branch, confirm with `SELECT extname FROM pg_extension`. **Unverified** — until then RAG runs keyword mode and says so.
 3. Run `cd backend && python scripts/index_knowledge_base.py` — deliberately not wired into startup.
-4. Set `EXA_API_KEY` — now gates **both** trends and competitive intel; without it both correctly return unavailable rather than inventing data.
-
-### Bugs found by the newly-live tests (T0.3) — fix these
-
-### T1.7 · Tenant-isolation sweep — 6 routers violate the `org_id` rule 🔴 · M
-**Why:** the project rule is "every org-scoped query must filter on `org_id`" precisely because **there is no row-level security in this database**. Six routers break it, found by T0.3's newly-live tests and T3.0's enumeration of all 83 routes. Two are cross-tenant **writes**.
-1. 🔴 **`routers/oauth.py:135-148`** — `oauth_callback` accepts `client_id` from the request body and attaches a `PlatformAccount` to it **without verifying the client belongs to `org_id`**. Cross-tenant write: an attacker binds their social account to another tenant's client.
-2. 🔴 **`routers/comments.py:26-32`** — `add_comment` never verifies `content_id` belongs to the caller's org. Cross-tenant write.
-3. 🟠 **`routers/portal.py:14-25`** — `_resolve_org` falls back to `Organization.name == org_slug` via `scalar_one_or_none()`. `name` is **not unique**, so two orgs sharing a name 500 the whole portal; a name can also shadow the intended slug namespace. **Blocks T3.1** — fix before building the portal UI on top of it.
-4. 🟠 **`routers/publishing.py:75-81`** — `publish_now` looks up `PlatformAccount` on `client_id`+`platform`+`status` with no `org_id` filter. Not exploitable today (the piece lookup was org-scoped one query earlier) but it is one refactor away from being a leak.
-5. 🟡 **`routers/notifications.py:62-66`** — `mark_read` filters `user_id` but not `org_id`.
-6. 🟡 **`routers/reports.py:29-42`** — `list_reports` accepts `client_id` and `org_id` and uses **neither**, returning a hardcoded list without checking the client exists in the org.
-**Also fix:** `services/billing.py:167-176` — `_handle_invoice_paid` returns `{"status": "usage_reset"}` even when **no subscription matched** the Stripe customer, silently masking an unmatched-webhook condition.
-**Acceptance:** all six queries org-scoped; portal resolves on a unique slug column, not `name`; the unmatched-webhook case returns a distinguishable status; **a new tenancy test per router, each proven to fail when its filter is removed** (follow the red/green method T0.3 established in `tests/conftest.py`).
-**Depends on:** T0.3 (done) · **Conflicts:** T3.1 must wait on item 3.
-
-### (superseded) T1.7-old · `publish_now` misses its `org_id` filter 🟠 · S
-**Why:** `routers/publishing.py:75-81` looks up `PlatformAccount` on `client_id` + `platform` + `status` with **no `org_id` filter**. Not exploitable today because `piece.client_id` was org-scoped one query earlier — but it breaks the project's own "every org-scoped query filters on `org_id`" rule, and there is no RLS in this database, so defence-in-depth is the entire strategy. It becomes a live cross-tenant leak the moment the upstream lookup is relaxed or a client row is ever shared.
-**Also fix:** `services/billing.py:167-176` — `_handle_invoice_paid` returns `{"status": "usage_reset"}` even when **no subscription matched** the Stripe customer, silently masking an unmatched-webhook condition.
-**Acceptance:** both queries org-scoped; the unmatched-webhook case returns a distinguishable status; a new tenancy test covers the publish path.
-**Depends on:** T0.3 (done) · **Conflicts:** none.
+4. Set `EXA_API_KEY` — gates **both** trends and competitive intel; without it both correctly return unavailable rather than inventing data.
+5. **Run `db/migrations/260817_org_slug.sql` on Neon** before deploying T1.7. `init.sql` only executes on a fresh database, so the new `organization.slug` column does not exist in any already-provisioned environment. Portal routes return 404 for every org until the backfill runs — fail-closed, but fail.
 
 ---
 
@@ -113,6 +106,8 @@ Done: T0.1 · T0.2 · T0.3 · T0.4 · T1.1 · T1.2 · T1.3 · T1.4 · T1.5. Rema
 **Do:** remove both flags, then fix whatever `next build` now surfaces. `npx tsc --noEmit` and `npm run lint` both pass clean as of 260817, so the blast radius should be small — but verify against the real Vercel build, and **do not remove the `page_client-reference-manifest.js` workaround in `frontend/vercel.json`** (CLAUDE.md flags it as load-bearing).
 **Acceptance:** both flags gone; a deliberately introduced type error fails `npm run build`; the Vercel deploy still succeeds.
 **Depends on:** T0.4 · **Conflicts:** none.
+**✅ DONE 260817** — both flags removed; `next build` now runs its "Linting and checking validity of types" phase. Nothing needed fixing, because T0.4's lint pass had already cleared the codebase. Gate proven: a `const x: number = 'string'` planted in `src/lib/api.ts` fails the build with `Type error: Type 'string' is not assignable to type 'number'` and exit 1; reverted after.
+**Note for whoever hits it next:** clean builds are **intermittently** flaky on this repo with `InvariantError: Expected clientReferenceManifest to be defined` on `/(dashboard)/page` — one failure in four local runs, unrelated to these flags (it reproduces with them on). It is the same Next 15 route-group bug the `vercel.json` workaround patches after the fact, which is no help when the build dies *during* prerender. If CI goes red on that string, re-run before investigating. The `tsc --noEmit` CI step is kept even though `next build` now type-checks: it fails in seconds rather than after a full compile, and covers `e2e/` and config files the build never traces.
 
 ---
 
@@ -163,6 +158,29 @@ Done: T0.1 · T0.2 · T0.3 · T0.4 · T1.1 · T1.2 · T1.3 · T1.4 · T1.5. Rema
 **Acceptance:** every returned finding has a resolvable `source_url`; with no `EXA_API_KEY`, the endpoint returns unavailable rather than guessing.
 **Depends on:** T1.2 (shares the Exa client — build it once, reuse) · **Conflicts:** —
 
+### T1.7 · Tenant-isolation sweep — 6 routers violated the `org_id` rule 🔴 · M — ✅ DONE 260817
+**Why:** the project rule is "every org-scoped query must filter on `org_id`" precisely because **there is no row-level security in this database**. Six routers broke it, found by T0.3's newly-live tests and T3.0's enumeration of all routes.
+
+**Severity was originally mis-ranked. Corrected, with the reasoning, because the ranking is the useful artefact:**
+
+1. 🔴 **`routers/oauth.py` + `routers/publishing.py` — one chained exploit, not two independent gaps.** `oauth_callback` took `client_id` from the request body and attached a `PlatformAccount` to it without checking the client belonged to `org_id`. `publish_now` then selected `PlatformAccount` on `client_id`+`platform`+`status` with **no `org_id` filter**. The original entry rated the second 🟠 and called it "not exploitable today" — that is only true in isolation. Chained: an attacker inserts an account row carrying a victim org's `client_id`, and the victim's next publish either **500s permanently** (two rows reach `scalar_one_or_none()` → `MultipleResultsFound`) or, if the victim has no account connected for that platform, **publishes the victim's content using the attacker's token, to the attacker's social account**. Both halves had to be fixed together; a single-agent hand-off of the 🟠 alone would have left the exploit live.
+2. 🟠 (was 🔴) **`routers/comments.py`** — `add_comment` never verified `content_id` belonged to the caller's org. Real, but not a cross-tenant *read*: the row is stamped with the caller's `org_id` and `list_comments` already filtered on it, so the victim could never see the injected comment. It is foreign-key pollution that becomes a leak the first time a query joins comments by `content_id` alone.
+3. 🟠 **`routers/portal.py`** — `_resolve_org` fell back to `Organization.name == org_slug` via `scalar_one_or_none()`. `name` is not unique, so two orgs sharing a name 500'd the entire portal, and a name could shadow another org's slug on an **unauthenticated** route. Correctly rated; it blocked T3.1.
+4. 🟡 → **not a finding.** `routers/notifications.py` `mark_read` filtered `user_id` but not `org_id`. A user belongs to exactly one org, so `user_id` is strictly narrower than `org_id`. Filter added for consistency, but it defended nothing.
+5. 🟡 → **not a security finding.** `routers/reports.py` `list_reports` returns a fixed list of *available report periods* — no client data — so there was nothing to leak. The `client_id` check was added only so probing cannot confirm whether an id exists in another tenant.
+
+**Two further defects found while writing the tests, neither in the original entry:**
+- 🔴 **`comments.py` and `notifications.py` were entirely non-functional.** `get_current_user` returns the **JWT payload dict** in both the Clerk and local paths, but both routers did `user.id` on it — `AttributeError` → 500 on every route in both files. `comments.py` also read `user.full_name`, a key the payload has never contained. Neither router had a single test, so this survived to `main`. Fixed by adding `get_current_user_id` to `dependencies.py`; this blocks T3.5, which is built entirely on the comments router.
+- `oauth_callback` called `UUID(client_id_fk)` unguarded — a malformed body field raised straight out of the handler as a 500 rather than a 400.
+
+**Also fixed:** `services/billing.py` `_handle_invoice_paid` returned `{"status": "usage_reset"}` even when no subscription matched the Stripe customer. Now returns `{"status": "ignored", "reason": "no_subscription_for_customer"}` and logs a warning.
+
+**Schema change:** `organization.slug` (`VARCHAR(64) UNIQUE`, nullable) added to `db/init.sql`, `models/tables.py` and `db/seed.sql`; slug generation wired into both org-creation paths (`routers/auth.py` signup, `dependencies.py` Clerk auto-provision) via new `utils/slug.py`. Null slug = no portal, which is the fail-closed default. **`db/migrations/260817_org_slug.sql` must be run by hand on Neon** — see operator action 5. This is the first file in `db/migrations/`; the repo previously had nowhere to put a change that `init.sql` alone cannot deliver to an existing database.
+
+**Acceptance — met.** All six routers org-scoped; portal resolves on the unique slug only; unmatched-webhook case distinguishable; **16 new tests in `backend/tests/test_tenancy_routers.py`, every one verified red when its own filter is deleted** (each of the six filters was removed in turn, the matching test run, and the file restored). Suite 181 → 197 passing, ruff clean on all touched files, mypy unchanged at its 413 baseline.
+**Not covered — for T4.1:** these tests prove the **denials**. There is still no success-path test for `oauth_callback` or `publish_now` (both need outbound HTTP mocked), so "the fix does not break the happy path" rests on the denial tests plus the `test_comment_on_own_content_succeeds` / `test_report_periods_for_own_client` pair, not on the two routes that matter most.
+**Depends on:** T0.3 (done) · **Unblocks:** T3.1 (portal), T3.5 (comments).
+
 ### T1.6 · Stub audit sweep 🔴 · S
 **Why:** closing item — after T1.1–T1.5, verify nothing else "looks real but isn't."
 **Files:** repo-wide (read), plus whatever labelling is needed in `frontend/src/`.
@@ -193,18 +211,19 @@ Done: T0.1 · T0.2 · T0.3 · T0.4 · T1.1 · T1.2 · T1.3 · T1.4 · T1.5. Rema
 2. **LinkedIn metrics are unreachable in practice — no LinkedIn ROI number can currently exist.** `fetch_linkedin_metrics(..., org_urn=page_id)` only calls `organizationalEntityShareStatistics` when `org_urn.startswith("urn:li:organization")`. The only value the app can pass is `PlatformAccount.account_handle`, a handle — **no column anywhere stores the org URN.** So LinkedIn always reports impressions/clicks/shares/reach as not-provided. Needs a schema + OAuth-side field before LinkedIn analytics are possible at all.
 3. `fetch_post_metrics` tests `if not access_token` *before* decryption, so a ciphertext decrypting to an empty string reaches the platform call instead of returning unavailable.
 
-### T2.4 · Unique constraint on `analytics_snapshot` 🟡 · S — discovered 260817
-**Why:** `db/init.sql` (~line 167) has **no unique constraint on `(content_id, date)`**. T1.1's upsert is therefore SELECT-then-update and race-prone if two refreshes for the same post overlap. The single scheduler plus a per-day guard makes this unlikely today, but a partial unique index makes double-measurement impossible rather than merely improbable.
-**Files:** `db/init.sql`, `backend/src/agency/models/tables.py`, `backend/src/agency/services/analytics_fetcher.py` (switch to a real upsert).
-**Acceptance:** concurrent refreshes for one post produce exactly one row per day.
-**Depends on:** T1.1 · **Conflicts:** schema tasks.
-
 ### T2.3 · Token refresh + per-platform rate limits 🟠 · M
 **Why:** OAuth tokens expire and there is no refresh path; publish/metric calls have generic retries but no per-platform rate-limit handling. First long-lived customer breaks silently.
 **Files:** `backend/src/agency/routers/oauth.py`, `backend/src/agency/services/publishing.py`, `backend/src/agency/services/platform_metrics.py`, `backend/src/agency/services/scheduler.py`.
 **Do:** store refresh tokens (encrypted via existing `utils/encryption`), refresh on 401 and retry once, mark `PlatformAccount.status = "expired"` when refresh fails, and surface that in Settings. Respect `429` + `Retry-After` per platform with backoff.
 **Acceptance:** an expired token is transparently refreshed on the next publish; an unrefreshable account flips to `expired` and the Settings page shows a reconnect prompt.
+**Note (T1.7):** `oauth_callback` now validates `client_id` against `org_id` **before** the token exchange, and `publish_now` selects `PlatformAccount` with `.order_by(created_at.desc()).first()` rather than `scalar_one_or_none()` — an org may legitimately hold several accounts per client+platform. Preserve both when reworking this path, and add `org_id` to any new account lookup you introduce.
 **Depends on:** T2.1 · **Conflicts:** T2.1, T2.2, T1.1.
+
+### T2.4 · Unique constraint on `analytics_snapshot` 🟡 · S — discovered 260817
+**Why:** `db/init.sql` (~line 167) has **no unique constraint on `(content_id, date)`**. T1.1's upsert is therefore SELECT-then-update and race-prone if two refreshes for the same post overlap. The single scheduler plus a per-day guard makes this unlikely today, but a partial unique index makes double-measurement impossible rather than merely improbable.
+**Files:** `db/init.sql`, `backend/src/agency/models/tables.py`, `backend/src/agency/services/analytics_fetcher.py` (switch to a real upsert), plus a dated script in `db/migrations/` (T1.7 established the directory — `init.sql` alone never reaches an existing database).
+**Acceptance:** concurrent refreshes for one post produce exactly one row per day.
+**Depends on:** T1.1 · **Conflicts:** schema tasks.
 
 ---
 
@@ -212,18 +231,19 @@ Done: T0.1 · T0.2 · T0.3 · T0.4 · T1.1 · T1.2 · T1.3 · T1.4 · T1.5. Rema
 
 > These backends **already work**. They have no UI, so they are invisible in a demo. Mostly frontend work — highly parallelizable, low risk.
 
-### T3.1 · Client portal frontend 🟠 · M
-**Why:** `routers/portal.py` serves campaigns, content, and client-side content review over `GET/PATCH /api/v1/portal/{org_slug}/...` gated on `WhiteLabel.portal_enabled` — and there is **no frontend for it at all**. This is the single biggest built-but-invisible feature, and it is the white-label wedge for the agency ICP.
-**Files:** `frontend/src/app/portal/[orgSlug]/page.tsx` + subroutes (create), `frontend/middleware.ts` (portal routes must be public), `frontend/src/lib/api.ts` (unauthenticated portal client).
-**Do:** build a branded, unauthenticated client-facing view: campaign list, content cards, approve/request-changes actions hitting `PATCH /portal/{org_slug}/content/{content_id}`. Pull colors/logo from the white-label branding payload. Add portal paths to the public matcher in `middleware.ts` (currently only `/`, `/sign-in`, `/sign-up`, `/api/webhooks/*` are public).
-**Acceptance:** with `portal_enabled`, `/portal/{slug}` renders org-branded content and a client can approve a piece without signing in; with the flag off, it 403s cleanly.
-**Depends on:** — · **Conflicts:** T3.2–T3.7 all touch `frontend/src/lib/api.ts` — **serialize the api.ts edits or assign one agent to add all Phase-3 client methods first (T3.0)**.
-
 ### T3.0 · (Prerequisite) Expose remaining endpoints in the API client 🟡 · S
 **Files:** `frontend/src/lib/api.ts` only.
 **Do:** the client already has `getCrossLearning`, `runCompetitiveScan`, `generateImage`, `createAutonomousCampaign`, `generateOutreach`, `createVideoScript`, `getAuditLogs`, `generateVariants`, `getContentSuggestions`, `getBetaMetrics`, `generateReport`, `getReportPeriods`, comments methods — **none of which any component calls**. Verify each against the live route signature, fix drift, and add the missing ones (portal, webhooks config, white-label, marketplace fork/publish, public API key scopes).
 **Acceptance:** every mounted `/api/v1` route has a typed client method or a documented reason it does not.
 **Run this alone, first in Phase 3.** After it lands, T3.1–T3.7 are safely parallel.
+
+### T3.1 · Client portal frontend 🟠 · M
+**Why:** `routers/portal.py` serves campaigns, content, and client-side content review over `GET/PATCH /api/v1/portal/{org_slug}/...` gated on `WhiteLabel.portal_enabled` — and there is **no frontend for it at all**. This is the single biggest built-but-invisible feature, and it is the white-label wedge for the agency ICP.
+**Files:** `frontend/src/app/portal/[orgSlug]/page.tsx` + subroutes (create), `frontend/middleware.ts` (portal routes must be public), `frontend/src/lib/api.ts` (unauthenticated portal client).
+**Do:** build a branded, unauthenticated client-facing view: campaign list, content cards, approve/request-changes actions hitting `PATCH /portal/{org_slug}/content/{content_id}`. Pull colors/logo from the white-label branding payload. Add portal paths to the public matcher in `middleware.ts` (currently only `/`, `/sign-in`, `/sign-up`, `/api/webhooks/*` are public).
+**Unblocked by T1.7 — read this before starting.** `{org_slug}` is now `Organization.slug`, a **unique** column, and nothing else: the old `domain` → `name` fallback is gone. Consequences for this task: (a) an org with a null slug has no portal and must 404, which is intended, so do not add a name-based fallback in the UI; (b) `db/migrations/260817_org_slug.sql` has to have been run on whatever database you test against or every slug 404s; (c) the white-label editor in T3.7 needs a slug field, since orgs created before the migration are backfilled from `name` and agencies will want to change that. Portal isolation is covered by `test_tenancy_routers.py::test_portal_content_does_not_leak_across_orgs` — extend it rather than starting a new file.
+**Acceptance:** with `portal_enabled`, `/portal/{slug}` renders org-branded content and a client can approve a piece without signing in; with the flag off, it 403s cleanly.
+**Depends on:** T3.0 · **Conflicts:** T3.2–T3.7 all touch `frontend/src/lib/api.ts` — **serialize the api.ts edits or assign one agent to add all Phase-3 client methods first (T3.0)**.
 
 ### T3.2 · Reports UI 🟠 · S
 **Why:** `routers/reports.py` (`POST/GET /reports/clients/{client_id}`) + `services/reporting.py` work; nothing calls them.
@@ -247,6 +267,7 @@ Done: T0.1 · T0.2 · T0.3 · T0.4 · T1.1 · T1.2 · T1.3 · T1.4 · T1.5. Rema
 
 ### T3.5 · Comments / collaboration UI 🟡 · S
 **Why:** `routers/comments.py` (add/list/delete on content) is fully built, `ContentComment` table exists, no UI. This is the "team review" story.
+**Note:** "fully built" was wrong until T1.7. Every route in that router 500'd on `user.id` (`get_current_user` returns a dict, not an ORM `User`), so this task would have failed on its first request. Fixed, and covered by `test_tenancy_routers.py::test_comment_on_own_content_succeeds`. The response now resolves `user_name` from the `users` table and falls back to the token email.
 **Files:** `frontend/src/app/(dashboard)/content/page.tsx`, campaign detail content tab.
 **Acceptance:** a comment thread renders on a content piece, posts, and deletes with correct author attribution.
 **Depends on:** T3.0.
@@ -269,10 +290,10 @@ Done: T0.1 · T0.2 · T0.3 · T0.4 · T1.1 · T1.2 · T1.3 · T1.4 · T1.5. Rema
 ## Phase 4 — Hardening
 
 ### T4.1 · Broaden test coverage 🟠 · L
-**Why:** 66 tests across `test_agents/test_graph.py`, `test_billing`, `test_quota`, `test_tenancy`, `test_health`, `test_llm_provider`, `test_product_analytics` — for ~90 endpoints and 23 services. Billing/quota/tenancy are ✅ covered (the 260701 P0-2 item is largely done). The uncovered risk is now publishing, OAuth, portal, scheduler, and the agent nodes.
+**Why:** 197 tests for 82 endpoints and 24 services. Billing/quota/tenancy are ✅ covered, and T1.7 added per-router tenancy coverage for oauth, publishing, comments, notifications, reports and portal. The uncovered risk is now the **happy paths** of publishing and OAuth (T1.7's tests only prove the denials), plus the scheduler and the agent nodes.
 **Files:** `backend/tests/` (new files per area).
-**Do:** add `test_publishing.py`, `test_oauth.py`, `test_portal.py`, `test_scheduler.py`, `test_agents/test_nodes.py`. Mock all outbound HTTP. Include a portal tenant-isolation test (portal routes are unauthenticated — prove org A's slug cannot read org B's content).
-**Acceptance:** ≥60% coverage on `services/`; portal isolation test exists and denies.
+**Do:** add `test_publishing.py`, `test_oauth.py`, `test_scheduler.py`, `test_agents/test_nodes.py`. Mock all outbound HTTP. Extend `test_tenancy_routers.py` rather than starting a third tenancy file. **Every router touched must get at least one success-path test** — T1.7 found that `comments.py` and `notifications.py` had 500'd on every request since they were written, purely because nothing ever called them.
+**Acceptance:** ≥60% coverage on `services/`; each router has both a denial and a success test.
 **Depends on:** Phases 1–2 (test what's real).
 
 ### T4.2 · Observability + user-visible failures 🟠 · M
@@ -309,30 +330,35 @@ Done: T0.1 · T0.2 · T0.3 · T0.4 · T1.1 · T1.2 · T1.3 · T1.4 · T1.5. Rema
 ## Already done since the 260701 audit (do not re-scope)
 
 - ✅ Stripe webhook signature verification — `routers/billing.py:77` uses `stripe.Webhook.construct_event`.
-- ⚠️ **NOT done — corrected 260817.** Billing / quota / tenancy test *files* exist (`backend/tests/test_billing.py`, `test_quota.py`, `test_tenancy.py`) but **none of them run**: they import `create_org`, `create_subscription`, `auth_header_for` etc. from `tests.conftest`, which only defines `anyio_backend`, `client`, `auth_headers`. They fail at **collection**, which aborts the entire pytest suite before any test executes. The 260701 P0-2 item is therefore still open, and the Stripe-signature verification below is unguarded by any running regression test. → **T0.3**.
-- ✅ Real metric-fetching code written (`services/platform_metrics.py`) — **but unwired**, see T1.1.
-- ✅ Fabricated testimonials removed from the landing page (placeholder-logo block remains → T1.6).
+- ✅ **Now genuinely done (was ⚠️).** Billing / quota / tenancy tests run and pass — T0.3 built the fixture contract they expected. The earlier ⚠️ note stands as the record of why "test files exist" is not the same claim as "tests run": all three aborted at **collection**, taking the whole suite with them.
+- ✅ Real metric-fetching code written (`services/platform_metrics.py`) and **wired** by T1.1 — its three internal bugs are owned by T2.2.
+- ✅ Fabricated testimonials removed from the landing page. The placeholder-logo block on `frontend/src/app/page.tsx` is **also already gone** (verified 260817) — T1.6 inherits only the audit, not that deletion.
 - ✅ Multi-provider LLM chain with fallbacks + `GET /health/llm` introspection.
+- ✅ Tenant isolation across all six offending routers, with red/green-proven tests — T1.7.
+- ➕ **Not in this plan, but shipped:** `backend/tests/test_content_batching.py`. Untracked work outside the task list is how the count drift in the status table happened; add a task block before starting work, even a retrospective one.
 
 ## Recommended sequencing
 
+Struck through where complete. Remaining work only:
+
 | Weeks | Run |
 |---|---|
-| 0 | T0.1, T0.2 (parallel) |
-| 1–2 | T1.1, T1.2, T1.3, T1.4 (parallel; serialize the two schema tasks) |
-| 2–3 | T1.5, then T1.6 alone; T3.0 in parallel |
-| 3–4 | Phase 3 fan-out — T3.1…T3.7 (parallel after T3.0; content-page tasks to one agent) |
-| 4–5 | T2.1 → T2.2 → T2.3 (serial, same files) |
-| 5–6 | T4.1, T4.2, T4.3, T4.4 |
+| ~~0~~ | ~~T0.1, T0.2~~ · T0.5 ✅ |
+| ~~1–2~~ | ~~T1.1–T1.4~~ · T1.7 ✅ |
+| **now** | **T1.6 alone** (stub sweep — closes Phase 1), **T3.0 in parallel** (different files, no conflict) |
+| next | Phase 3 fan-out — T3.1…T3.7 (parallel after T3.0; assign all three content-page tasks to one agent) |
+| then | T2.1 → T2.2 → T2.3 → T2.4 (serial, same files) |
+| then | T4.1, T4.2, T4.3, T4.4 |
 
-**Fastest path to a stronger demo:** T0.1 → T3.0 → T3.1 (client portal) + T3.3 (autonomous operator). Those three add the most visible capability without touching the pipeline.
-**Fastest path to a sellable product:** Phase 1 in full — nothing else matters if the analytics are zeros.
+**Fastest path to a stronger demo:** T3.0 → T3.1 (client portal) + T3.3 (autonomous operator). T1.7 removed the blocker under T3.1, so the portal is now the shortest route to visible capability — provided the Neon migration is run first.
+**Fastest path to a sellable product:** finish Phase 1 — only T1.6 is left, and it is the task that decides whether anything still "looks real and isn't."
 
 ## Open questions
 
-1. ICP confirmed as white-label agencies? Decides whether T3.1 is P0 or P2.
+1. ICP confirmed as white-label agencies? Decides whether T3.1 is P0 or P2. **Now the most expensive open question in the doc** — T1.7 cleared the portal's blocker, so this is the only thing standing between the agency wedge and being built.
 2. Which LLM providers are keyed on Fly prod? (`GET /api/v1/health/llm`, authenticated.) T0.1 assumes at least one.
 3. Does Neon have `vector` enabled on your plan? Blocks T1.4's approach.
 4. Stripe or Razorpay for launch? T5.3.
 5. Do you have Meta app review approval for IG Content Publishing? Without it T2.1 cannot be demoed on a real account.
-6. Is `docs/campaignforge-hardening-backlog.md` retired by this doc, or should both live?
+6. ~~Is `docs/campaignforge-hardening-backlog.md` retired by this doc?~~ **Answered by inspection: the file still exists.** Recommendation — delete it. Every live item has been carried into a task block here, and two documents describing the same backlog is exactly how the 427-vs-413 and 23-vs-24 style drift started. Retained only if you want the 260701 audit as a historical record, in which case stamp it `SUPERSEDED — see campaignforge-implementation-plan.md` at the top.
+7. **New:** `organization.slug` is backfilled from `name`, so existing orgs get slugs like `campaignforge-demo`. Should agencies be able to edit their portal slug (T3.7's white-label editor), and is a slug change allowed to break existing portal links customers have already been sent?

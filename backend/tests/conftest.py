@@ -147,13 +147,19 @@ async def client(
     app.dependency_overrides.pop(get_db, None)
 
 
-def auth_header_for(org_id: UUID | str, role: str = "admin") -> dict[str, str]:
-    """A local HS256 bearer token scoped to ``org_id`` (the dev/CI auth mode)."""
+def auth_header_for(
+    org_id: UUID | str, role: str = "admin", *, user_id: UUID | str | None = None
+) -> dict[str, str]:
+    """A local HS256 bearer token scoped to ``org_id`` (the dev/CI auth mode).
+
+    ``user_id`` pins the ``sub`` claim, which routers resolve through
+    ``get_current_user_id`` — needed by anything scoped per user (comments, notifications).
+    """
     from jose import jwt
 
     token = jwt.encode(
         {
-            "sub": str(uuid4()),
+            "sub": str(user_id or uuid4()),
             "email": f"user-{org_id}@test.com",
             "role": role,
             "org_id": str(org_id),
@@ -180,11 +186,22 @@ async def _persist(factory: async_sessionmaker[AsyncSession], row: Any) -> None:
 
 
 async def create_org(
-    session_factory: async_sessionmaker[AsyncSession], name: str = "Test Org"
+    session_factory: async_sessionmaker[AsyncSession],
+    name: str = "Test Org",
+    *,
+    slug: str | None = None,
 ) -> UUID:
     from agency.models.tables import Organization
+    from agency.utils.slug import slugify
 
-    org = Organization(id=uuid4(), name=name, settings={}, is_active=True)
+    org = Organization(
+        id=uuid4(),
+        name=name,
+        # Unique per org so the portal's slug lookup resolves exactly one row.
+        slug=slug if slug is not None else f"{slugify(name)}-{uuid4().hex[:6]}",
+        settings={},
+        is_active=True,
+    )
     await _persist(session_factory, org)
     return org.id
 
@@ -266,6 +283,101 @@ async def create_campaign_row(
         budget={},
         agent_plan={},
         status=status,
+    )
+    await _persist(session_factory, row)
+    return row.id
+
+
+async def create_user_row(
+    session_factory: async_sessionmaker[AsyncSession],
+    org_id: UUID,
+    *,
+    user_id: UUID | None = None,
+    email: str | None = None,
+    full_name: str = "Test User",
+    role: str = "admin",
+) -> UUID:
+    from agency.models.tables import User
+
+    uid = user_id or uuid4()
+    row = User(
+        id=uid,
+        org_id=org_id,
+        email=email or f"user-{uid}@test.com",
+        password_hash="x",
+        full_name=full_name,
+        role=role,
+        is_active=True,
+    )
+    await _persist(session_factory, row)
+    return uid
+
+
+async def create_platform_account(
+    session_factory: async_sessionmaker[AsyncSession],
+    org_id: UUID,
+    client_id: UUID,
+    *,
+    platform: str = "linkedin",
+    status: str = "connected",
+    account_handle: str = "acct",
+) -> UUID:
+    from agency.models.tables import PlatformAccount
+
+    row = PlatformAccount(
+        id=uuid4(),
+        client_id=client_id,
+        org_id=org_id,
+        platform=platform,
+        account_handle=account_handle,
+        display_name=account_handle,
+        access_token_enc="enc-token",
+        status=status,
+    )
+    await _persist(session_factory, row)
+    return row.id
+
+
+async def create_notification_row(
+    session_factory: async_sessionmaker[AsyncSession],
+    org_id: UUID,
+    user_id: UUID,
+    *,
+    read: bool = False,
+) -> UUID:
+    from agency.models.tables import Notification
+
+    row = Notification(
+        id=uuid4(),
+        user_id=user_id,
+        org_id=org_id,
+        type="info",
+        title="Test notification",
+        body="",
+        data={},
+        read=read,
+    )
+    await _persist(session_factory, row)
+    return row.id
+
+
+async def create_white_label(
+    session_factory: async_sessionmaker[AsyncSession],
+    org_id: UUID,
+    *,
+    portal_enabled: bool = True,
+    is_active: bool = True,
+    company_name: str = "Portal Co",
+) -> UUID:
+    from agency.models.tables import WhiteLabel
+
+    row = WhiteLabel(
+        id=uuid4(),
+        org_id=org_id,
+        company_name=company_name,
+        primary_color="#4f46e5",
+        portal_enabled=portal_enabled,
+        is_active=is_active,
     )
     await _persist(session_factory, row)
     return row.id

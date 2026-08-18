@@ -72,8 +72,9 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
-      # next.config.mjs sets typescript.ignoreBuildErrors, so `next build` does not
-      # type-check. This is the real type gate until that override is removed.
+      # `next build` type-checks on its own now that next.config.mjs no longer sets
+      # typescript.ignoreBuildErrors. Kept anyway: it fails in seconds instead of after
+      # a full compile, and it covers files the build never traces (e2e/, config files).
       - name: Type check
         working-directory: frontend
         run: npx tsc --noEmit
