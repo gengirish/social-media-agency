@@ -155,19 +155,26 @@ Schema is raw SQL in [db/init.sql](db/init.sql) (+ `db/seed.sql`), **not** Alemb
 
 ## Marketing Agency Layer
 
-Marketing assets live under **`.cursor/`** (there is no `.claude/` directory in this repo):
+Marketing assets are mirrored in **two trees**: `.claude/` (what Claude Code loads) and `.cursor/` (what Cursor loads). They are otherwise identical.
 
-| Path | Contents |
+**Edit both, or they drift.** `.cursor/` is the older copy and still carries the pre-cleanup content: the 10 translated `commands/training-{ar,de,es,fr,ja,ko,pt-br,ru,vi,zh}/` namespaces, the unfixed `mcp.json.example`/`.env.example`, and a `SKILL.md` with no frontmatter in `skills/marketing-skills-library/`. Prefer `.claude/` as the source of truth and port changes across.
+
+| Path (under `.claude/`, mirrored in `.cursor/`) | Contents |
 |---|---|
-| `.cursor/workflows/` | `primary-workflow.md`, `sales-workflow.md`, `crm-workflow.md`, `marketing-rules.md`, `orchestration-protocol.md`, `documentation-management.md`, `data-reliability-rules.md` |
-| `.cursor/agents/` | 20 marketing agents (attraction-specialist, lead-qualifier, email-wizard, copywriter, seo-specialist, reviewer personas, …) |
-| `.cursor/skills/` | 70+ skills. The `agency-*` skills (`agency-backend`, `agency-frontend`, `agency-database`, `agency-ai-engine`, `agency-deploy`, `agency-testing`, `agency-billing`, `agency-realtime`, `agency-agentmail`, `agency-project`) document **this codebase** — read the relevant one before non-trivial product work |
-| `.cursor/commands/` | 93 slash commands grouped by domain (campaign, content, seo, cro, growth, analytics, …) |
-| `campaigns/` | Campaign outputs (e.g. `ai-upskill-cohort`) |
+| `workflows/` | `primary-workflow.md`, `sales-workflow.md`, `crm-workflow.md`, `marketing-rules.md`, `orchestration-protocol.md`, `documentation-management.md`, `data-reliability-rules.md` |
+| `agents/` | 20 marketing agents (attraction-specialist, lead-qualifier, email-wizard, copywriter, seo-specialist, reviewer personas, …) |
+| `skills/` | 59 skills. The `agency-*` skills (`agency-backend`, `agency-frontend`, `agency-database`, `agency-ai-engine`, `agency-deploy`, `agency-testing`, `agency-billing`, `agency-realtime`, `agency-agentmail`, `agency-project`) document **this codebase** — read the relevant one before non-trivial product work |
+| `commands/` | 100 slash commands grouped by domain (campaign, content, seo, cro, growth, analytics, …) plus the English `training/` course |
+| `rules/deployment-domains.mdc` | Cursor `.mdc` rule format; Claude Code does not read `.claude/rules/`, so this file is inert on the Claude side |
+| `campaigns/` (repo root) | Campaign outputs (e.g. `ai-upskill-cohort`) |
 
-When doing marketing work: read `README.md` for context, follow `.cursor/workflows/marketing-rules.md`, and activate relevant skills from `.cursor/skills/`.
+`.claude/settings.local.json` is gitignored — machine-local permissions, do not commit it.
 
-**CRITICAL — data reliability:** never fabricate metrics. Use MCP integrations for real data; if unavailable, output "⚠️ NOT AVAILABLE" with setup instructions. Full rules in `.cursor/workflows/data-reliability-rules.md`.
+MCP setup: Claude Code reads `.mcp.json` at the **repository root**, not `.claude/mcp.json`. Start from `.claude/mcp.json.example`, which lists only servers that actually exist; providers with no MCP server are enumerated under `_no_mcp_server_available` with the API to call instead.
+
+When doing marketing work: read `README.md` for context, follow `.claude/workflows/marketing-rules.md`, and activate relevant skills from `.claude/skills/`.
+
+**CRITICAL — data reliability:** never fabricate metrics. Use MCP integrations for real data; if unavailable, output "⚠️ NOT AVAILABLE" with setup instructions. Full rules in `.claude/workflows/data-reliability-rules.md`.
 
 Reporting style: sacrifice grammar for concision; list unresolved questions at the end.
 
