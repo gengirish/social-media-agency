@@ -52,7 +52,9 @@ Corrections applied to this document on 260817, second pass:
 4. ⬜ Set `EXA_API_KEY` — gates **both** trends and competitive intel; without it both correctly return unavailable rather than inventing data.
 5. ✅ `db/migrations/260817_org_slug.sql` applied to Neon. All 35 orgs backfilled, zero duplicate slugs, unique constraint in place. Seven orgs shared the name "E2E Test Org" — the row-number de-duplication in the backfill is what kept the constraint from failing.
 6. ✅ `db/migrations/260818_schema_catchup.sql` applied to Neon. Closed four missing tables and two missing columns; a model-vs-database diff now reports zero drift in both directions.
-7. 🔴 **No LLM provider key is set on Fly prod.** `flyctl secrets list -a campaignforge-api` shows only `APP_ENV`, `CORS_ORIGINS`, `DATABASE_URL`, `DEBUG`, `JWT_SECRET`, `CLERK_JWKS_URL`, `CLERK_SECRET_KEY`, `NEON_DATABASE_URL`. No Anthropic/Google/OpenAI key, no `EXA_API_KEY`, no Stripe keys, no `TOKEN_ENCRYPTION_KEY`. `get_llm()` raises when none is configured, so **production cannot run a campaign end-to-end** — this is now the single largest gap between the deployed app and the product it advertises.
+7. ✅ **LLM providers are live on Fly prod.** `anthropic`, `google`, `openrouter`, and `groq` are all keyed. Verified by resolving the chain inside the machine, not from the secret names: every tier serves `anthropic` primary (`claude-sonnet-5` for brain/worker, `claude-haiku-4-5` for ad_copy/lite) with `google → openrouter → groq` attached as fallbacks, and a real `invoke()` through the chain returned. **Production can run a campaign end-to-end.**
+8. ⬜ **`CORS_ORIGINS` was wrong until 260818** and took the app down in the browser while every server-side signal stayed green. It is correct now, with the canonical domain first (that first entry also builds OAuth redirect URIs). `main.py` logs the resolved list as `cors_allowed_origins` at boot — check it before debugging any CORS report.
+9. ⬜ **Still unset in prod:** `EXA_API_KEY` (trends + competitive intel stay dark), `TOKEN_ENCRYPTION_KEY` (**OAuth tokens at rest fall back to a built-in dev key — effectively unencrypted in production**), and the Stripe keys (no checkout). The `TOKEN_ENCRYPTION_KEY` gap is the sharpest of the three: it is silent, and it only matters once real users connect real social accounts.
 
 ---
 
@@ -357,7 +359,7 @@ Struck through where complete. Remaining work only:
 ## Open questions
 
 1. ICP confirmed as white-label agencies? Decides whether T3.1 is P0 or P2. **Now the most expensive open question in the doc** — T1.7 cleared the portal's blocker, so this is the only thing standing between the agency wedge and being built.
-2. Which LLM providers are keyed on Fly prod? (`GET /api/v1/health/llm`, authenticated.) T0.1 assumes at least one.
+2. ~~Which LLM providers are keyed on Fly prod?~~ **Answered 260818: `anthropic`, `google`, `openrouter`, `groq`.** Anthropic is primary on every tier, the other three are the fallback chain. `GET /api/v1/health/llm` reports this without exposing key material.
 3. ~~Does Neon have `vector` enabled on your plan?~~ **Answered 260818: yes, and it is now enabled** — `knowledge_embedding` exists with its HNSW index. Remaining step is running `scripts/index_knowledge_base.py` (operator action 3).
 4. Stripe or Razorpay for launch? T5.3.
 5. Do you have Meta app review approval for IG Content Publishing? Without it T2.1 cannot be demoed on a real account.

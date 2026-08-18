@@ -4,6 +4,34 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260818 — Groq Provider + Production LLM Activation
+
+**`groq` added as a seventh LLM provider.** It is OpenAI-compatible but had no home here, so a `GROQ_API_KEY` had nowhere to go. Registering it took **two** edits, not one: a `ProviderSpec` *and* an entry in `DEFAULT_PROVIDER_ORDER`. `_configured_order()` filters names against that tuple, so a provider with settings and a spec but no entry there is dropped from the order silently — no error, no log, it simply never gets picked. A test now asserts groq is selectable by explicit order, which is what fails if a future provider is added the same half-way.
+
+Two Groq specifics, both documented in `.env.example`:
+
+- Its OpenAI-compatible surface is under **`/openai/v1`**, not `/v1` — the usual base-URL shape 404s every call.
+- It retires model ids faster than the other gateways, and a stale id surfaces as a 404 that reads exactly like a bad key. Change `GROQ_MODEL` before suspecting the key.
+
+Placed last in the default order so no existing deployment's primary provider changes.
+
+**Production LLM chain is live.** `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, and `GROQ_API_KEY` are all set on Fly. Verified by resolving the chain *inside* the running machine and issuing a real `invoke()` — not by reading secret names, which only prove a value exists:
+
+| Tier | Primary | Fallbacks |
+|---|---|---|
+| brain / worker | `anthropic` · `claude-sonnet-5` | google → openrouter → groq |
+| ad_copy / lite | `anthropic` · `claude-haiku-4-5` | google → openrouter → groq |
+
+**Docs corrected against the code**, several of which had drifted:
+
+- The tier count was documented as **three**; there are **four** — `lite` (`get_lite_llm()`) serves SEO keyword extraction, content repurposing, and A/B variants. It is for work that transforms text it is handed rather than deciding anything.
+- `services.md` and `integrations.md` listed **retired** Anthropic defaults (`claude-sonnet-4-20250514`, `claude-3-5-haiku-20241022`); the code had already moved to `claude-sonnet-5` / `claude-haiku-4-5`.
+- Provider counts and the default order string updated in `CLAUDE.md`, `services.md`, `integrations.md`, and `README.md`.
+
+**Still unset in production:** `EXA_API_KEY` (trends and competitive intel stay dark) and `TOKEN_ENCRYPTION_KEY` — the latter falls back to a built-in dev key, so OAuth tokens at rest are effectively unencrypted in prod. Silent, and it only bites once real users connect real social accounts.
+
+---
+
 ## 260818 — AgentMail Turned On: `alerts@intelliforge.tech`
 
 **The AgentMail integration existed on paper and sent nothing.** A key, two org columns, and one inline SDK block in `routers/team.py` guarded by `if settings.agentmail_api_key and org.agentmail_inbox_id`. Nothing in the codebase ever *wrote* `agentmail_inbox_id`, so the second condition was false for every org that has ever existed and the send path was unreachable.

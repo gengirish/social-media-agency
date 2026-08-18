@@ -17,7 +17,7 @@ Positioning as of 260817: the ICP is **small agencies and freelancers managing 3
 | Database | PostgreSQL (Neon serverless) | Neon |
 | AI Brain | Claude Sonnet (orchestrator/QA) | Anthropic |
 | AI Workers | Gemini 2.5 Flash (strategy/SEO/content) | Google |
-| LLM failover | 6 providers, per-tier fallback chain | Anthropic · Google · OpenAI · NVIDIA · OpenRouter · Bonsai |
+| LLM failover | 7 providers, per-tier fallback chain | Anthropic · Google · OpenAI · NVIDIA · OpenRouter · Bonsai · Groq |
 | Payments | Stripe subscriptions | — |
 | Email | AgentMail | — |
 | Images | fal.ai (flux/schnell) | — |

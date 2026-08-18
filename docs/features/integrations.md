@@ -48,16 +48,17 @@ JWT verification, user info fetching, auto-provisioning. See [auth-and-rbac.md](
 **Status**: [LIVE]
 **File**: `backend/src/agency/services/llm_provider.py`
 
-Six providers. Selection is **per tier, not per agent** — agents only ever call `get_brain_llm()`, `get_worker_llm()`, or `get_ad_copy_llm()`. Per tier, the first provider in `LLM_PROVIDER_ORDER` with a key becomes primary and the rest attach as LangChain `.with_fallbacks()`.
+Seven providers. Selection is **per tier, not per agent** — agents only ever call `get_brain_llm()`, `get_worker_llm()`, `get_ad_copy_llm()`, or `get_lite_llm()`. Per tier, the first provider in `LLM_PROVIDER_ORDER` with a key becomes primary and the rest attach as LangChain `.with_fallbacks()`.
 
 | Provider | Kind | Env Var | Default model |
 |----------|------|---------|---------------|
-| Anthropic | native SDK | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` (haiku for ad copy) |
+| Anthropic | native SDK | `ANTHROPIC_API_KEY` | `claude-sonnet-5` (`claude-haiku-4-5` for ad copy and lite) |
 | Google | native SDK | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | `gemini-2.5-flash` |
 | OpenAI | OpenAI-compatible | `OPENAI_API_KEY` | `gpt-4o-mini` |
 | NVIDIA NIM | OpenAI-compatible | `NVIDIA_NIM_API_KEY` | `deepseek-ai/deepseek-v4-flash` |
 | OpenRouter | OpenAI-compatible | `OPENROUTER_API_KEY` | `openai/gpt-oss-120b` |
 | Bonsai | OpenAI-compatible | `BONSAI_API_KEY` | `gpt-4o-mini` |
+| Groq | OpenAI-compatible | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
 
 A blank key disables a provider. `GET /api/v1/health/llm` (authenticated) reports the resolved provider, model, and fallback chain per tier without exposing key material. See [services.md](services.md#llm-provider) for tier/temperature detail.
 

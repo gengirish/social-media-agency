@@ -101,17 +101,22 @@ Orchestrator → [Strategy ∥ SEO] → [Content ∥ Ad Copy] → Human Review �
 
 ### LLM routing (`services/llm_provider.py`)
 
-Three tiers, provider-agnostic. Agents only ever call `get_brain_llm()`, `get_worker_llm(temperature)`, or `get_ad_copy_llm()` — keep it that way when adding agents.
+**Four** tiers, provider-agnostic. Agents only ever call `get_brain_llm()`, `get_worker_llm(temperature)`, `get_ad_copy_llm()`, or `get_lite_llm(temperature)` — keep it that way when adding agents.
 
 | Tier | Used by | Temperature |
 |---|---|---|
 | `brain` | Orchestrator, QA/Brand | 0.3 |
 | `worker` | Strategy, SEO, Content | 0.7 |
 | `ad_copy` | Ad Copy | 0.8 |
+| `lite` | SEO keyword extraction, content repurposing, A/B variants | caller-set |
 
-Six providers are supported: `anthropic` and `google` via their native SDKs, and `openai`, `nvidia`, `openrouter`, `bonsai` as OpenAI-compatible endpoints through `ChatOpenAI(base_url=...)`. **A blank API key disables a provider** — adding a key is the whole activation step.
+`lite` is for work that **transforms text it is handed rather than deciding anything**. Do not reach for it where campaign quality depends on the judgement in the output — that is what `worker` and `brain` are for.
 
-Per tier, the first provider in `LLM_PROVIDER_ORDER` (default `anthropic,google,openai,nvidia,openrouter,bonsai`) with a key becomes primary, and the rest attach as LangChain `.with_fallbacks()` — free-tier gateways return transient 503s under load, so a second key keeps a campaign alive. `LLM_{TIER}_PROVIDER` pins a tier to one provider and **disables its fallbacks** (pinning means "use exactly this"). `LLM_{TIER}_MODEL` overrides the model for the primary only — model ids are provider-specific, so forwarding one to a fallback would guarantee it fails.
+**Seven** providers are supported: `anthropic` and `google` via their native SDKs, and `openai`, `nvidia`, `openrouter`, `bonsai`, `groq` as OpenAI-compatible endpoints through `ChatOpenAI(base_url=...)`. **A blank API key disables a provider** — adding a key is the whole activation step.
+
+Adding a provider takes **two** edits, not one: a `ProviderSpec` in `_provider_specs()` **and** its name in `DEFAULT_PROVIDER_ORDER`. `_configured_order()` filters against that tuple, so a provider with settings and a spec but no entry there is dropped from the order silently — no error, no log, it simply never gets picked. (Groq's base URL is also `https://api.groq.com/openai/v1`, not `/v1`; the usual shape 404s every call.)
+
+Per tier, the first provider in `LLM_PROVIDER_ORDER` (default `anthropic,google,openai,nvidia,openrouter,bonsai,groq`) with a key becomes primary, and the rest attach as LangChain `.with_fallbacks()` — free-tier gateways return transient 503s under load, so a second key keeps a campaign alive. `LLM_{TIER}_PROVIDER` pins a tier to one provider and **disables its fallbacks** (pinning means "use exactly this"). `LLM_{TIER}_MODEL` overrides the model for the primary only — model ids are provider-specific, so forwarding one to a fallback would guarantee it fails.
 
 If no provider is configured, `get_llm()` raises naming the variables to set. Do not restore a silent default: the previous code built a client with an empty key, which killed the pipeline inside the first agent and left campaigns stuck in `running` with no diagnostic.
 

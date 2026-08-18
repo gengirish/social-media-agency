@@ -15,25 +15,28 @@ Three-tier, provider-agnostic LLM routing. Agents call only these three:
 | `get_worker_llm(temperature=0.7)` | `worker` | Strategy, SEO, Content | 0.7 |
 | `get_ad_copy_llm()` | `ad_copy` | Ad variants | 0.8 |
 
-Six providers, each enabled purely by setting its API key:
+Seven providers, each enabled purely by setting its API key:
 
 | Provider | Kind | Default model |
 |----------|------|---------------|
-| `anthropic` | native SDK | `claude-sonnet-4-20250514` (`claude-3-5-haiku-20241022` for ad copy) |
+| `anthropic` | native SDK | `claude-sonnet-5` (`claude-haiku-4-5` for ad copy and lite) |
 | `google` | native SDK | `gemini-2.5-flash` |
 | `openai` | OpenAI-compatible | `gpt-4o-mini` |
 | `nvidia` | OpenAI-compatible | `deepseek-ai/deepseek-v4-flash` |
 | `openrouter` | OpenAI-compatible | `openai/gpt-oss-120b` |
 | `bonsai` | OpenAI-compatible | `gpt-4o-mini` |
+| `groq` | OpenAI-compatible | `llama-3.3-70b-versatile` |
+
+> Groq's base URL is `https://api.groq.com/openai/v1` — note the `/openai` segment; the usual `/v1` shape 404s every call. Groq also retires model ids faster than the other gateways, and a stale id surfaces as a 404 that reads like a bad key: change `GROQ_MODEL` before suspecting the key.
 
 - `resolution_chain(tier)` — providers to try, best first
 - `resolve_provider(tier)` — the primary
 - `get_llm(tier, temperature=None)` — primary with the rest attached via `.with_fallbacks()`
 - `describe_providers()` — diagnostics for `GET /health/llm`; never returns keys
 
-Order comes from `LLM_PROVIDER_ORDER` (default `anthropic,google,openai,nvidia,openrouter,bonsai`). `LLM_{TIER}_PROVIDER` pins a tier and disables its fallbacks. `LLM_{TIER}_MODEL` overrides the primary's model only. With nothing configured, `get_llm()` raises naming the variables to set.
+Order comes from `LLM_PROVIDER_ORDER` (default `anthropic,google,openai,nvidia,openrouter,bonsai,groq`). `LLM_{TIER}_PROVIDER` pins a tier and disables its fallbacks. `LLM_{TIER}_MODEL` overrides the primary's model only. With nothing configured, `get_llm()` raises naming the variables to set.
 
-Env vars: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (`GEMINI_API_KEY` accepted as alias), `OPENAI_API_KEY`, `NVIDIA_NIM_API_KEY`, `OPENROUTER_API_KEY`, `BONSAI_API_KEY`. **A blank key disables that provider** — adding a key is the whole activation step.
+Env vars: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (`GEMINI_API_KEY` accepted as alias), `OPENAI_API_KEY`, `NVIDIA_NIM_API_KEY`, `OPENROUTER_API_KEY`, `BONSAI_API_KEY`, `GROQ_API_KEY`. **A blank key disables that provider** — adding a key is the whole activation step.
 
 ## Billing Service
 **Status**: [LIVE]
