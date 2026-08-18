@@ -21,9 +21,24 @@ The repo has **two distinct layers**. Know which one a task belongs to before st
 
 `campaignforge.intelliforge.tech` is the canonical app URL — use it for links, env vars, OG/canonical URLs, redirects, sitemaps, and email links (mirrors `.cursor/rules/deployment-domains.mdc`).
 
-Backend config lives in [backend/fly.toml](backend/fly.toml) — note `internal_port = 8080` (the container listens on 8080; local dev uses 8001). Frontend build override is in [frontend/vercel.json](frontend/vercel.json): it patches a missing `page_client-reference-manifest.js` after `next build`. Do not remove that workaround without verifying the Vercel build still succeeds.
+Backend config lives in [backend/fly.toml](backend/fly.toml) — note `internal_port = 8080` (the container listens on 8080; local dev uses 8001).
 
-CI is [.github/workflows/ci.yml](.github/workflows/ci.yml) (backend lint/type/test, frontend lint/build, E2E). There is **no deploy job** — deploys are manual (`fly deploy` from `backend/`, Vercel Git integration for `frontend/`).
+**`CORS_ORIGINS` is the highest-consequence backend env var, and its ORDER matters.** A missing origin is invisible from the server side: Starlette answers a disallowed preflight with a bare `400` and logs nothing, so the API looks healthy while every browser request fails — and `curl` keeps working, because curl does not preflight. On 260818 the canonical domain was absent from it in production and the entire app was unusable in a browser. The **first** entry is separately treated as the app's own base URL when building OAuth redirect URIs (`routers/oauth.py::_first_cors_origin`), so a wrong first entry silently breaks every OAuth callback. `main.py` logs the resolved list as `cors_allowed_origins` at startup — check `fly logs` for it before debugging a CORS report.
+
+### Deploying
+
+CI is [.github/workflows/ci.yml](.github/workflows/ci.yml) (backend lint/type/test, frontend lint/build, E2E). There is **no deploy job**.
+
+- **Backend:** `fly deploy` from `backend/`. `flyctl secrets set` also redeploys on its own.
+- **Frontend:** Vercel project `campaignforge-ai` (Root Directory `frontend`), deployed by Git integration on push to `main`.
+
+The Vercel project's **Root Directory is `frontend`**, which makes CLI deploys counter-intuitive: running `vercel --prod` from inside `frontend/` fails with `frontendrontend does not exist`, because the setting is applied on top of your cwd. Deploy from the **repo root** instead, and pass `--archive=tgz` or the upload trips the 15,000-file cap on this repo:
+
+```bash
+npx vercel --prod --archive=tgz   # from the repo ROOT, not frontend/
+```
+
+[frontend/vercel.json](frontend/vercel.json) still patches a missing `page_client-reference-manifest.js` after `next build`. It is probably now **vestigial**: it was papering over an intermittent `InvariantError: Expected clientReferenceManifest` whose real cause was two pages resolving to `/` (`app/page.tsx` and a dead `app/(dashboard)/page.tsx`), fixed on 260818. The hack could never have helped anyway — it runs *after* `next build` returns, so a build that dies during prerender never reaches it. Removing it is safe to try, but verify a few consecutive clean builds first; the failure it masked was intermittent (~1 in 4), so a single green build proves nothing.
 
 ## Commands
 
