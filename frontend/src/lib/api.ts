@@ -356,7 +356,18 @@ export const api = {
 
   // --- Notifications ---
   getNotifications: () =>
-    request<{ items: NotificationItem[]; unread_count: number }>("/api/v1/notifications"),
+    request<{
+      items: NotificationItem[];
+      unread_count: number;
+      /**
+       * False while nothing in the backend calls `create_notification()`. The route has
+       * always returned it; the client used to drop it on the floor. The bell reads it both
+       * to explain an empty list honestly and to decide there is nothing worth re-fetching
+       * for. Optional so an older backend simply reads as "assume producers exist".
+       */
+      producers_wired?: boolean;
+      reason?: string;
+    }>("/api/v1/notifications"),
   markNotificationRead: (id: string) =>
     request<{ status: string }>(`/api/v1/notifications/${id}/read`, { method: "PATCH" }),
   markAllNotificationsRead: () =>

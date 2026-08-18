@@ -66,6 +66,29 @@ def test_nvidia_alone_serves_every_tier(env):
         assert spec.kind == "openai_compatible"
 
 
+def test_groq_alone_serves_every_tier(env):
+    env(GROQ_API_KEY="gq")
+    for tier in (lp.BRAIN, lp.WORKER, lp.AD_COPY):
+        spec = lp.resolve_provider(tier)
+        assert spec.name == "groq"
+        # Groq's OpenAI-compatible surface is under /openai/v1, not /v1 --
+        # the usual base_url shape would 404 every call.
+        assert spec.base_url == "https://api.groq.com/openai/v1"
+        assert spec.kind == "openai_compatible"
+
+
+def test_groq_is_selectable_by_explicit_order(env):
+    """Guards the registration itself.
+
+    ``_configured_order`` filters names against DEFAULT_PROVIDER_ORDER, so a
+    provider that has settings and a spec but was never added to that tuple is
+    silently dropped from the order and can never be chosen -- a failure with
+    no error message anywhere.
+    """
+    env(GROQ_API_KEY="gq", GOOGLE_API_KEY="g", LLM_PROVIDER_ORDER="groq,google")
+    assert lp.resolve_provider(lp.BRAIN).name == "groq"
+
+
 def test_default_order_prefers_anthropic_over_gateways(env):
     env(NVIDIA_NIM_API_KEY="nv", ANTHROPIC_API_KEY="an", GOOGLE_API_KEY="g")
     assert lp.resolve_provider(lp.BRAIN).name == "anthropic"

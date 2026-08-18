@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     bonsai_base_url: str = "https://api.trybons.ai/v1"
     bonsai_model: str = "gpt-4o-mini"
 
+    # Groq — OpenAI-compatible. Its model ids move faster than the other
+    # gateways', so override GROQ_MODEL rather than trusting this default if a
+    # call 404s on the model name.
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_model: str = "llama-3.3-70b-versatile"
+
     # Comma-separated preference order. Blank uses llm_provider.DEFAULT_PROVIDER_ORDER.
     llm_provider_order: str = ""
 

@@ -16,12 +16,26 @@ export function NotificationsBell() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
+  // Defaults to true so an older backend, or a failed request, behaves the way it always did.
+  // Only an explicit `producers_wired: false` suppresses the re-fetch.
+  const [producersWired, setProducersWired] = useState(true);
+  const [emptyReason, setEmptyReason] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // Once on mount for the badge, and again when the panel is opened. Nothing on a timer.
+  //
+  // This polled every 30s. `GET /notifications` answers `producers_wired: false` because
+  // nothing in the backend calls `create_notification()`, so that timer re-fetched a list
+  // that could not change — roughly 2,880 requests a day per open tab, every one of them
+  // returning the same empty array.
+  //
+  // Deliberately **not** server-sent events, even though the app already speaks SSE for
+  // campaign progress. `backend/fly.toml` sets `[http_service.concurrency] type =
+  // 'connections'`, so an open SSE stream is a counted connection and would hold a machine
+  // awake for as long as a tab is open — the exact opposite of why the poll was removed.
+  // A stream for an event source that emits nothing costs a warm machine to deliver silence.
   useEffect(() => {
-    loadNotifications();
-    const interval = setInterval(loadNotifications, 30000);
-    return () => clearInterval(interval);
+    void loadNotifications();
   }, []);
 
   useEffect(() => {
@@ -41,9 +55,20 @@ export function NotificationsBell() {
       const items = (data.items || []) as Notification[];
       setNotifications(items);
       setUnread(data.unread_count || 0);
+      setProducersWired(data.producers_wired !== false);
+      setEmptyReason(data.reason ?? null);
     } catch {
       // silently fail
     }
+  }
+
+  function togglePanel() {
+    const next = !open;
+    setOpen(next);
+    // Opening the panel is the only moment this list is actually read, so it is the only
+    // moment worth spending a request on. Skipped entirely while the backend reports no
+    // producers, because then the answer is known in advance.
+    if (next && producersWired) void loadNotifications();
   }
 
   async function markRead(id: string) {
@@ -72,7 +97,7 @@ export function NotificationsBell() {
     <div className="relative" ref={rootRef}>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={togglePanel}
         className="relative rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
         aria-expanded={open}
         aria-label="Notifications"
@@ -119,8 +144,8 @@ export function NotificationsBell() {
               <div className="px-4 py-6 text-center">
                 <p className="text-sm text-slate-500">No notifications</p>
                 <p className="mt-1 text-xs text-slate-400">
-                  Notifications are not generated yet — this list stays empty regardless of
-                  campaign activity.
+                  {emptyReason ??
+                    "Notifications are not generated yet — this list stays empty regardless of campaign activity."}
                 </p>
               </div>
             ) : (

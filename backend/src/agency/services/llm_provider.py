@@ -37,7 +37,15 @@ AD_COPY = "ad_copy"
 LITE = "lite"
 
 # Native SDK providers first (best reasoning), then OpenAI-compatible gateways.
-DEFAULT_PROVIDER_ORDER = ("anthropic", "google", "openai", "nvidia", "openrouter", "bonsai")
+DEFAULT_PROVIDER_ORDER = (
+    "anthropic",
+    "google",
+    "openai",
+    "nvidia",
+    "openrouter",
+    "bonsai",
+    "groq",
+)
 
 # Per-tier generation settings, independent of which provider serves the tier.
 #
@@ -119,6 +127,13 @@ def _provider_specs() -> dict[str, ProviderSpec]:
             api_key=s.bonsai_api_key,
             base_url=s.bonsai_base_url,
             models=dict.fromkeys(ALL_TIERS, s.bonsai_model),
+        ),
+        "groq": ProviderSpec(
+            name="groq",
+            kind="openai_compatible",
+            api_key=s.groq_api_key,
+            base_url=s.groq_base_url,
+            models=dict.fromkeys(ALL_TIERS, s.groq_model),
         ),
     }
 
