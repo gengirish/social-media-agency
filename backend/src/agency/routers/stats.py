@@ -18,7 +18,7 @@ async def get_dashboard_stats(
 ):
     clients = (
         await db.execute(
-            select(func.count(Client.id)).where(Client.org_id == org_id, Client.is_active == True)
+            select(func.count(Client.id)).where(Client.org_id == org_id, Client.is_active.is_(True))
         )
     ).scalar() or 0
 

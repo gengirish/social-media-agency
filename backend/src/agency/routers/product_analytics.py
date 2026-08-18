@@ -5,7 +5,7 @@ rollup (`org_id=None` in the service layer) is deliberately not reachable from
 the API so no tenant can read another tenant's usage.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -40,7 +40,7 @@ async def ingest_events(
     stale frontend build never breaks tracking for the rest of the batch.
     """
     user_id = _user_uuid(user)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     accepted = 0
     rejected = 0
 
@@ -56,7 +56,7 @@ async def ingest_events(
         # Never trust a client clock for future timestamps.
         occurred_at = event.occurred_at or now
         if occurred_at.tzinfo is None:
-            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+            occurred_at = occurred_at.replace(tzinfo=UTC)
         occurred_at = min(occurred_at, now)
 
         await pa.track(

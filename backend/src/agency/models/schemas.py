@@ -1,14 +1,13 @@
 from datetime import date, datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # --- Enums ---
 
 
-class ContentStatus(str, Enum):
+class ContentStatus(StrEnum):
     DRAFT = "draft"
     PENDING_APPROVAL = "pending_approval"
     APPROVED = "approved"
@@ -17,7 +16,7 @@ class ContentStatus(str, Enum):
     REJECTED = "rejected"
 
 
-class CampaignStatus(str, Enum):
+class CampaignStatus(StrEnum):
     PLANNING = "planning"
     RUNNING = "running"
     PAUSED = "paused"
@@ -25,14 +24,14 @@ class CampaignStatus(str, Enum):
     ARCHIVED = "archived"
 
 
-class WorkflowStatus(str, Enum):
+class WorkflowStatus(StrEnum):
     RUNNING = "running"
     PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
-class AgentName(str, Enum):
+class AgentName(StrEnum):
     ORCHESTRATOR = "orchestrator"
     STRATEGY = "strategy"
     SEO = "seo"

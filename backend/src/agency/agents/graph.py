@@ -48,8 +48,12 @@ def _route_after_qa(state: CampaignState) -> str:
             return "compile_output"
 
         issues = qa.get("issues", [])
-        has_content_issues = any(i.get("type") == "content" and i.get("severity") == "critical" for i in issues)
-        has_ad_issues = any(i.get("type") == "ad" and i.get("severity") == "critical" for i in issues)
+        has_content_issues = any(
+            i.get("type") == "content" and i.get("severity") == "critical" for i in issues
+        )
+        has_ad_issues = any(
+            i.get("type") == "ad" and i.get("severity") == "critical" for i in issues
+        )
 
         if has_content_issues:
             return "create_content"

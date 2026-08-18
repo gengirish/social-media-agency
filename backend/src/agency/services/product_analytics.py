@@ -12,7 +12,7 @@ All reads are scoped by ``org_id`` unless ``org_id=None`` is passed explicitly
 """
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -104,7 +104,7 @@ def _build_event(
         campaign_id=_as_uuid(campaign_id),
         duration_ms=duration_ms,
         properties=properties or {},
-        occurred_at=occurred_at or datetime.now(timezone.utc),
+        occurred_at=occurred_at or datetime.now(UTC),
     )
 
 
@@ -289,7 +289,7 @@ async def return_rate(
     Users who signed up too recently are excluded from the denominator rather
     than counted as churned.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     results: list[dict[str, Any]] = []
 
     for day in days:
@@ -413,7 +413,7 @@ async def beta_metrics(
     db: AsyncSession, org_id: UUID | None, window_days: int = 28
 ) -> dict[str, Any]:
     """Assemble the full §7 table for the beta dashboard."""
-    since = datetime.now(timezone.utc) - timedelta(days=window_days)
+    since = datetime.now(UTC) - timedelta(days=window_days)
 
     return {
         "window_days": window_days,

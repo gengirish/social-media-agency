@@ -48,15 +48,15 @@ async def list_audit_logs(
         "status": "available",
         "items": [
             {
-                "id": str(l.id),
-                "action": l.action,
-                "resource_type": l.resource_type,
-                "resource_id": l.resource_id,
-                "details": l.details,
-                "user_id": str(l.user_id) if l.user_id else None,
-                "ip_address": l.ip_address,
-                "created_at": l.created_at.isoformat() if l.created_at else None,
+                "id": str(entry.id),
+                "action": entry.action,
+                "resource_type": entry.resource_type,
+                "resource_id": entry.resource_id,
+                "details": entry.details,
+                "user_id": str(entry.user_id) if entry.user_id else None,
+                "ip_address": entry.ip_address,
+                "created_at": entry.created_at.isoformat() if entry.created_at else None,
             }
-            for l in logs
+            for entry in logs
         ]
     }

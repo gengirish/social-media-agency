@@ -47,8 +47,9 @@ async def invite_member(
     Invitation email is best-effort via AgentMail when configured (see inline logic).
     """
     # TODO: Replace temp-password flow with signed invite links and org-branded AgentMail templates.
-    # TODO: No invitation email is sent unless agentmail_api_key is set and org.agentmail_inbox_id exists;
-    # otherwise share credentials out of band until AgentMail is fully wired.
+    # TODO: No invitation email is sent unless agentmail_api_key is set and
+    # org.agentmail_inbox_id exists; otherwise share credentials out of band
+    # until AgentMail is fully wired.
     invited_by = user.get("email") or str(user.get("sub", ""))
     result = await invite_team_member(
         db, org_id, body.email, body.role, invited_by
@@ -62,7 +63,8 @@ async def invite_member(
         try:
             import agentmail
 
-            # Best-effort invite email (SDK client is agentmail.AgentMail; there is no agentmail.Client).
+            # Best-effort invite email (SDK client is agentmail.AgentMail;
+            # there is no agentmail.Client).
             org_row = await db.execute(select(Organization).where(Organization.id == org_id))
             org = org_row.scalar_one_or_none()
             inbox_id = org.agentmail_inbox_id if org else None

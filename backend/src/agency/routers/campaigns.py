@@ -2,15 +2,17 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, status
 import structlog
-from jose import JWTError, jwt as jose_jwt
-from sse_starlette.sse import EventSourceResponse
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import Query as QueryParam
+from jose import JWTError
+from jose import jwt as jose_jwt
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
+from sse_starlette.sse import EventSourceResponse
 
 from agency.agents.graph_runtime import get_runtime_compiled_graph
 from agency.agents.state import BrandContext, CampaignState
@@ -76,7 +78,7 @@ async def create_campaign(
     plan = PLAN_CONFIG.get(plan_tier, PLAN_CONFIG["free"])
     campaigns_limit = plan.get("campaigns_limit", 5)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     result_count = await db.execute(
         select(func.count(Campaign.id)).where(
@@ -231,7 +233,7 @@ async def _mark_campaign_failed(campaign_id: str, org_id: str, error: str) -> No
             workflow = result.scalar_one_or_none()
             if workflow:
                 workflow.status = "failed"
-                workflow.completed_at = datetime.now(timezone.utc)
+                workflow.completed_at = datetime.now(UTC)
 
             await db.commit()
     except Exception:
@@ -403,7 +405,7 @@ async def _persist_campaign_results(
             workflow = result.scalar_one_or_none()
             if workflow:
                 workflow.status = "completed"
-                workflow.completed_at = datetime.now(timezone.utc)
+                workflow.completed_at = datetime.now(UTC)
 
             try:
                 from agency.services.brand_learning import update_brand_learnings
@@ -471,11 +473,11 @@ async def stream_campaign(
                 settings.jwt_secret,
                 algorithms=[settings.jwt_algorithm],
             )
-        except JWTError:
+        except JWTError as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token",
-            )
+            ) from e
 
     org_raw = user.get("org_id")
     if not org_raw:
@@ -486,11 +488,11 @@ async def stream_campaign(
     try:
         cid = UUID(campaign_id)
         oid = UUID(str(org_raw))
-    except ValueError:
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid campaign id",
-        )
+        ) from e
 
     factory = get_session_factory()
     async with factory() as auth_db:
@@ -522,7 +524,7 @@ async def stream_campaign(
                 if parsed.get("type") in ("complete", "error"):
                     _campaign_streams.pop(campaign_id, None)
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield AgentStreamEvent(type="heartbeat").model_dump_json()
 
     return EventSourceResponse(event_generator())
@@ -601,7 +603,7 @@ async def create_autonomous_campaign(
 
     plan = await plan_autonomous_cycle(goal, brand_context)
 
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     campaign = Campaign(
         client_id=UUID(str(client_id)),
         org_id=org_id,

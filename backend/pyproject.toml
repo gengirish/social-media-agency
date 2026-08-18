@@ -63,6 +63,51 @@ src = ["src"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# E501 only. These modules are mostly prompt text — JSON schema examples and
+# instruction lines inside triple-quoted templates sent verbatim to an LLM.
+# A line break inside one of those literals changes the model's input, so
+# rewrapping to satisfy a style rule is a behaviour change dressed as a lint
+# fix. Real code in these files is still held to the 100-column limit by every
+# other rule; only the long-line check is relaxed.
+"src/agency/agents/ad_copy.py" = ["E501"]
+"src/agency/agents/analytics.py" = ["E501"]
+"src/agency/agents/content_writer.py" = ["E501"]
+"src/agency/agents/orchestrator.py" = ["E501"]
+"src/agency/agents/qa_brand.py" = ["E501"]
+"src/agency/agents/seo.py" = ["E501"]
+"src/agency/agents/strategy.py" = ["E501"]
+"src/agency/services/ad_optimization.py" = ["E501"]
+"src/agency/services/client_acquisition.py" = ["E501"]
+"src/agency/services/magic_brief.py" = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's whole dependency-injection design puts these calls in parameter
+# defaults — `db: AsyncSession = Depends(get_db)` is the documented idiom, not
+# the mutable-default bug B008 exists to catch. Without this, B008 fires on
+# every injected parameter in the codebase (217 of 294 findings) and buries
+# every real lint error under noise.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Body",
+    "fastapi.Form",
+    "fastapi.File",
+    "fastapi.Cookie",
+    "fastapi.Security",
+    "Depends",
+    "Query",
+    "Path",
+    "Header",
+    "Body",
+    "Form",
+    "File",
+    "Cookie",
+    "Security",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

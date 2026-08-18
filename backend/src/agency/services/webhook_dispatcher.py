@@ -20,7 +20,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -94,7 +94,7 @@ async def create_webhook(
         events=list(events) or sorted(SUPPORTED_EVENTS),
         secret=generate_secret(),
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db.add(hook)
     await db.commit()
@@ -201,7 +201,7 @@ async def _record_attempt(
                     status=status,
                     response_code=response_code,
                     error=error[:2000],
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                 )
             )
             await db.commit()
@@ -321,7 +321,7 @@ async def dispatch_webhook(
     if not targets:
         return []
 
-    body = serialise_event(event_type, payload, datetime.now(timezone.utc).isoformat())
+    body = serialise_event(event_type, payload, datetime.now(UTC).isoformat())
 
     results: list[dict[str, Any]] = []
     try:

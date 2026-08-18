@@ -44,12 +44,14 @@ async def list_clients(
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
-    count_q = select(func.count(Client.id)).where(Client.org_id == org_id, Client.is_active == True)
+    count_q = select(func.count(Client.id)).where(
+        Client.org_id == org_id, Client.is_active.is_(True)
+    )
     total = (await db.execute(count_q)).scalar() or 0
 
     q = (
         select(Client)
-        .where(Client.org_id == org_id, Client.is_active == True)
+        .where(Client.org_id == org_id, Client.is_active.is_(True))
         .order_by(Client.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)

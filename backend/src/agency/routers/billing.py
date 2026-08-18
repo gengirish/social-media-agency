@@ -4,8 +4,8 @@ from uuid import UUID
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from stripe import SignatureVerificationError
 from pydantic import BaseModel, Field
+from stripe import SignatureVerificationError
 
 from agency.config import get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
@@ -79,10 +79,10 @@ async def stripe_webhook(request: Request, db=Depends(get_db)):
             sig_header,
             settings.stripe_webhook_secret,
         )
-    except ValueError:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid payload")
-    except SignatureVerificationError:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid signature")
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid payload") from e
+    except SignatureVerificationError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid signature") from e
 
     event_dict = event_obj.to_dict() if hasattr(event_obj, "to_dict") else dict(event_obj)
     result = await billing.handle_webhook(db, event_dict)

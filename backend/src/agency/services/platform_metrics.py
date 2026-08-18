@@ -44,7 +44,7 @@ def _unavailable(reason: str, **extra) -> dict:
     return {"status": "unavailable", "reason": reason, **extra}
 
 
-async def _with_retries(
+async def _with_retries[T](
     op: Callable[[], Awaitable[T]],
     *,
     label: str,

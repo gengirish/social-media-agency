@@ -101,7 +101,8 @@ class Settings(BaseSettings):
     meta_app_id: str = ""
     meta_app_secret: str = ""
 
-    # OAuth tokens at rest (Fernet). In dev, a built-in fallback is used if unset (see utils.encryption).
+    # OAuth tokens at rest (Fernet). In dev, a built-in fallback is used if
+    # unset (see utils.encryption).
     token_encryption_key: str = ""
 
     # Image Generation

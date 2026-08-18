@@ -88,7 +88,10 @@ async def get_cross_campaign_insights(
             "platform": platform,
             "avg_performance": round(avg, 2),
             "content_count": len(scores),
-            "insight": f"{platform.title()} averages {avg:.1f} performance score across {len(scores)} pieces",
+            "insight": (
+                f"{platform.title()} averages {avg:.1f} performance score "
+                f"across {len(scores)} pieces"
+            ),
         })
 
     return insights

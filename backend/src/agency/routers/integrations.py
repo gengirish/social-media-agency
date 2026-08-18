@@ -163,7 +163,7 @@ async def list_templates(
     org_id: UUID = Depends(get_org_id),
 ):
     q = select(CampaignTemplate).where(
-        (CampaignTemplate.is_public == True) | (CampaignTemplate.org_id == org_id)
+        (CampaignTemplate.is_public.is_(True)) | (CampaignTemplate.org_id == org_id)
     )
     if category:
         q = q.where(CampaignTemplate.category == category)
@@ -218,7 +218,7 @@ async def list_marketplace_templates(
     db=Depends(get_db),
 ):
     """List all public templates in the marketplace."""
-    q = select(CampaignTemplate).where(CampaignTemplate.is_public == True)
+    q = select(CampaignTemplate).where(CampaignTemplate.is_public.is_(True))
     if category:
         q = q.where(CampaignTemplate.category == category)
     q = q.order_by(CampaignTemplate.uses_count.desc())
@@ -252,7 +252,7 @@ async def fork_template(
     result = await db.execute(
         select(CampaignTemplate).where(
             CampaignTemplate.id == template_id,
-            CampaignTemplate.is_public == True,
+            CampaignTemplate.is_public.is_(True),
         )
     )
     source = result.scalar_one_or_none()
@@ -308,7 +308,7 @@ async def get_template(
     result = await db.execute(
         select(CampaignTemplate).where(
             CampaignTemplate.id == template_id,
-            (CampaignTemplate.is_public == True) | (CampaignTemplate.org_id == org_id),
+            (CampaignTemplate.is_public.is_(True)) | (CampaignTemplate.org_id == org_id),
         )
     )
     t = result.scalar_one_or_none()

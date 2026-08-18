@@ -2,6 +2,7 @@
 
 import hashlib
 import secrets
+from datetime import UTC
 from uuid import UUID
 
 from sqlalchemy import select
@@ -45,7 +46,7 @@ async def create_api_key(
 
 async def list_api_keys(db: AsyncSession, org_id: UUID) -> list:
     result = await db.execute(
-        select(ApiKey).where(ApiKey.org_id == org_id, ApiKey.is_active == True)
+        select(ApiKey).where(ApiKey.org_id == org_id, ApiKey.is_active.is_(True))
         .order_by(ApiKey.created_at.desc())
     )
     keys = result.scalars().all()
@@ -83,15 +84,15 @@ async def validate_api_key(db: AsyncSession, raw_key: str) -> dict | None:
         select(ApiKey).where(
             ApiKey.key_prefix == prefix,
             ApiKey.key_hash == key_hash,
-            ApiKey.is_active == True,
+            ApiKey.is_active.is_(True),
         )
     )
     key = result.scalar_one_or_none()
     if not key:
         return None
 
-    from datetime import datetime, timezone
-    key.last_used_at = datetime.now(timezone.utc)
+    from datetime import datetime
+    key.last_used_at = datetime.now(UTC)
     await db.commit()
 
     return {
