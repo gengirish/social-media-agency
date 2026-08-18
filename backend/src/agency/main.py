@@ -1,5 +1,6 @@
 import json
 
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -34,6 +35,8 @@ from agency.routers import (
     webhooks_config,
 )
 
+logger = structlog.get_logger()
+
 
 def _parse_cors_origins(raw: str) -> list[str]:
     raw = raw.strip()
@@ -54,6 +57,19 @@ def create_app() -> FastAPI:
     )
 
     origins = _parse_cors_origins(settings.cors_origins)
+    # Logged because a missing origin is otherwise silent and looks like an app
+    # bug: Starlette answers a disallowed preflight with a bare 400 and writes
+    # nothing, so the browser reports a CORS failure while the server looks
+    # healthy. On 260818 the production domain was absent here and every
+    # browser request failed preflight while curl (which does not preflight)
+    # kept working. The FIRST entry is also the app's own base URL for building
+    # OAuth redirect URIs -- see routers/oauth.py::_first_cors_origin -- so
+    # order is load-bearing, not cosmetic.
+    logger.info(
+        "cors_allowed_origins",
+        origins=origins,
+        oauth_base_url=origins[0] if origins else None,
+    )
 
     app.add_middleware(
         CORSMiddleware,
