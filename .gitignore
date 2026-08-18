@@ -16,6 +16,10 @@ out/
 .env.local
 .env.production
 
+# Loose API-key files dropped in the repo root
+*api_key*.txt
+*_secret*.txt
+
 # IDE
 .vscode/
 .idea/

@@ -4,6 +4,28 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260818 — AgentMail Turned On: `alerts@intelliforge.tech`
+
+**The AgentMail integration existed on paper and sent nothing.** A key, two org columns, and one inline SDK block in `routers/team.py` guarded by `if settings.agentmail_api_key and org.agentmail_inbox_id`. Nothing in the codebase ever *wrote* `agentmail_inbox_id`, so the second condition was false for every org that has ever existed and the send path was unreachable.
+
+**New `services/email_service.py`** is now the single outbound path. `send_email()` resolves a sender — the org's own `agentmail_inbox_id` when set, otherwise a shared inbox from `AGENTMAIL_FROM_EMAIL` (default `alerts@intelliforge.tech`) — and get-or-creates it once per process. It uses `AsyncAgentMail`, so a send does not block the event loop.
+
+**It never raises and never lies.** Every failure mode — no API key, no usable inbox, an AgentMail 5xx — returns `SendResult(sent=False, reason=...)`. A notification that fails must not fail the request that triggered it, and the caller must not be able to report success by accident. `POST /api/v1/team/invite` still returns `email_sent: bool`, now sourced from that result.
+
+**The frontend was deciding success by string-matching backend copy** — `res.message?.includes("Invitation email sent")` — because `email_sent` was missing from `TeamInviteResponse` in `lib/api.ts`. Field added, string-match replaced with the boolean.
+
+**`agentmail` floor raised `>=0.2.0` → `>=0.4.12`.** The installed SDK takes `inboxes.create(request=CreateInboxRequest(...))`; the keyword form both the mirrored `agency-agentmail` skill and the old floor implied raises `TypeError`. The skill is corrected in `.claude/` and `.cursor/`.
+
+**Verified against the live account, not by inspection:** `intelliforge.tech` reports `VERIFIED`, `alerts@intelliforge.tech` already exists, and a real message sent through `send_email()` returned `sent=True`.
+
+Ten new tests in `tests/test_email_service.py` cover the no-key path, the no-sender path, the org-inbox override, payload construction (unset optionals must be absent, not `None` — the SDK serializes an explicit `None`), and outage degradation.
+
+**Not sending in production yet:** `AGENTMAIL_API_KEY` still has to be set as a Fly secret on `campaignforge-api`.
+
+Suite: 214 passing.
+
+---
+
 ## 260818 — Schema Catch-Up: init.sql Was Wrong and Production Was Behind It
 
 **Production was missing four tables and two columns that `models/tables.py` declares.** SQLAlchemy names every mapped column in its `SELECT`, so one absent column takes out an entire route rather than degrading: the client portal returned 500 on `white_label.portal_enabled`, and every notifications route failed on a `notification` table that has never existed anywhere.

@@ -47,18 +47,24 @@ const client = new AgentMailClient({ apiKey: "YOUR_API_KEY" });
 Each agency organization gets a dedicated inbox. Uses `client_id` for idempotent retries.
 
 ```python
-# Create inbox with custom domain
+# Create inbox with custom domain.
+# The Python SDK (>=0.4) takes a request model, NOT keyword arguments —
+# client.inboxes.create(username=...) raises TypeError.
+from agentmail.inboxes import CreateInboxRequest
+
 inbox = client.inboxes.create(
-    username="agency-org123",
-    domain="yourdomain.com",
-    display_name="Demo Agency",
-    client_id="org-<uuid>",
+    request=CreateInboxRequest(
+        username="agency-org123",
+        domain="yourdomain.com",       # must be a VERIFIED domain
+        display_name="Demo Agency",
+        client_id="org-<uuid>",
+    )
 )
 
-# List, get, delete
+# List, get, delete (inbox_id is the full address, and is positional)
 inboxes = client.inboxes.list()
-inbox = client.inboxes.get(inbox_id="agency-org123@yourdomain.com")
-client.inboxes.delete(inbox_id="agency-org123@yourdomain.com")
+inbox = client.inboxes.get("agency-org123@yourdomain.com")
+client.inboxes.delete("agency-org123@yourdomain.com")
 ```
 
 ```typescript

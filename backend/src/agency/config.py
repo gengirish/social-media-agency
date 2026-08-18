@@ -91,7 +91,10 @@ class Settings(BaseSettings):
 
     # AgentMail
     agentmail_api_key: str = ""
-    agentmail_default_domain: str = ""
+    agentmail_default_domain: str = "intelliforge.tech"
+    # Shared sender inbox for transactional mail. An org with its own
+    # agentmail_inbox_id overrides it (services/email_service.py).
+    agentmail_from_email: str = "alerts@intelliforge.tech"
 
     # OAuth
     twitter_client_id: str = ""

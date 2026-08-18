@@ -5,11 +5,9 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
 
-from agency.config import get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
-from agency.models.tables import Organization
+from agency.services.email_service import send_email
 from agency.services.team import invite_team_member, list_team_members, update_member_role
 
 logger = structlog.get_logger()
@@ -44,12 +42,12 @@ async def invite_member(
 ):
     """Create a team member user with a temporary password.
 
-    Invitation email is best-effort via AgentMail when configured (see inline logic).
+    The invitation email is best-effort: it sends from the shared AgentMail
+    sender (or the org's own inbox when it has one) and the response reports
+    honestly via `email_sent` whether anything actually went out.
     """
-    # TODO: Replace temp-password flow with signed invite links and org-branded AgentMail templates.
-    # TODO: No invitation email is sent unless agentmail_api_key is set and
-    # org.agentmail_inbox_id exists; otherwise share credentials out of band
-    # until AgentMail is fully wired.
+    # TODO: Replace the temp-password flow with signed invite links and
+    # org-branded templates. Mailing a password is a stopgap.
     invited_by = user.get("email") or str(user.get("sub", ""))
     result = await invite_team_member(
         db, org_id, body.email, body.role, invited_by
@@ -57,52 +55,39 @@ async def invite_member(
     if result.get("error"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, result["error"])
 
-    settings = get_settings()
-    email_sent = False
-    if settings.agentmail_api_key:
-        try:
-            import agentmail
-
-            # Best-effort invite email (SDK client is agentmail.AgentMail;
-            # there is no agentmail.Client).
-            org_row = await db.execute(select(Organization).where(Organization.id == org_id))
-            org = org_row.scalar_one_or_none()
-            inbox_id = org.agentmail_inbox_id if org else None
-            if inbox_id:
-                client = agentmail.AgentMail(api_key=settings.agentmail_api_key)
-                temp_password = result.get("temp_password", "")
-                client.inboxes.messages.send(
-                    inbox_id=inbox_id,
-                    to=body.email,
-                    subject="You've been invited to CampaignForge",
-                    text=(
-                        f"You have been invited by {invited_by}. "
-                        f"Your temporary password is: {temp_password}. "
-                        "Please sign in and change your password."
-                    ),
-                    html=(
-                        f"<p>You have been invited by {invited_by}.</p>"
-                        f"<p>Your temporary password is: <strong>{temp_password}</strong>.</p>"
-                        "<p>Please sign in and change your password.</p>"
-                    ),
-                    labels=["team-invite"],
-                )
-                email_sent = True
-        except Exception as e:  # noqa: BLE001 — invite must still succeed without email
-            logger.warning("team_invite_email_failed", email=body.email, error=str(e))
+    temp_password = result.get("temp_password", "")
+    send = await send_email(
+        to=body.email,
+        subject="You've been invited to CampaignForge",
+        text=(
+            f"You have been invited by {invited_by}. "
+            f"Your temporary password is: {temp_password}. "
+            "Please sign in and change your password."
+        ),
+        html=(
+            f"<p>You have been invited by {invited_by}.</p>"
+            f"<p>Your temporary password is: <strong>{temp_password}</strong>.</p>"
+            "<p>Please sign in and change your password.</p>"
+        ),
+        db=db,
+        org_id=org_id,
+        labels=["team-invite"],
+    )
+    if not send.sent:
+        logger.warning("team_invite_email_not_sent", email=body.email, reason=send.reason)
 
     message = (
         "User account created. Invitation email sent."
-        if email_sent
+        if send.sent
         else (
-            "User account created, but NO invitation email was sent — AgentMail is "
-            "not configured for this org. Share the temporary password out of band."
+            f"User account created, but NO invitation email was sent. {send.reason} "
+            "Share the temporary password out of band."
         )
     )
     return {
         "status": "user_created",
         # Explicit so the UI never claims an email went out that did not.
-        "email_sent": email_sent,
+        "email_sent": send.sent,
         "message": message,
         "email": body.email,
         "role": result["role"],

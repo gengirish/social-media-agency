@@ -60,11 +60,10 @@ export default function TeamPage() {
     setInviting(true);
     try {
       const res = await api.inviteTeamMember(inviteEmail.trim(), inviteRole);
-      // The backend only sends an email when AgentMail is configured for this
-      // org. Report what it actually did — the old copy always said "Invitation
-      // sent", which was usually false.
-      const emailed = res.message?.includes("Invitation email sent");
-      if (emailed) {
+      // The backend sends only when AgentMail is configured and has a usable
+      // sender inbox. Trust its `email_sent` flag rather than sniffing the
+      // display copy, which is free to change wording.
+      if (res.email_sent) {
         toast.success(res.message);
       } else {
         toast.warning(res.message ?? "User created, but no invitation email was sent.", {

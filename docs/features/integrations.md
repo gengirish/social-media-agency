@@ -23,12 +23,20 @@ Publishing is triggered via `POST /api/v1/publishing/{content_id}/publish` or au
 Checkout sessions, webhook processing, subscription lifecycle. See [billing.md](billing.md).
 
 ## AgentMail
-**Status**: [IN PROGRESS]
-**File**: `backend/src/agency/routers/team.py`
+**Status**: [LIVE]
+**File**: `backend/src/agency/services/email_service.py`
 
-Best-effort email sending for team invitations when `AGENTMAIL_API_KEY` is configured and org has `agentmail_inbox_id` set.
+Transactional email. All outbound mail goes through `send_email()`, which sends from a **shared sender inbox** — `AGENTMAIL_FROM_EMAIL`, default `alerts@intelliforge.tech`. An org that has its own `organization.agentmail_inbox_id` overrides the shared sender per message; nothing provisions per-org inboxes yet, so in practice everything sends from the shared address.
 
-Env vars: `AGENTMAIL_API_KEY`, `AGENTMAIL_DEFAULT_DOMAIN`
+`send_email()` **never raises and never lies**: it returns `SendResult(sent, reason, inbox_id)`, and a missing key, an unverified domain, or an AgentMail outage yields `sent=False` with a reason. Callers must surface `sent` honestly rather than claiming an email went out — `POST /api/v1/team/invite` returns `email_sent: bool` for exactly this reason.
+
+The sender inbox is resolved once per process (get, then create on 404) and memoized. **Creating it requires the domain to be VERIFIED in AgentMail**; an unverified domain is the usual cause of `sent=False`.
+
+Consumers: team invitations (`routers/team.py`).
+
+Env vars: `AGENTMAIL_API_KEY`, `AGENTMAIL_FROM_EMAIL`, `AGENTMAIL_DEFAULT_DOMAIN` (fallback domain, only read when `AGENTMAIL_FROM_EMAIL` is a bare username).
+
+In production the key is a Fly secret: `fly secrets set AGENTMAIL_API_KEY=... -a campaignforge-api`.
 
 ## Clerk
 **Status**: [LIVE]

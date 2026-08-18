@@ -924,6 +924,9 @@ export interface TeamMember {
  */
 export interface TeamInviteResponse {
   status: string;
+  /** Whether an invitation email actually went out. Authoritative — do not
+   * infer it from `message`, which is display copy and may be reworded. */
+  email_sent: boolean;
   message: string;
   email: string;
   role: string;
