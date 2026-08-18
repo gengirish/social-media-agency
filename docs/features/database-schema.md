@@ -1,11 +1,34 @@
 # Database Schema
-<!-- verified: 260817 -->
+<!-- verified: 260818 -->
 
-PostgreSQL (Neon serverless) via SQLAlchemy async. 18 tables total.
+PostgreSQL (Neon serverless) via SQLAlchemy async. **21 tables** (20 without pgvector).
 
 **File**: `backend/src/agency/models/tables.py`
 
-Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations, despite `alembic` being a dependency. Any schema change must be applied to **both** `db/init.sql` and `models/tables.py` or the two drift apart silently.
+Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations, despite `alembic` being a dependency.
+
+> ### A schema change takes THREE edits, not two
+>
+> 1. `db/init.sql` — for databases created from scratch.
+> 2. `backend/src/agency/models/tables.py` — what the ORM emits in every `SELECT`.
+> 3. `db/migrations/<YYMMDD>_<name>.sql` — a dated, forward-only, additive script.
+>
+> **`init.sql` runs only against an empty database.** Docker-compose executes it on
+> first boot and a fresh Neon branch gets it once; after that it is never replayed.
+> Skipping step 3 means the change reaches local dev and CI, passes review, and
+> silently never lands in production.
+>
+> This is not hypothetical. On 260818 the live Neon branch was missing four tables
+> (`notification`, `webhook`, `webhook_delivery`, `knowledge_embedding`) and two
+> `white_label` columns that `tables.py` had declared for weeks. Because SQLAlchemy
+> names every mapped column in its `SELECT`, a single absent column takes out the
+> whole route: the client portal returned 500 on `white_label.portal_enabled`, and
+> every notifications route failed on a table that did not exist. Both were marked
+> `[LIVE]` in this file at the time. Closed by `db/migrations/260818_schema_catchup.sql`.
+>
+> Verify any environment with the model-vs-database diff: compare
+> `Base.metadata.tables` against `information_schema.columns`. Zero drift in both
+> directions is the only acceptable result.
 
 ## Organization
 **Status**: [LIVE]

@@ -13,10 +13,9 @@ Rules for the operator:
 - **One task = one agent.** Do not merge tasks across phases.
 - **Parallel only within a phase**, and only tasks with no overlapping file in `Files:`. Overlaps are flagged as `Conflicts:`.
 - Tasks touching >1 file that another parallel agent also edits → run with `isolation: "worktree"`.
-- **Schema changes must land in BOTH `db/init.sql` and `backend/src/agency/models/tables.py`** (no Alembic in this repo).
 - **Green bar, corrected 260817 (second pass):** `ruff check src/ tests/` is now down to **1** finding (`SIM222` in `services/llm_provider.py`) after the lint-config change described in the status section — but `mypy src/agency/ --ignore-missing-imports` still reports **413 errors in 61 files**, almost all `no-untyped-def` / `type-arg` on FastAPI handlers. So the achievable bar per agent is: **clean on the files you touched, and zero new violations repo-wide.** Note that adding a *correct* annotation to previously-unannotated code can itself add a mypy finding — `user: dict` earns `type-arg`. Write `dict[str, Any]`. Do not ask an agent to fix the baseline as a side quest — that is T4.5, and it needs re-scoping.
 - `pytest tests/ -v` must pass **in full**. It does as of 260817: **197 passed, 0 errors**. Any agent reporting a subset run is reporting a regression, not a constraint.
-- **Schema changes need three edits, not two:** `db/init.sql`, `models/tables.py`, **and** a dated forward-only script in `db/migrations/`. `init.sql` runs only on a fresh database, so without the third file the change silently never reaches Neon prod.
+- **Schema changes need three edits, not two** (no Alembic in this repo): `db/init.sql`, `backend/src/agency/models/tables.py`, **and** a dated forward-only script in `db/migrations/`. `init.sql` runs only on a fresh database, so without the third file the change reaches local dev and CI, passes review, and silently never lands in Neon prod — which is exactly how four tables and two columns went missing in production until 260818.
 - **Data reliability is non-negotiable:** no fabricated metrics. Unavailable data returns an explicit unavailable/`⚠️ NOT AVAILABLE` state, never zeros or invented numbers (`.cursor/workflows/data-reliability-rules.md`).
 
 Legend — Effort: **S** ≤1d · **M** 2–4d · **L** 1–2wk. Impact: 🔴 blocker · 🟠 high · 🟡 medium.
@@ -46,12 +45,14 @@ Corrections applied to this document on 260817, second pass:
 - Counts corrected: **24 routers · 24 services** (this doc said 23 services; `CLAUDE.md` said 23 routers / 21 modules and has been fixed).
 - `backend/tests/test_content_batching.py` exists and passes but was never in this plan — folded into the T1.x record below.
 
-**Operator actions required before any of this is real in production:**
-1. Create `backend/.env` from `backend/.env.example` (nothing runs locally without it). Note `extra="forbid"` — one unknown key aborts startup, and blank ≠ unset. **T0.1's acceptance is still unverified**: the example file shipped, but no `.env` has ever been created, so the boot path it describes has not been executed once.
-2. Run `CREATE EXTENSION IF NOT EXISTS vector;` on the Neon branch, confirm with `SELECT extname FROM pg_extension`. **Unverified** — until then RAG runs keyword mode and says so.
-3. Run `cd backend && python scripts/index_knowledge_base.py` — deliberately not wired into startup.
-4. Set `EXA_API_KEY` — gates **both** trends and competitive intel; without it both correctly return unavailable rather than inventing data.
-5. **Run `db/migrations/260817_org_slug.sql` on Neon** before deploying T1.7. `init.sql` only executes on a fresh database, so the new `organization.slug` column does not exist in any already-provisioned environment. Portal routes return 404 for every org until the backfill runs — fail-closed, but fail.
+**Operator actions — status as of 260818:**
+1. ⬜ Create `backend/.env` from `backend/.env.example` (nothing runs locally without it). Note `extra="forbid"` — one unknown key aborts startup, and blank ≠ unset. **T0.1's acceptance is still unverified**: the example file shipped, but no `.env` has ever been created, so the boot path it describes has not been executed once.
+2. ✅ **pgvector is enabled on Neon** — `SELECT extname FROM pg_extension` now returns `vector`, and `knowledge_embedding` exists with its HNSW cosine index. Enabled as a side effect of `db/migrations/260818_schema_catchup.sql`, whose guarded `CREATE EXTENSION IF NOT EXISTS vector` succeeded. **This answers open question 3: Neon does support it on this plan.**
+3. ⬜ Run `cd backend && python scripts/index_knowledge_base.py` — deliberately not wired into startup. **Now the only thing between the repo and working semantic RAG**, since the table and extension are in place; until it runs, retrieval is keyword mode and labels itself as such.
+4. ⬜ Set `EXA_API_KEY` — gates **both** trends and competitive intel; without it both correctly return unavailable rather than inventing data.
+5. ✅ `db/migrations/260817_org_slug.sql` applied to Neon. All 35 orgs backfilled, zero duplicate slugs, unique constraint in place. Seven orgs shared the name "E2E Test Org" — the row-number de-duplication in the backfill is what kept the constraint from failing.
+6. ✅ `db/migrations/260818_schema_catchup.sql` applied to Neon. Closed four missing tables and two missing columns; a model-vs-database diff now reports zero drift in both directions.
+7. 🔴 **No LLM provider key is set on Fly prod.** `flyctl secrets list -a campaignforge-api` shows only `APP_ENV`, `CORS_ORIGINS`, `DATABASE_URL`, `DEBUG`, `JWT_SECRET`, `CLERK_JWKS_URL`, `CLERK_SECRET_KEY`, `NEON_DATABASE_URL`. No Anthropic/Google/OpenAI key, no `EXA_API_KEY`, no Stripe keys, no `TOKEN_ENCRYPTION_KEY`. `get_llm()` raises when none is configured, so **production cannot run a campaign end-to-end** — this is now the single largest gap between the deployed app and the product it advertises.
 
 ---
 
@@ -357,7 +358,7 @@ Struck through where complete. Remaining work only:
 
 1. ICP confirmed as white-label agencies? Decides whether T3.1 is P0 or P2. **Now the most expensive open question in the doc** — T1.7 cleared the portal's blocker, so this is the only thing standing between the agency wedge and being built.
 2. Which LLM providers are keyed on Fly prod? (`GET /api/v1/health/llm`, authenticated.) T0.1 assumes at least one.
-3. Does Neon have `vector` enabled on your plan? Blocks T1.4's approach.
+3. ~~Does Neon have `vector` enabled on your plan?~~ **Answered 260818: yes, and it is now enabled** — `knowledge_embedding` exists with its HNSW index. Remaining step is running `scripts/index_knowledge_base.py` (operator action 3).
 4. Stripe or Razorpay for launch? T5.3.
 5. Do you have Meta app review approval for IG Content Publishing? Without it T2.1 cannot be demoed on a real account.
 6. ~~Is `docs/campaignforge-hardening-backlog.md` retired by this doc?~~ **Answered by inspection: the file still exists.** Recommendation — delete it. Every live item has been carried into a task block here, and two documents describing the same backlog is exactly how the 427-vs-413 and 23-vs-24 style drift started. Retained only if you want the 260701 audit as a historical record, in which case stamp it `SUPERSEDED — see campaignforge-implementation-plan.md` at the top.

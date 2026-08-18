@@ -4,6 +4,38 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260818 — Schema Catch-Up: init.sql Was Wrong and Production Was Behind It
+
+**Production was missing four tables and two columns that `models/tables.py` declares.** SQLAlchemy names every mapped column in its `SELECT`, so one absent column takes out an entire route rather than degrading: the client portal returned 500 on `white_label.portal_enabled`, and every notifications route failed on a `notification` table that has never existed anywhere.
+
+**Two of the gaps were in `db/init.sql` itself**, so a fresh database would also have been wrong:
+
+- `notification` was declared in `models/tables.py` and never in `init.sql` at all.
+- `white_label` never gained `portal_enabled` or `email_from_name`.
+
+Both fixed. An audit of all 21 models against `init.sql` now reports zero missing tables and zero missing columns in either direction.
+
+**New:** `db/migrations/260818_schema_catchup.sql` brings already-provisioned databases up to date — the two `white_label` columns, `notification`, and the `webhook` / `webhook_delivery` pair that shipped in `init.sql` with T1.3 but never reached Neon. `knowledge_embedding` is included behind the same pgvector guard `init.sql` uses.
+
+**Verified against throwaway Postgres containers, not by inspection:**
+
+| Case | Result |
+|---|---|
+| Fresh DB + new `init.sql` | clean, 20 tables (21 with pgvector) |
+| Migration re-run on a current DB | clean no-op |
+| Production simulated at 17 tables + migration | 20 tables, 219/219 non-pgvector model columns present |
+| Same on `pgvector/pgvector:pg16` | 21 tables, `knowledge_embedding` + HNSW cosine index |
+
+**Applied to Neon.** Model-vs-database diff now reports zero drift. The portal went from 500 to a correct `403 Portal not enabled`; notifications returns 401 rather than 500.
+
+**pgvector is now enabled on Neon** — the guarded `CREATE EXTENSION IF NOT EXISTS vector` succeeded, answering a long-standing open question about whether the plan supports it. `knowledge_embedding` exists with its index; running `scripts/index_knowledge_base.py` is all that stands between the repo and semantic RAG.
+
+**Process rule, now documented in `docs/features/database-schema.md` and `CLAUDE.md`:** a schema change takes **three** edits — `init.sql`, `tables.py`, and a dated script in `db/migrations/`. `init.sql` only ever runs against an empty database, so skipping the third means the change passes CI and silently never reaches production.
+
+Suite: 204 passing.
+
+---
+
 ## 260817 — Tenant Isolation Sweep (T1.7) + Frontend Build Gate (T0.5)
 
 **Security — six routers were not enforcing `org_id`.** There is no row-level security in this database, so each missing filter was the isolation boundary itself.
