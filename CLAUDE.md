@@ -155,9 +155,9 @@ Schema is raw SQL in [db/init.sql](db/init.sql) (+ `db/seed.sql`), **not** Alemb
 
 ## Marketing Agency Layer
 
-Marketing assets are mirrored in **two trees**: `.claude/` (what Claude Code loads) and `.cursor/` (what Cursor loads). They are otherwise identical.
+Marketing assets are mirrored in **two trees**: `.claude/` (what Claude Code loads) and `.cursor/` (what Cursor loads). They are byte-identical apart from `.claude/settings.local.json`, which is gitignored.
 
-**Edit both, or they drift.** `.cursor/` is the older copy and still carries the pre-cleanup content: the 10 translated `commands/training-{ar,de,es,fr,ja,ko,pt-br,ru,vi,zh}/` namespaces, the unfixed `mcp.json.example`/`.env.example`, and a `SKILL.md` with no frontmatter in `skills/marketing-skills-library/`. Prefer `.claude/` as the source of truth and port changes across.
+**Edit both, or they drift.** Nothing syncs them automatically. Treat `.claude/` as the source of truth, port the change across, and confirm with `diff -rq .cursor .claude` — the only expected output is `Only in .claude: settings.local.json`.
 
 | Path (under `.claude/`, mirrored in `.cursor/`) | Contents |
 |---|---|

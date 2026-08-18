@@ -1,3 +1,8 @@
+---
+name: marketing-skills-library
+description: Reference library of 160+ marketing and SEO playbooks covering technical SEO, on-page optimization, schema markup, content formats, 40+ page-type templates, paid ads (Google/Meta/LinkedIn), channel strategy, growth playbooks, analytics and attribution. Use when a marketing or SEO task needs a detailed playbook and no more specific skill covers it, or when browsing for the right marketing template.
+---
+
 # Marketing & SEO Skills Library (kostja94)
 
 160+ markdown skills for AI agents covering SEO, content strategy, page types, paid ads, channels, and growth strategies. Works with Cursor and other AI agents.

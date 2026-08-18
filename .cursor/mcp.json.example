@@ -1,149 +1,102 @@
 {
+  "_README": [
+    "Claude Code reads project MCP servers from `.mcp.json` at the REPOSITORY ROOT, not from .claude/.",
+    "To use this file:  cp .claude/mcp.json.example .mcp.json  then fill in credentials and delete the servers you do not need.",
+    "`.mcp.json` is checked in and shared with the team, so keep secrets out of it: prefer `${VAR}` expansion over literal keys.",
+    "Every server listed below is a package or endpoint that actually exists. Providers with no MCP server are listed under `_no_mcp_server_available` with the API to call directly.",
+    "Keys beginning with `_` are documentation only; Claude Code ignores them."
+  ],
+
   "mcpServers": {
-    "_comment": "=== CORE UTILITIES ===",
+    "_comment_core": "=== CORE UTILITIES ===",
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp", "--api-key", "YOUR_API_KEY"]
+      "args": ["-y", "@upstash/context7-mcp", "--api-key", "${CONTEXT7_API_KEY}"],
+      "_note": "Up-to-date library and framework documentation."
     },
     "sequential-thinking": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     },
 
-    "_comment_ads": "=== ADVERTISING ===",
-    "meta-ads": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-meta-ads"],
-      "env": { "META_ACCESS_TOKEN": "YOUR_TOKEN" }
-    },
-    "google-ads": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-google-ads"],
-      "env": { "GOOGLE_ADS_DEVELOPER_TOKEN": "YOUR_TOKEN" }
-    },
-
-    "_comment_analytics": "=== ANALYTICS ===",
-    "google-analytics": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-ga4"],
-      "env": { "GA_PROPERTY_ID": "YOUR_PROPERTY_ID" }
-    },
-    "search-console": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-gsc"],
-      "env": { "GSC_SITE_URL": "YOUR_SITE_URL" }
-    },
-
-    "_comment_seo": "=== SEO TOOLS ===",
-    "semrush": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-semrush"],
-      "env": { "SEMRUSH_API_KEY": "YOUR_KEY" }
-    },
-    "ahrefs": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-ahrefs"],
-      "env": { "AHREFS_API_KEY": "YOUR_KEY" }
-    },
-    "se-ranking": {
-      "command": "npx",
-      "args": ["-y", "@seranking/seo-data-api-mcp-server"],
-      "env": { "SE_RANKING_API_KEY": "YOUR_KEY" }
-    },
+    "_comment_seo": "=== SEO DATA ===",
     "dataforseo": {
       "command": "npx",
       "args": ["-y", "dataforseo-mcp-server"],
       "env": {
-        "DATAFORSEO_LOGIN": "YOUR_LOGIN",
-        "DATAFORSEO_PASSWORD": "YOUR_PASSWORD"
-      }
+        "DATAFORSEO_LOGIN": "${DATAFORSEO_LOGIN}",
+        "DATAFORSEO_PASSWORD": "${DATAFORSEO_PASSWORD}"
+      },
+      "_note": "SERP, keyword volume, backlinks, on-page. Pay-per-call."
+    },
+    "se-ranking": {
+      "command": "npx",
+      "args": ["-y", "@seranking/seo-data-api-mcp-server"],
+      "env": { "SE_RANKING_API_KEY": "${SE_RANKING_API_KEY}" }
     },
 
-    "_comment_social": "=== SOCIAL MEDIA (GLOBAL) ===",
-    "twitter": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-twitter"],
-      "env": { "TWITTER_BEARER_TOKEN": "YOUR_TOKEN" }
-    },
-    "linkedin": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-linkedin"],
-      "env": { "LINKEDIN_ACCESS_TOKEN": "YOUR_TOKEN" }
-    },
-    "tiktok": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-tiktok"],
-      "env": { "TIKTOK_ACCESS_TOKEN": "YOUR_TOKEN" }
-    },
+    "_comment_social": "=== SOCIAL MEDIA ===",
     "metricool": {
       "command": "npx",
       "args": ["-y", "@metricool/mcp-server"],
-      "env": { "METRICOOL_API_KEY": "YOUR_KEY" },
-      "_note": "Multi-platform social analytics: Instagram, Facebook, Twitter, LinkedIn, TikTok, YouTube"
+      "env": { "METRICOOL_API_KEY": "${METRICOOL_API_KEY}" },
+      "_note": "Multi-platform social analytics and scheduling: Instagram, Facebook, X, LinkedIn, TikTok, YouTube. Covers most of what the per-network servers below would."
     },
-
-    "_comment_japan": "=== JAPAN MARKET ===",
     "line": {
       "command": "npx",
       "args": ["-y", "@line/line-bot-mcp-server"],
       "env": {
-        "CHANNEL_ACCESS_TOKEN": "YOUR_LINE_CHANNEL_TOKEN",
-        "DESTINATION_USER_ID": "YOUR_DEFAULT_USER_ID"
+        "CHANNEL_ACCESS_TOKEN": "${LINE_CHANNEL_ACCESS_TOKEN}",
+        "DESTINATION_USER_ID": "${LINE_DESTINATION_USER_ID}"
       },
-      "_note": "LINE Official Account - 97M+ users in Japan (94% reach)"
+      "_note": "LINE Official Account. Primary messaging channel in the Japan market."
     },
 
-    "_comment_vietnam": "=== VIETNAM MARKET ===",
-    "_zalo_note": "Zalo has no official MCP yet. Use Zalo OA API directly: https://developers.zalo.me/",
-
-    "_comment_crm": "=== CRM & EMAIL ===",
-    "hubspot": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-hubspot"],
-      "env": { "HUBSPOT_ACCESS_TOKEN": "YOUR_TOKEN" }
-    },
-    "mailchimp": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-mailchimp"],
-      "env": { "MAILCHIMP_API_KEY": "YOUR_KEY" }
-    },
+    "_comment_email": "=== EMAIL ===",
     "mailtrap": {
       "command": "npx",
       "args": ["-y", "@mailtrap/mcp-server"],
-      "env": { "MAILTRAP_API_TOKEN": "YOUR_TOKEN" },
-      "_note": "Email testing & deliverability QA"
+      "env": { "MAILTRAP_API_TOKEN": "${MAILTRAP_API_TOKEN}" },
+      "_note": "Email testing and deliverability QA."
     },
 
     "_comment_pm": "=== PROJECT MANAGEMENT ===",
     "notion": {
       "command": "npx",
       "args": ["-y", "@notionhq/notion-mcp-server"],
-      "env": { "NOTION_API_KEY": "YOUR_KEY" },
-      "_note": "Content calendar, documentation, editorial workflow"
+      "env": { "NOTION_API_KEY": "${NOTION_API_KEY}" },
+      "_note": "Content calendar, documentation, editorial workflow."
     },
     "asana": {
       "type": "sse",
       "url": "https://mcp.asana.com/sse",
-      "_note": "Campaign task tracking, team collaboration"
-    },
-
-    "_comment_comm": "=== COMMUNICATION ===",
-    "slack": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-slack"],
-      "env": { "SLACK_BOT_TOKEN": "YOUR_TOKEN" }
-    },
-    "discord": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-discord"],
-      "env": { "DISCORD_BOT_TOKEN": "YOUR_TOKEN" }
+      "_note": "Remote server, OAuth on first connect. No credential needed in this file."
     },
 
     "_comment_payments": "=== PAYMENTS ===",
     "stripe": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-stripe"],
-      "env": { "STRIPE_SECRET_KEY": "YOUR_KEY" }
+      "args": ["-y", "@stripe/mcp", "--tools=all"],
+      "env": { "STRIPE_SECRET_KEY": "${STRIPE_SECRET_KEY}" },
+      "_note": "Official Stripe MCP server. Use a restricted key; --tools=all is broad, narrow it in production."
     }
+  },
+
+  "_no_mcp_server_available": {
+    "_note": "These previously appeared here as `@anthropic/mcp-*` packages that do not exist on npm. Anthropic does not publish per-vendor MCP servers. Call the API directly, or check the vendor's docs for a first-party server before adding one back.",
+    "google-analytics": "GA4 Data API — https://developers.google.com/analytics/devguides/reporting/data/v1",
+    "search-console": "Search Console API — https://developers.google.com/webmaster-tools/v1/api_reference_index",
+    "google-ads": "Google Ads API — https://developers.google.com/google-ads/api/docs/start",
+    "meta-ads": "Meta Marketing API — https://developers.facebook.com/docs/marketing-apis",
+    "tiktok": "TikTok Marketing API — https://business-api.tiktok.com/portal/docs",
+    "twitter": "X API v2 — https://docs.x.com/x-api",
+    "linkedin": "LinkedIn Marketing API — https://learn.microsoft.com/linkedin/marketing/",
+    "semrush": "Semrush API — https://developer.semrush.com/api/",
+    "ahrefs": "Ahrefs API v3 — https://docs.ahrefs.com/docs/api/reference/introduction",
+    "mailchimp": "Mailchimp Marketing API — https://mailchimp.com/developer/marketing/api/",
+    "hubspot": "HubSpot API — https://developers.hubspot.com/docs/api/overview",
+    "slack": "Slack Web API — https://api.slack.com/web",
+    "discord": "Discord API — https://discord.com/developers/docs/intro",
+    "zalo": "Zalo Official Account API — https://developers.zalo.me/"
   }
 }
