@@ -1,5 +1,6 @@
 """Stripe billing service — subscriptions, checkout, webhooks."""
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 import stripe
@@ -63,6 +64,21 @@ PLAN_CONFIG = {
         ],
     },
 }
+
+
+def _tier_for_price_id(price_id: str) -> str | None:
+    """Reverse ``PLAN_CONFIG``'s ``price_id`` -> tier.
+
+    Returns ``None`` for an unrecognised id so callers can refuse to act rather
+    than guess. Blank ids (the free tier, and unconfigured ``STRIPE_PRICE_*``
+    vars) never match.
+    """
+    if not price_id:
+        return None
+    for tier, cfg in PLAN_CONFIG.items():
+        if cfg["price_id"] and cfg["price_id"] == price_id:
+            return tier
+    return None
 
 
 class BillingService:
@@ -201,7 +217,67 @@ class BillingService:
         return {"status": "cancelled"}
 
     async def _handle_subscription_updated(self, db: AsyncSession, data: dict) -> dict:
-        return {"status": "noted"}
+        """Apply a Stripe plan change to the local subscription.
+
+        Was previously ``return {"status": "noted"}`` — registered in the
+        handler map, so every upgrade, downgrade and ``past_due`` transition
+        returned a success-shaped body and changed nothing. A customer who
+        downgraded kept their old limits indefinitely.
+
+        ``status`` is taken from Stripe verbatim, so ``past_due`` / ``unpaid``
+        land in the row. Whether those states restrict access is a separate
+        policy decision — nothing enforces on ``status`` today, and inventing
+        that enforcement inside a webhook handler would hide it.
+        """
+        sub_id = data.get("id")
+        result = await db.execute(
+            select(Subscription).where(Subscription.stripe_subscription_id == sub_id)
+        )
+        sub = result.scalar_one_or_none()
+        if not sub:
+            # Mirrors _handle_invoice_paid: an unmatched subscription is an
+            # operational signal, not a no-op.
+            logger.warning("stripe_subscription_updated_no_local_sub", subscription_id=sub_id)
+            return {"status": "ignored", "reason": "no_local_subscription"}
+
+        items = data.get("items", {}).get("data", [])
+        price_id = items[0].get("price", {}).get("id", "") if items else ""
+        tier = _tier_for_price_id(price_id)
+
+        if tier is None:
+            # Never guess a tier. Defaulting to "starter" would mean a
+            # misconfigured STRIPE_PRICE_* env var quietly downgrades every
+            # paying customer, so leave entitlements untouched and log loudly.
+            logger.error(
+                "stripe_unknown_price_id",
+                subscription_id=sub_id,
+                price_id=price_id,
+                org_id=str(sub.org_id),
+            )
+            return {"status": "error", "reason": "unknown_price_id", "price_id": price_id}
+
+        plan = PLAN_CONFIG[tier]
+        sub.plan_tier = tier
+        sub.clients_limit = plan["clients_limit"]
+        sub.posts_limit = plan["posts_limit"]
+        sub.status = data.get("status") or sub.status
+
+        for column, key in (
+            ("current_period_start", "current_period_start"),
+            ("current_period_end", "current_period_end"),
+        ):
+            ts = data.get(key)
+            if ts:
+                setattr(sub, column, datetime.fromtimestamp(ts, tz=UTC))
+
+        await db.commit()
+        logger.info(
+            "subscription_updated",
+            org_id=str(sub.org_id),
+            plan=tier,
+            subscription_status=sub.status,
+        )
+        return {"status": "updated", "plan": tier, "subscription_status": sub.status}
 
     async def get_subscription(self, db: AsyncSession, org_id: UUID) -> dict:
         result = await db.execute(select(Subscription).where(Subscription.org_id == org_id))

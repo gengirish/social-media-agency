@@ -1,10 +1,20 @@
 """Image generation service — create social media visuals via fal.ai."""
 
+import httpx
 import structlog
 
 from agency.config import get_settings
 
 logger = structlog.get_logger()
+
+#: flux/schnell is fast, but the sync endpoint blocks for the whole generation.
+#: Revisit before swapping in a slower model.
+REQUEST_TIMEOUT_SECONDS = 60
+
+
+def _build_client() -> httpx.AsyncClient:
+    """Isolated so tests can inject an ``httpx.MockTransport``."""
+    return httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS)
 
 PLATFORM_ASPECT_RATIOS = {
     "instagram": "square",
@@ -43,11 +53,13 @@ async def generate_social_image(
     aspect_ratio = PLATFORM_ASPECT_RATIOS.get(platform, "landscape_16_9")
 
     try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with _build_client() as client:
             resp = await client.post(
-                "https://queue.fal.run/fal-ai/flux/schnell",
+                # The *sync* endpoint (``fal.run``), not ``queue.fal.run``. The
+                # queue endpoint returns ``{"request_id", "status_url"}`` with
+                # HTTP 200 and never ``{"images": [...]}``, so the parser below
+                # could never match and every call fell through to an error.
+                "https://fal.run/fal-ai/flux/schnell",
                 headers={
                     "Authorization": f"Key {settings.fal_api_key}",
                     "Content-Type": "application/json",
@@ -67,6 +79,19 @@ async def generate_social_image(
                         "image_url": images[0].get("url", ""),
                         "platform": platform,
                     }
+                # A 200 carrying no images means the response shape changed.
+                # Reporting that identically to an HTTP failure is what hid the
+                # wrong-endpoint bug for weeks: every call returned
+                # "fal.ai returned 200", which reads as a transport problem.
+                logger.error("fal_unexpected_response_shape", keys=sorted(data.keys()))
+                return {
+                    "status": "error",
+                    "message": (
+                        "fal.ai returned 200 with no images — the response shape "
+                        "may have changed."
+                    ),
+                    "image_url": None,
+                }
             return {
                 "status": "error",
                 "message": f"fal.ai returned {resp.status_code}",

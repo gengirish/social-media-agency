@@ -1343,12 +1343,20 @@ export interface CrossLearningInsight {
 
 export interface IndustryBenchmarks {
   industry: string;
-  avg_impressions: number;
-  avg_engagement: number;
-  avg_clicks: number;
-  avg_likes: number;
+  status?: "available" | "unavailable";
+  /** Present when `status` is "unavailable". Render it verbatim — it explains
+   *  whether the gap is missing data or the cross-org privacy floor, and the
+   *  two need different responses from the user. */
+  reason?: string;
+  avg_impressions: number | null;
+  avg_engagement: number | null;
+  avg_clicks: number | null;
+  avg_likes: number | null;
   /** Number of snapshots behind the averages. Zero means there is no benchmark. */
   sample_size: number;
+  /** Distinct organisations contributing. Benchmarks are suppressed below the
+   *  server's minimum, so this is 0 whenever `status` is "unavailable". */
+  contributing_orgs?: number;
 }
 
 export interface CrossLearningResponse {
