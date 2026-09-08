@@ -1,0 +1,363 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "CampaignForge AI — System Architecture",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/gengirish/social-media-agency",
+      "revision": "38f0e69c6f3e853da47fc7c6f5885b534acf765d"
+    },
+    "viewBox": [
+      1330,
+      710
+    ],
+    "views": [
+      {
+        "id": "campaign-path",
+        "label": "Campaign path",
+        "focus": [
+          "marketer",
+          "frontend",
+          "api",
+          "pipeline",
+          "llm"
+        ],
+        "note": "One brief travels from the dashboard through the API into the LangGraph pipeline, which fans out across seven LLM providers."
+      },
+      {
+        "id": "state-and-money",
+        "label": "State and billing",
+        "focus": [
+          "api",
+          "neon",
+          "stripe",
+          "clerk"
+        ],
+        "note": "Durable state, tenant isolation, and entitlements. Every org-scoped query filters on org_id; there is no RLS behind it."
+      },
+      {
+        "id": "publish-path",
+        "label": "Publishing",
+        "focus": [
+          "api",
+          "scheduler",
+          "social",
+          "neon"
+        ],
+        "note": "Approved content is scheduled, then published to the three platforms with real publishers. Instagram and TikTok draft only."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "marketer",
+      "type": "external",
+      "label": "Agency marketer",
+      "sublabel": "3–15 client brands",
+      "pos": [
+        50,
+        150
+      ],
+      "size": [
+        150,
+        70
+      ]
+    },
+    {
+      "id": "frontend",
+      "type": "frontend",
+      "label": "Next.js 15",
+      "sublabel": "Vercel · 16 routes",
+      "brand": "next-js",
+      "pos": [
+        315,
+        150
+      ],
+      "size": [
+        150,
+        70
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/lib/api.ts",
+          "label": "API client"
+        },
+        {
+          "path": "frontend/middleware.ts",
+          "label": "Route guard"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI",
+      "sublabel": "Fly.io sin · 83 endpoints",
+      "brand": "fastapi",
+      "pos": [
+        580,
+        150
+      ],
+      "size": [
+        150,
+        70
+      ],
+      "sources": [
+        {
+          "path": "backend/src/agency/main.py",
+          "label": "App + startup"
+        },
+        {
+          "path": "backend/fly.toml",
+          "label": "Deploy config"
+        }
+      ]
+    },
+    {
+      "id": "pipeline",
+      "type": "backend",
+      "label": "LangGraph pipeline",
+      "sublabel": "9 nodes · human gate",
+      "pos": [
+        845,
+        150
+      ],
+      "size": [
+        150,
+        70
+      ],
+      "sources": [
+        {
+          "path": "backend/src/agency/agents/graph.py",
+          "label": "StateGraph"
+        },
+        {
+          "path": "backend/src/agency/agents/graph_runtime.py",
+          "label": "Compiled singleton"
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "LLM providers",
+      "sublabel": "7 · per-tier fallback",
+      "pos": [
+        1110,
+        150
+      ],
+      "size": [
+        150,
+        70
+      ],
+      "sources": [
+        {
+          "path": "backend/src/agency/services/llm_provider.py",
+          "label": "Tier routing"
+        }
+      ]
+    },
+    {
+      "id": "clerk",
+      "type": "security",
+      "label": "Clerk",
+      "sublabel": "RS256 · JWKS cache",
+      "pos": [
+        315,
+        360
+      ],
+      "size": [
+        150,
+        70
+      ],
+      "sources": [
+        {
+          "path": "backend/src/agency/dependencies.py",
+          "label": "Verify + provision"
+        }
+      ]
+    },
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "Scheduler",
+      "sublabel": "sleeps until due",
+      "pos": [
+        845,
+        570
+      ],
+      "size": [
+        150,
+        70
+      ],
+      "sources": [
+        {
+          "path": "backend/src/agency/services/scheduler.py",
+          "label": "Wake loop"
+        }
+      ]
+    },
+    {
+      "id": "neon",
+      "type": "database",
+      "label": "Neon Postgres",
+      "sublabel": "21 tables · checkpoints",
+      "brand": "postgresql",
+      "pos": [
+        845,
+        360
+      ],
+      "size": [
+        150,
+        70
+      ],
+      "sources": [
+        {
+          "path": "db/init.sql",
+          "label": "Schema"
+        },
+        {
+          "path": "backend/src/agency/models/tables.py",
+          "label": "ORM models"
+        }
+      ]
+    },
+    {
+      "id": "stripe",
+      "type": "external",
+      "label": "Stripe",
+      "sublabel": "4 plan tiers",
+      "brand": "stripe",
+      "pos": [
+        580,
+        360
+      ],
+      "size": [
+        150,
+        70
+      ],
+      "sources": [
+        {
+          "path": "backend/src/agency/services/billing.py",
+          "label": "Checkout + webhooks"
+        }
+      ]
+    },
+    {
+      "id": "social",
+      "type": "external",
+      "label": "X · LinkedIn · Facebook",
+      "sublabel": "publish + metrics",
+      "pos": [
+        1110,
+        570
+      ],
+      "size": [
+        150,
+        70
+      ],
+      "sources": [
+        {
+          "path": "backend/src/agency/services/publishing.py",
+          "label": "Publishers"
+        },
+        {
+          "path": "backend/src/agency/services/platform_metrics.py",
+          "label": "Metric fetch"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "brief",
+      "from": "marketer",
+      "to": "frontend",
+      "label": "campaign brief",
+      "variant": "emphasis"
+    },
+    {
+      "id": "https-sse",
+      "from": "frontend",
+      "to": "api",
+      "label": "HTTPS + SSE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "run",
+      "from": "api",
+      "to": "pipeline",
+      "label": "start run"
+    },
+    {
+      "id": "tiers",
+      "from": "pipeline",
+      "to": "llm",
+      "label": "brain / worker / ad_copy",
+      "variant": "emphasis",
+      "labelDy": -29
+    },
+    {
+      "id": "verify",
+      "from": "api",
+      "to": "clerk",
+      "label": "verify RS256"
+    },
+    {
+      "id": "checkout",
+      "from": "api",
+      "to": "stripe",
+      "label": "checkout",
+      "variant": "dashed",
+      "labelDy": 24
+    },
+    {
+      "id": "sql",
+      "from": "api",
+      "to": "neon",
+      "label": "org-scoped SQL"
+    },
+    {
+      "id": "checkpoint",
+      "from": "pipeline",
+      "to": "neon",
+      "label": "checkpoint at gate",
+      "labelDy": 24
+    },
+    {
+      "id": "due",
+      "from": "neon",
+      "to": "scheduler",
+      "label": "due content",
+      "labelDy": 24
+    },
+    {
+      "id": "publish",
+      "from": "scheduler",
+      "to": "social",
+      "label": "publish",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The pipeline pauses for a human",
+      "items": [
+        "Compiled with interrupt_before on human_review",
+        "Graph state is checkpointed to Postgres, so a paused campaign survives a restart",
+        "Resumes on PATCH /campaigns/{id}/review"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Honest by construction",
+      "items": [
+        "Unmeasurable values return null plus a reason, never a plausible number",
+        "Instagram and TikTok are drafted and scheduled, never silently 'published'",
+        "Industry benchmarks are suppressed below 5 contributing orgs"
+      ]
+    }
+  ]
+}

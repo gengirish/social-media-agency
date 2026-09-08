@@ -1,0 +1,238 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "CampaignForge AI — Agent Pipeline",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1400,
+      700
+    ],
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "Approved run",
+        "focus": [
+          "orchestrator",
+          "strategy",
+          "content",
+          "review",
+          "qa",
+          "compile"
+        ],
+        "note": "The path an approved campaign takes: plan, write, pause for a human, pass brand QA, compile."
+      },
+      {
+        "id": "revision-loops",
+        "label": "Revision loops",
+        "focus": [
+          "review",
+          "content",
+          "adcopy",
+          "qa"
+        ],
+        "note": "Two loops. A reviewer can send work back, and critical QA failures re-run the writer, capped at two retries."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "agents",
+      "label": "Agent pipeline"
+    },
+    {
+      "id": "parallel",
+      "label": "Parallel pass"
+    },
+    {
+      "id": "human",
+      "label": "Human gate",
+      "variant": "exception"
+    }
+  ],
+  "mainPath": [
+    "orchestrator",
+    "strategy",
+    "content",
+    "review",
+    "qa",
+    "compile"
+  ],
+  "nodes": [
+    {
+      "id": "orchestrator",
+      "lane": "agents",
+      "col": 0,
+      "type": "backend",
+      "label": "Orchestrator"
+    },
+    {
+      "id": "strategy",
+      "lane": "agents",
+      "col": 1,
+      "type": "backend",
+      "label": "Strategy"
+    },
+    {
+      "id": "seo",
+      "lane": "parallel",
+      "col": 1,
+      "type": "backend",
+      "label": "SEO"
+    },
+    {
+      "id": "content",
+      "lane": "agents",
+      "col": 2,
+      "type": "backend",
+      "label": "Content writer"
+    },
+    {
+      "id": "adcopy",
+      "lane": "parallel",
+      "col": 2,
+      "type": "backend",
+      "label": "Ad copy"
+    },
+    {
+      "id": "review",
+      "lane": "human",
+      "col": 3,
+      "type": "security",
+      "label": "Human review"
+    },
+    {
+      "id": "qa",
+      "lane": "agents",
+      "col": 4,
+      "type": "backend",
+      "label": "QA / Brand"
+    },
+    {
+      "id": "compile",
+      "lane": "agents",
+      "col": 5,
+      "type": "backend",
+      "label": "Compile"
+    },
+    {
+      "id": "analytics",
+      "lane": "parallel",
+      "col": 5,
+      "type": "external",
+      "label": "Analytics"
+    }
+  ],
+  "edges": [
+    {
+      "id": "to-strategy",
+      "from": "orchestrator",
+      "to": "strategy",
+      "label": "plan",
+      "role": "main"
+    },
+    {
+      "id": "to-seo",
+      "from": "orchestrator",
+      "to": "seo",
+      "label": "in parallel",
+      "role": "branch"
+    },
+    {
+      "id": "strategy-content",
+      "from": "strategy",
+      "to": "content",
+      "role": "main"
+    },
+    {
+      "id": "seo-content",
+      "from": "seo",
+      "to": "content",
+      "label": "keywords",
+      "role": "branch"
+    },
+    {
+      "id": "content-review",
+      "from": "content",
+      "to": "review",
+      "label": "drafts",
+      "role": "main"
+    },
+    {
+      "id": "adcopy-review",
+      "from": "adcopy",
+      "to": "review",
+      "role": "branch"
+    },
+    {
+      "id": "approve",
+      "from": "review",
+      "to": "qa",
+      "label": "approve",
+      "role": "main"
+    },
+    {
+      "id": "revise-content",
+      "from": "review",
+      "to": "content",
+      "label": "revise_content",
+      "role": "return"
+    },
+    {
+      "id": "revise-ads",
+      "from": "review",
+      "to": "adcopy",
+      "label": "revise_ads",
+      "role": "return"
+    },
+    {
+      "id": "qa-pass",
+      "from": "qa",
+      "to": "compile",
+      "label": "no critical issues",
+      "role": "main"
+    },
+    {
+      "id": "qa-retry",
+      "from": "qa",
+      "to": "content",
+      "label": "critical fail · max 2",
+      "role": "error"
+    },
+    {
+      "id": "to-analytics",
+      "from": "compile",
+      "to": "analytics",
+      "role": "branch"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The pause is real",
+      "items": [
+        "Compiled with interrupt_before on human_review",
+        "State is checkpointed to Postgres, so a paused run survives a restart",
+        "Resumes only on PATCH /campaigns/{id}/review"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Two loops, both bounded",
+      "items": [
+        "Reviewer routes to revise_content or revise_ads",
+        "Critical QA failures re-run the writer, capped at retry_count >= 2",
+        "An unreviewed resume records auto_approved_no_human, never 'approved'"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Model tiers and fan-in",
+      "items": [
+        "Orchestrator and QA/Brand run on the brain tier at 0.3",
+        "Strategy, SEO and Content run on the worker tier at 0.7; Ad copy at 0.8",
+        "Content and Ad copy both consume Strategy and SEO output"
+      ]
+    }
+  ]
+}
