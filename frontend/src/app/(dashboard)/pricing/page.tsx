@@ -5,6 +5,9 @@ import { Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { api, type Plan, type SubscriptionInfo } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Eyebrow } from "@/components/ui/panel";
+import { LoadingState } from "@/components/ui/empty-state";
 
 const DISPLAY_PLANS: {
   tier: string;
@@ -118,22 +121,19 @@ export default function PricingPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-      </div>
-    );
+    return <LoadingState label="Loading plans" />;
   }
 
   return (
     <div className="mx-auto max-w-6xl space-y-10">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Simple pricing</h1>
-        <p className="mt-2 text-slate-500">Upgrade when you need more clients, posts, and platforms</p>
+      <div className="flex flex-col items-center space-y-2 text-center">
+        <Eyebrow>Billing</Eyebrow>
+        <h1 className="font-display text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Simple pricing</h1>
+        <p className="max-w-md text-sm text-muted">Upgrade when you need more clients, posts, and platforms</p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-        {DISPLAY_PLANS.map((plan) => {
+      <div className="grid gap-5 pt-2 md:grid-cols-2 xl:grid-cols-4">
+        {DISPLAY_PLANS.map((plan, i) => {
           const isCurrent = currentTier === plan.tier;
           const isGrowth = plan.highlight;
           const features = mergeFeatures(plan.tier, plan.features);
@@ -142,53 +142,52 @@ export default function PricingPage() {
           return (
             <div
               key={plan.tier}
+              style={{ animationDelay: `${i * 0.06}s` }}
               className={cn(
-                "relative flex flex-col rounded-xl border bg-white p-6 shadow-sm transition-shadow",
-                isGrowth ? "border-2 border-indigo-500 shadow-md ring-1 ring-indigo-500/20" : "border-slate-200"
+                "relative flex flex-col rounded-xl border bg-panel/70 p-6 shadow-soft backdrop-blur-xl transition-[transform,border-color] duration-200 hover:-translate-y-0.5 motion-safe:animate-screen-in",
+                isGrowth
+                  ? "border-accent/70 shadow-[0_0_0_1px_rgb(var(--c-accent)/0.35),0_18px_48px_rgb(var(--c-accent)/0.14)]"
+                  : "border-line hover:border-slate-300"
               )}
             >
               {isGrowth && (
-                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-indigo-600 px-3 py-0.5 text-xs font-semibold text-white">
+                <span className="absolute -top-3 left-6 rounded-full bg-accent px-3 py-0.5 font-mono text-[10.5px] font-medium tracking-wide text-on-accent shadow-glow">
                   Most Popular
                 </span>
               )}
               {isCurrent && (
-                <span className="absolute right-4 top-4 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+                <span className="absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-700">
+                  <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />
                   Current Plan
                 </span>
               )}
 
-              <h2 className="text-lg font-bold text-slate-900">{plan.name}</h2>
-              <div className="mt-2 flex items-baseline gap-1">
-                <span className="text-3xl font-bold text-slate-900">{plan.price}</span>
-                <span className="text-sm text-slate-500">{plan.subtitle}</span>
+              <h2 className="font-display text-lg font-semibold text-ink">{plan.name}</h2>
+              <div className="mt-3 flex items-baseline gap-1.5">
+                <span className="font-display text-4xl font-semibold tracking-tight text-ink">{plan.price}</span>
+                <span className="font-mono text-xs text-muted">{plan.subtitle}</span>
               </div>
 
-              <ul className="mt-6 flex-1 space-y-3">
+              <ul className="mt-6 flex-1 space-y-2.5 border-t border-line pt-5">
                 {features.map((f, i) => (
-                  <li key={i} className="flex gap-2 text-sm text-slate-600">
-                    <Check className="h-4 w-4 shrink-0 text-indigo-600" />
+                  <li key={i} className="flex gap-2.5 text-sm text-ink">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-accent-text" />
                     {f}
                   </li>
                 ))}
               </ul>
 
-              <button
-                type="button"
+              <Button
+                variant={isGrowth ? "primary" : "secondary"}
                 disabled={plan.tier === "free" || isCurrent || busy}
                 onClick={() => handleUpgrade(plan.tier)}
-                className={cn(
-                  "mt-8 w-full rounded-lg py-2.5 text-sm font-semibold transition-colors",
-                  isGrowth
-                    ? "bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-slate-200 disabled:text-slate-500"
-                    : "border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 disabled:opacity-50"
-                )}
+                className={cn("mt-8 w-full py-2.5", !isGrowth && "text-ink")}
               >
                 {busy ? (
-                  <span className="inline-flex items-center justify-center gap-2">
+                  <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Redirecting…
-                  </span>
+                  </>
                 ) : isCurrent ? (
                   "Current plan"
                 ) : plan.tier === "free" ? (
@@ -196,7 +195,7 @@ export default function PricingPage() {
                 ) : (
                   "Upgrade"
                 )}
-              </button>
+              </Button>
             </div>
           );
         })}

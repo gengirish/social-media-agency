@@ -5,9 +5,13 @@ import { useRouter } from "next/navigation";
 import { api, type BrandProfileRequest, type Client, type CreateClientRequest } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
-import { Sparkles, ArrowLeft, ArrowRight, Rocket, Wand2 } from "lucide-react";
+import { Sparkles, ArrowLeft, ArrowRight, Rocket, Wand2, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { canPublish } from "@/lib/platforms";
+import { Button } from "@/components/ui/button";
+import { Eyebrow } from "@/components/ui/panel";
+import { SectionCard } from "@/components/ui/section-card";
+import { Field, Input, Select, Textarea } from "@/components/ui/field";
 
 const MAGIC_BRIEF_STORAGE_KEY = "campaignforge_magic_brief_client";
 
@@ -16,6 +20,8 @@ type MagicBriefStored = {
   brandProfile: BrandProfileRequest;
   targetAudienceHint?: string;
 };
+
+const STEP_LABELS = ["Brief", "Channels", "Launch"] as const;
 
 const CHANNEL_OPTIONS = [
   { id: "linkedin", label: "LinkedIn", emoji: "💼" },
@@ -118,252 +124,266 @@ export default function NewCampaignPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-8">
-      <div className="flex items-center gap-4">
-        <button onClick={() => router.back()} className="rounded-lg p-2 hover:bg-slate-100">
-          <ArrowLeft className="h-5 w-5 text-slate-600" />
+    <div className="mx-auto max-w-2xl space-y-6">
+      <div className="flex items-start gap-3">
+        <button
+          type="button"
+          onClick={() => router.back()}
+          aria-label="Go back"
+          className="press-scale mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-muted transition-colors hover:border-slate-300 hover:text-ink"
+        >
+          <ArrowLeft className="h-4 w-4" />
         </button>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">New Campaign</h1>
-          <p className="text-slate-500">Step {step} of 3 — {step === 1 ? "Brief" : step === 2 ? "Channels" : "Launch"}</p>
+        <div className="space-y-1.5">
+          <Eyebrow>Create · Campaign</Eyebrow>
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">New Campaign</h1>
+          <p className="font-mono text-xs text-muted">
+            Step {step} of 3 — {step === 1 ? "Brief" : step === 2 ? "Channels" : "Launch"}
+          </p>
         </div>
       </div>
 
       {/* Progress steps */}
-      <div className="flex gap-2">
-        {[1, 2, 3].map((s) => (
-          <div key={s} className={cn("h-1.5 flex-1 rounded-full", s <= step ? "bg-indigo-600" : "bg-slate-200")} />
-        ))}
-      </div>
+      <ol className="grid grid-cols-3 gap-2" aria-label="Progress">
+        {STEP_LABELS.map((label, idx) => {
+          const s = idx + 1;
+          const done = s < step;
+          const current = s === step;
+          return (
+            <li key={label} aria-current={current ? "step" : undefined} className="space-y-2">
+              <div
+                className={cn(
+                  "h-1 rounded-full transition-colors duration-500",
+                  s <= step ? "bg-accent shadow-[0_0_10px_rgb(var(--c-accent)/0.45)]" : "bg-slate-200"
+                )}
+              />
+              <div className={cn("flex items-center gap-1.5 font-mono text-[11px]", s <= step ? "text-ink" : "text-muted")}>
+                <span
+                  aria-hidden
+                  className={cn(
+                    "flex h-4 w-4 items-center justify-center rounded-full border text-[9px]",
+                    done
+                      ? "border-accent bg-accent text-on-accent"
+                      : current
+                        ? "border-accent text-accent-text"
+                        : "border-line"
+                  )}
+                >
+                  {done ? <Check className="h-2.5 w-2.5" /> : s}
+                </span>
+                {label}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
 
       {/* Step 1: Brief */}
       {step === 1 && (
-        <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <SectionCard key="step-1" eyebrow="The brief" bodyClassName="space-y-5">
           {magicBriefDraft && (
-            <div className="rounded-xl border border-indigo-200 bg-indigo-50/80 p-4">
+            <div className="rounded-lg border border-accent/40 bg-accent/10 p-4">
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
-                  <Wand2 className="h-5 w-5" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent bg-accent/15 text-accent-text">
+                  <Wand2 className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-indigo-900">Magic Brief profile ready</p>
-                  <p className="mt-1 text-sm text-indigo-800/90">
+                  <p className="text-sm font-semibold text-ink">Magic Brief profile ready</p>
+                  <p className="mt-1 text-sm text-ink">
                     {magicBriefDraft.clientDraft.brand_name}
                     {magicBriefDraft.clientDraft.industry
                       ? ` · ${magicBriefDraft.clientDraft.industry}`
                       : ""}
                   </p>
-                  <p className="mt-2 text-xs text-indigo-700">
+                  <p className="mt-2 text-xs text-muted">
                     Create this client (and save brand voice) to use it in this campaign.
                   </p>
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
                     disabled={creatingFromBrief}
                     onClick={handleCreateClientFromMagicBrief}
-                    className="mt-3 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                    className="mt-3"
                   >
                     {creatingFromBrief ? "Creating…" : "Create client from profile"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
           )}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Client *</label>
-            <select
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-            >
+          <Field label="Client *" htmlFor="campaign-client">
+            <Select id="campaign-client" value={clientId} onChange={(e) => setClientId(e.target.value)}>
               <option value="">Select a client...</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>{c.brand_name} — {c.industry}</option>
               ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Campaign Name *</label>
-            <input
+            </Select>
+          </Field>
+          <Field label="Campaign Name *" htmlFor="campaign-name">
+            <Input
+              id="campaign-name"
               value={campaignName}
               onChange={(e) => setCampaignName(e.target.value)}
               placeholder="Q2 Product Launch Campaign"
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 placeholder-slate-400 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
             />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Campaign Objective *</label>
-            <textarea
+          </Field>
+          <Field label="Campaign Objective *" htmlFor="campaign-objective">
+            <Textarea
+              id="campaign-objective"
               value={objective}
               onChange={(e) => setObjective(e.target.value)}
               rows={3}
               placeholder="Increase brand awareness and drive sign-ups for our new product launch..."
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 placeholder-slate-400 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none"
             />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Target Audience</label>
-            <input
+          </Field>
+          <Field label="Target Audience" htmlFor="campaign-audience">
+            <Input
+              id="campaign-audience"
               value={targetAudience}
               onChange={(e) => setTargetAudience(e.target.value)}
               placeholder="Tech-savvy professionals, 25-45, interested in productivity tools"
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 placeholder-slate-400 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
             />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Key Messages (one per line)</label>
-            <textarea
+          </Field>
+          <Field label="Key Messages (one per line)" htmlFor="campaign-messages">
+            <Textarea
+              id="campaign-messages"
               value={keyMessages}
               onChange={(e) => setKeyMessages(e.target.value)}
               rows={3}
               placeholder="10x faster than traditional agencies&#10;AI-powered content that converts&#10;Full campaign in minutes"
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 placeholder-slate-400 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none"
             />
-          </div>
-        </div>
+          </Field>
+        </SectionCard>
       )}
 
       {/* Step 2: Channels & Budget */}
       {step === 2 && (
-        <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <SectionCard key="step-2" eyebrow="Channels & budget" bodyClassName="space-y-5">
           <div>
-            <label className="mb-3 block text-sm font-medium text-slate-700">Channels</label>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {CHANNEL_OPTIONS.map((ch) => (
-                <button
-                  key={ch.id}
-                  onClick={() => toggleChannel(ch.id)}
-                  className={cn(
-                    "flex items-center gap-2 rounded-xl border-2 p-3 text-sm font-medium transition-all",
-                    channels.includes(ch.id)
-                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
-                      : "border-slate-200 text-slate-600 hover:border-slate-300"
-                  )}
-                >
-                  <span className="text-lg">{ch.emoji}</span>
-                  {ch.label}
-                  {!canPublish(ch.id) && (
-                    <span className="ml-auto rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
-                      draft only
+            <p className="mb-2 text-xs font-medium text-muted">Channels</p>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {CHANNEL_OPTIONS.map((ch) => {
+                const on = channels.includes(ch.id);
+                return (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleChannel(ch.id)}
+                    className={cn(
+                      "press-scale flex items-center gap-2.5 rounded-lg border p-3 text-left text-sm font-medium transition-colors duration-200",
+                      on
+                        ? "border-accent bg-accent/10 text-ink shadow-[0_0_0_1px_rgb(var(--c-accent)/0.35)]"
+                        : "border-line bg-canvas/40 text-muted hover:border-slate-300 hover:text-ink"
+                    )}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                        on ? "border-accent bg-accent text-on-accent" : "border-slate-300"
+                      )}
+                    >
+                      {on && <Check className="h-3 w-3" />}
                     </span>
-                  )}
-                </button>
-              ))}
+                    <span aria-hidden className="text-base leading-none">{ch.emoji}</span>
+                    {ch.label}
+                    {!canPublish(ch.id) && (
+                      <span className="ml-auto rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-mono text-[10px] font-medium text-amber-800">
+                        draft only
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
-            <p className="mt-2 text-xs text-slate-500">
+            <p className="mt-2.5 text-xs text-muted">
               CampaignForge writes and schedules content for every channel above. Channels marked
               &ldquo;draft only&rdquo; cannot be published to automatically yet — you post those
               yourself.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Start Date</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">End Date</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-              />
-            </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Start Date" htmlFor="campaign-start">
+              <Input id="campaign-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </Field>
+            <Field label="End Date" htmlFor="campaign-end">
+              <Input id="campaign-end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </Field>
           </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Budget (USD)</label>
-            <input
+          <Field label="Budget (USD)" htmlFor="campaign-budget">
+            <Input
+              id="campaign-budget"
               type="number"
               value={budgetUsd}
               onChange={(e) => setBudgetUsd(Number(e.target.value))}
               placeholder="5000"
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              className="font-mono"
             />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Additional Context</label>
-            <textarea
+          </Field>
+          <Field label="Additional Context" htmlFor="campaign-context">
+            <Textarea
+              id="campaign-context"
               value={additionalContext}
               onChange={(e) => setAdditionalContext(e.target.value)}
               rows={3}
               placeholder="Any additional instructions, previous campaign learnings, competitor info..."
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 placeholder-slate-400 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none"
             />
-          </div>
-        </div>
+          </Field>
+        </SectionCard>
       )}
 
       {/* Step 3: Review & Launch */}
       {step === 3 && (
-        <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-slate-900">Review Your Campaign</h3>
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between border-b border-slate-100 pb-2">
-              <span className="text-slate-500">Client</span>
-              <span className="font-medium text-slate-900">{clients.find(c => c.id === clientId)?.brand_name}</span>
+        <SectionCard key="step-3" eyebrow="Review" title="Review Your Campaign" bodyClassName="space-y-5">
+          <dl className="divide-y divide-line text-sm">
+            {[
+              ["Client", clients.find((c) => c.id === clientId)?.brand_name],
+              ["Campaign", campaignName],
+              ["Channels", channels.join(", ")],
+              ["Budget", `$${budgetUsd.toLocaleString()}`],
+            ].map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-4 py-2.5">
+                <dt className="text-muted">{label}</dt>
+                <dd className="text-right font-medium text-ink">{value}</dd>
+              </div>
+            ))}
+            <div className="py-2.5">
+              <dt className="text-muted">Objective</dt>
+              <dd className="mt-1 text-ink">{objective}</dd>
             </div>
-            <div className="flex justify-between border-b border-slate-100 pb-2">
-              <span className="text-slate-500">Campaign</span>
-              <span className="font-medium text-slate-900">{campaignName}</span>
-            </div>
-            <div className="flex justify-between border-b border-slate-100 pb-2">
-              <span className="text-slate-500">Channels</span>
-              <span className="font-medium text-slate-900">{channels.join(", ")}</span>
-            </div>
-            <div className="flex justify-between border-b border-slate-100 pb-2">
-              <span className="text-slate-500">Budget</span>
-              <span className="font-medium text-slate-900">${budgetUsd.toLocaleString()}</span>
-            </div>
-            <div className="pt-1">
-              <span className="text-slate-500">Objective</span>
-              <p className="mt-1 text-slate-900">{objective}</p>
-            </div>
-          </div>
+          </dl>
 
-          <div className="rounded-lg bg-indigo-50 p-4 text-sm text-indigo-700">
-            <div className="flex items-center gap-2 font-semibold">
-              <Sparkles className="h-4 w-4" />
+          <div className="rounded-lg border border-accent/40 bg-accent/10 p-4 text-sm">
+            <div className="flex items-center gap-2 font-semibold text-ink">
+              <Sparkles className="h-4 w-4 text-accent-text" />
               7 AI agents will execute this campaign
             </div>
-            <p className="mt-1 text-indigo-600">
+            <p className="mt-1.5 font-mono text-[11px] leading-relaxed text-muted">
               Orchestrator → Strategy ∥ SEO → Content ∥ Ad Copy → QA/Brand Review
             </p>
           </div>
-        </div>
+        </SectionCard>
       )}
 
       {/* Navigation buttons */}
       <div className="flex justify-between">
         {step > 1 ? (
-          <button
-            onClick={() => setStep(step - 1)}
-            className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
+          <Button variant="secondary" onClick={() => setStep(step - 1)}>
             <ArrowLeft className="h-4 w-4" /> Back
-          </button>
-        ) : <div />}
+          </Button>
+        ) : (
+          <div />
+        )}
 
         {step < 3 ? (
-          <button
-            onClick={() => setStep(step + 1)}
-            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500"
-          >
+          <Button onClick={() => setStep(step + 1)}>
             Next <ArrowRight className="h-4 w-4" />
-          </button>
+          </Button>
         ) : (
-          <button
-            onClick={handleLaunch}
-            disabled={loading}
-            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-          >
+          <Button onClick={handleLaunch} disabled={loading} className="px-6">
             <Rocket className="h-4 w-4" />
             {loading ? "Launching..." : "Launch Campaign"}
-          </button>
+          </Button>
         )}
       </div>
     </div>

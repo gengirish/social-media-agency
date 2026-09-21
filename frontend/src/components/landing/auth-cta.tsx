@@ -54,7 +54,7 @@ export function AuthCta({ variant }: { variant: "header" | "hero" | "final" }) {
   return (
     <Link
       href={isLoaded && isSignedIn ? signedInHref : "/sign-up"}
-      className="cf-btn cf-btn-solid cf-btn-lg"
+      className="cf-btn cf-btn-accent cf-btn-lg"
     >
       {isLoaded && isSignedIn ? signedInLabel : "Start free"}
     </Link>
