@@ -130,6 +130,10 @@ class Subscription(Base):
     clients_limit = Column(Integer, default=1)
     posts_limit = Column(Integer, default=30)
     posts_used = Column(Integer, default=0)
+    # Amplify packs this billing period — 1 pack = 1 generation. A null limit
+    # (rows provisioned before 260921) falls back to the tier's PLAN_CONFIG value.
+    generations_used = Column(Integer, nullable=False, default=0, server_default="0")
+    generations_limit = Column(Integer)
     current_period_start = Column(DateTime(timezone=True))
     current_period_end = Column(DateTime(timezone=True))
     status = Column(String(50), default="active")
@@ -292,6 +296,36 @@ class Workflow(Base):
     completed_at = Column(DateTime(timezone=True))
 
     campaign = relationship("Campaign", back_populates="workflow")
+
+
+class RepurposePack(Base):
+    """One Amplify generation: a source turned into up to 8 angle-distinct atoms.
+
+    Atoms are not stored here — preview returns them, commit writes the kept ones
+    to ``content_piece`` as drafts with ``metadata.amplify_pack_id`` pointing back.
+    """
+
+    __tablename__ = "repurpose_pack"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("client.id"), nullable=False)
+    source_content_id = Column(
+        UUID(as_uuid=True), ForeignKey("content_piece.id", ondelete="SET NULL"), nullable=True
+    )
+    source_text = Column(Text, nullable=True)
+    platforms = Column(JSONB, nullable=False, default=[])
+    atom_count = Column(Integer, nullable=False, default=0)
+    committed_count = Column(Integer, nullable=False, default=0)
+    created_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    # Mirrors db/init.sql — the history list reads newest-first per org.
+    __table_args__ = (
+        Index("idx_repurpose_pack_org_created", "org_id", text("created_at DESC")),
+    )
 
 
 class AnalyticsSnapshot(Base):

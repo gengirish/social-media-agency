@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS subscription (
     clients_limit INTEGER DEFAULT 2,
     posts_limit INTEGER DEFAULT 30,
     posts_used INTEGER DEFAULT 0,
+    -- Amplify packs generated this billing period (1 pack = 1 generation).
+    -- Reset alongside posts_used on invoice.paid; limit comes from PLAN_CONFIG.
+    generations_used INTEGER NOT NULL DEFAULT 0,
+    generations_limit INTEGER,
     current_period_start TIMESTAMPTZ,
     current_period_end TIMESTAMPTZ,
     status VARCHAR(50) DEFAULT 'active',
@@ -362,6 +366,27 @@ CREATE INDEX IF NOT EXISTS idx_notification_user_created
 CREATE INDEX IF NOT EXISTS idx_notification_user_unread
     ON notification(user_id) WHERE read = FALSE;
 CREATE INDEX IF NOT EXISTS idx_notification_org ON notification(org_id);
+
+-- ---------------------------------------------------------------------------
+-- Amplify repurpose packs (routers/amplify.py). One row per generated pack;
+-- committed atoms land in content_piece as drafts carrying
+-- metadata.amplify_pack_id (FK by convention, not a column).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repurpose_pack (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    client_id UUID NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    source_content_id UUID REFERENCES content_piece(id) ON DELETE SET NULL,
+    source_text TEXT,
+    platforms JSONB NOT NULL DEFAULT '[]',
+    atom_count INTEGER NOT NULL DEFAULT 0,
+    committed_count INTEGER NOT NULL DEFAULT 0,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_repurpose_pack_org_created
+    ON repurpose_pack(org_id, created_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- RAG knowledge base (backend/src/agency/services/knowledge_base.py).

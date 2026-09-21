@@ -72,6 +72,7 @@ async def signup(request: SignupRequest, db=Depends(get_db)):
         plan_tier="free",
         clients_limit=free["clients_limit"],
         posts_limit=free["posts_limit"],
+        generations_limit=free["generations_limit"],
     )
     db.add(subscription)
 

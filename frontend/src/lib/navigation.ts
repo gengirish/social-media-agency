@@ -44,6 +44,7 @@ export const NAV_GROUPS: NavGroup[] = [
     tabs: [
       { label: "Campaigns", href: "/campaigns" },
       { label: "Templates", href: "/templates" },
+      { label: "Amplify", href: "/amplify" },
     ],
   },
   {

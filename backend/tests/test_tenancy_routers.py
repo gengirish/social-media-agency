@@ -299,3 +299,139 @@ async def test_portal_requires_flag(client, session_factory):
 
     resp = await client.get(f"{API}/portal/disabled-portal/campaigns")
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# amplify — client_id / source_content_id arrive in the body, pack_id in the
+# path. Each is resolved against org_id; each test asserts nothing was written
+# and no quota was charged, not just the status code.
+# ---------------------------------------------------------------------------
+def _amplify_stub(monkeypatch):
+    """Worker-tier stub that answers any plan with valid atoms; counts calls."""
+    import json
+    from types import SimpleNamespace
+
+    from agency.services.repurpose import plan_atoms
+
+    class _Stub:
+        calls = 0
+
+        async def ainvoke(self, _messages):
+            _Stub.calls += 1
+            atoms = [
+                {"platform": r["platform"], "angle": r["angle"], "body": f"{r['angle']} {i}"}
+                for i, r in enumerate(plan_atoms(["twitter"], 8))
+            ]
+            return SimpleNamespace(content=json.dumps({"atoms": atoms}))
+
+    monkeypatch.setattr("agency.agents.amplify.get_worker_llm", lambda *_a, **_k: _Stub())
+    return _Stub
+
+
+async def _amplify_side_effects(session_factory, org_id):
+    """(pack rows, generations_used) for an org."""
+    from agency.models.tables import RepurposePack, Subscription
+
+    async with session_factory() as session:
+        packs = (
+            await session.execute(select(RepurposePack).where(RepurposePack.org_id == org_id))
+        ).scalars().all()
+        sub = (
+            await session.execute(select(Subscription).where(Subscription.org_id == org_id))
+        ).scalar_one()
+        return len(packs), sub.generations_used
+
+
+async def test_amplify_preview_rejects_other_orgs_client(
+    client, orgs, session_factory, monkeypatch
+):
+    stub = _amplify_stub(monkeypatch)
+    resp = await client.post(
+        f"{API}/amplify/preview",
+        json={"client_id": str(orgs["client_b"]), "source_text": "x", "platforms": ["twitter"]},
+        headers=orgs["headers_a"],
+    )
+    assert resp.status_code == 404
+    assert stub.calls == 0
+    assert await _amplify_side_effects(session_factory, orgs["org_a"]) == (0, 0)
+    assert await _amplify_side_effects(session_factory, orgs["org_b"]) == (0, 0)
+
+
+async def test_amplify_preview_rejects_other_orgs_source(
+    client, orgs, session_factory, monkeypatch
+):
+    """Own client, but the source piece is org B's — its text must never reach the model.
+
+    The row carries org A's client id (the attack shape from the publishing test
+    above), so only the ``org_id`` filter — not the client filter — stops it.
+    """
+    foreign_source = await create_content_row(session_factory, orgs["org_b"], orgs["client_a"])
+    stub = _amplify_stub(monkeypatch)
+    resp = await client.post(
+        f"{API}/amplify/preview",
+        json={
+            "client_id": str(orgs["client_a"]),
+            "source_content_id": str(foreign_source),
+            "platforms": ["twitter"],
+        },
+        headers=orgs["headers_a"],
+    )
+    assert resp.status_code == 404
+    assert stub.calls == 0
+    assert await _amplify_side_effects(session_factory, orgs["org_a"]) == (0, 0)
+
+
+async def test_amplify_preview_own_client_and_source_succeeds(
+    client, orgs, session_factory, monkeypatch
+):
+    """Guards the filters above from over-correcting into denying legitimate use."""
+    _amplify_stub(monkeypatch)
+    resp = await client.post(
+        f"{API}/amplify/preview",
+        json={
+            "client_id": str(orgs["client_a"]),
+            "source_content_id": str(orgs["content_a"]),
+            "platforms": ["twitter"],
+        },
+        headers=orgs["headers_a"],
+    )
+    assert resp.status_code == 200, resp.text
+    assert await _amplify_side_effects(session_factory, orgs["org_a"]) == (1, 1)
+
+
+async def test_amplify_commit_rejects_other_orgs_pack(client, orgs, session_factory, monkeypatch):
+    from agency.models.tables import ContentPiece
+
+    _amplify_stub(monkeypatch)
+    made = await client.post(
+        f"{API}/amplify/preview",
+        json={"client_id": str(orgs["client_b"]), "source_text": "b", "platforms": ["twitter"]},
+        headers=orgs["headers_b"],
+    )
+    assert made.status_code == 200, made.text
+
+    resp = await client.post(
+        f"{API}/amplify/{made.json()['pack_id']}/commit",
+        json={"atoms": [{"platform": "twitter", "angle": "hook", "body": "injected"}]},
+        headers=orgs["headers_a"],
+    )
+    assert resp.status_code == 404
+
+    async with session_factory() as session:
+        rows = await session.execute(select(ContentPiece).where(ContentPiece.body == "injected"))
+        assert rows.scalars().all() == []
+
+
+async def test_amplify_pack_list_excludes_other_orgs(client, orgs, monkeypatch):
+    _amplify_stub(monkeypatch)
+    made = await client.post(
+        f"{API}/amplify/preview",
+        json={"client_id": str(orgs["client_b"]), "source_text": "b", "platforms": ["twitter"]},
+        headers=orgs["headers_b"],
+    )
+    assert made.status_code == 200, made.text
+
+    for query in ("", f"?client_id={orgs['client_b']}"):
+        resp = await client.get(f"{API}/amplify/packs{query}", headers=orgs["headers_a"])
+        assert resp.status_code == 200
+        assert made.json()["pack_id"] not in {p["id"] for p in resp.json()["items"]}
