@@ -6,7 +6,7 @@ type PageCheck = { path: string; heading: RegExp };
 const PAGES: PageCheck[] = [
   { path: "/campaigns", heading: /^campaigns$/i },
   { path: "/clients", heading: /^clients$/i },
-  { path: "/content", heading: /content library/i },
+  { path: "/content", heading: /^queue$/i },
   { path: "/calendar", heading: /content calendar/i },
   { path: "/team", heading: /^team$/i },
   { path: "/pricing", heading: /simple pricing/i },

@@ -1,9 +1,25 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
-class ApiError extends Error {
-  constructor(public status: number, message: string) {
+/**
+ * A non-2xx response. `detail` is FastAPI's `detail` exactly as sent — usually
+ * a string, but structured for errors the UI branches on (e.g. `{code: ...}`).
+ * `message` is always a readable string, so `err.message` callers keep working.
+ */
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public detail: unknown = message) {
     super(message);
   }
+}
+
+function detailMessage(detail: unknown): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail) && typeof detail[0]?.msg === "string") return detail[0].msg;
+  if (detail && typeof detail === "object") {
+    const d = detail as { message?: unknown; code?: unknown };
+    if (typeof d.message === "string") return d.message;
+    if (typeof d.code === "string") return d.code.replace(/_/g, " ");
+  }
+  return "Request failed";
 }
 
 let _clerkGetToken: (() => Promise<string | null>) | null = null;
@@ -23,7 +39,7 @@ export async function getAuthToken(): Promise<string | null> {
 async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.detail || "Request failed");
+    throw new ApiError(res.status, detailMessage(body.detail), body.detail);
   }
   return res.json();
 }
@@ -1579,3 +1595,88 @@ export interface BetaMetrics {
     }[];
   };
 }
+
+// --- Posts queue (phase 3) ---
+// Kept in one block so the phase branches merge cleanly. Contract for approve,
+// schedule and publish: docs/cadence-port-plan-260921.md §4.
+
+/** The DB value behind each Queue tab. `draft` is labelled Pending in the UI. */
+export type QueueStatus = "draft" | "approved" | "scheduled" | "published" | "failed";
+
+/**
+ * A row from `GET /api/v1/content`. The list endpoint serialises the ORM row,
+ * so it carries more than {@link ContentPiece}; these extras are optional
+ * because the single-item endpoints do not return them.
+ */
+export interface QueuePost extends ContentPiece {
+  scheduled_at?: string | null;
+  published_at?: string | null;
+  metadata_?: {
+    post_url?: string | null;
+    publish_error?: string | null;
+    [key: string]: unknown;
+  } | null;
+}
+
+export interface QueueListResponse {
+  items: QueuePost[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface ModerationIssue {
+  severity: string;
+  message: string;
+}
+
+export interface ApproveResult {
+  id: string;
+  status: "approved";
+  moderation?: {
+    status: "passed" | "unavailable" | "overridden";
+    issues: ModerationIssue[];
+  };
+}
+
+/** `detail.code` of a structured API error, or null. */
+export function apiErrorCode(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  const d = err.detail as { code?: unknown } | null;
+  return d && typeof d === "object" && typeof d.code === "string" ? d.code : null;
+}
+
+/** Issues carried by a `409 moderation_flagged`; empty for anything else. */
+export function moderationIssues(err: unknown): ModerationIssue[] {
+  if (apiErrorCode(err) !== "moderation_flagged") return [];
+  const issues = ((err as ApiError).detail as { issues?: unknown }).issues;
+  return Array.isArray(issues) ? (issues as ModerationIssue[]) : [];
+}
+
+export const postsApi = {
+  /** Note the filter param is `content_status` — `status` is silently ignored. */
+  list: (params: {
+    content_status: QueueStatus;
+    client_id?: string;
+    platform?: string;
+    page?: number;
+    per_page?: number;
+  }) => request<QueueListResponse>(`/api/v1/content${qs(params)}`),
+
+  /** Total for one status under the same filters — one row fetched, `total` read. */
+  count: async (status: QueueStatus, filters: { client_id?: string; platform?: string }) => {
+    const res = await request<QueueListResponse>(
+      `/api/v1/content${qs({ ...filters, content_status: status, per_page: 1 })}`
+    );
+    return res.total;
+  },
+
+  /** Runs moderation first. 409 `moderation_flagged` unless `override`. */
+  approve: (id: string, override = false) =>
+    request<ApproveResult>(`/api/v1/content/${id}/approve${override ? "?override=true" : ""}`, {
+      method: "POST",
+    }),
+
+  edit: (id: string, data: { title?: string; body?: string; hashtags?: string[] }) =>
+    request<ContentPiece>(`/api/v1/content/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+};

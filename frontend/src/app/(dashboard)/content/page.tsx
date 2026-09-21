@@ -1,293 +1,465 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { api, type ContentPiece } from "@/lib/api";
-import { trackFeature } from "@/lib/analytics";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { format } from "date-fns";
 import { toast } from "sonner";
-import { Loader2, FileText, CheckCircle2, Filter, Send, Layers, X, AlertTriangle } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Inbox, Layers, Loader2, RefreshCw, Search } from "lucide-react";
+import {
+  api,
+  apiErrorCode,
+  moderationIssues,
+  postsApi,
+  type Client,
+  type ModerationIssue,
+  type QueuePost,
+  type QueueStatus,
+} from "@/lib/api";
+import { trackFeature } from "@/lib/analytics";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { PageHeader, Panel } from "@/components/ui/panel";
 import { cn } from "@/lib/utils";
-import { canPublish, publishUnavailableReason } from "@/lib/platforms";
+import { ModerationWarning } from "@/components/posts/moderation-warning";
+import { PostCard, type PostAction, type PostEdit } from "@/components/posts/post-card";
+import { PublishConfirm } from "@/components/posts/publish-confirm";
+import { QUEUE_PLATFORMS } from "@/components/posts/platform";
+import { QUEUE_TABS, QueueTabs } from "@/components/posts/queue-tabs";
+import { ScheduleDialog } from "@/components/posts/schedule-dialog";
 
-const REPURPOSE_PLATFORMS = [
-  { id: "linkedin", label: "LinkedIn" },
-  { id: "twitter", label: "X (Twitter)" },
-  { id: "instagram", label: "Instagram" },
-  { id: "facebook", label: "Facebook" },
-  { id: "tiktok", label: "TikTok" },
-] as const;
+const PER_PAGE = 50;
 
-const PLATFORM_COLORS: Record<string, string> = {
-  linkedin: "bg-indigo-50 text-indigo-700",
-  twitter: "bg-sky-50 text-sky-700",
-  instagram: "bg-pink-50 text-pink-700",
-  facebook: "bg-blue-50 text-blue-700",
-  tiktok: "bg-slate-50 text-slate-700",
-  google: "bg-red-50 text-red-700",
-  meta: "bg-blue-50 text-blue-700",
+const EMPTY: Record<QueueStatus, { title: string; body: string }> = {
+  draft: {
+    title: "Nothing waiting for review",
+    body: "Posts from campaigns and Amplify land here as Pending. Each one needs a person to approve it — after a moderation check — before it can be scheduled or published.",
+  },
+  approved: {
+    title: "No approved posts",
+    body: "Approve a Pending post and it moves here, ready to schedule or publish.",
+  },
+  scheduled: {
+    title: "Nothing scheduled",
+    body: "Schedule an approved post and it appears here and on the Calendar until it goes out.",
+  },
+  published: {
+    title: "Nothing published yet",
+    body: "Posts show up here once they have gone out to a connected account.",
+  },
+  failed: {
+    title: "No failed posts",
+    body: "If a platform rejects a publish, the post and the reason it gave will show up here.",
+  },
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-slate-100 text-slate-700",
-  approved: "bg-emerald-100 text-emerald-700",
-  scheduled: "bg-indigo-100 text-indigo-700",
-  published: "bg-green-100 text-green-700",
-};
+const selectClass =
+  "h-9 rounded-md border border-line bg-panel/70 px-2.5 text-sm text-ink outline-none transition-colors focus:border-accent";
 
-export default function ContentPage() {
-  const [content, setContent] = useState<ContentPiece[]>([]);
+type Counts = Partial<Record<QueueStatus, number | null>>;
+
+export default function QueuePage() {
+  const [tab, setTab] = useState<QueueStatus>("draft");
+  const [clientId, setClientId] = useState("");
+  const [platform, setPlatform] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+
+  const [items, setItems] = useState<QueuePost[]>([]);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState<Counts>({});
+  const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>("");
-  const [repurposePiece, setRepurposePiece] = useState<ContentPiece | null>(null);
-  const [repurposeTargets, setRepurposeTargets] = useState<string[]>([]);
-  const [repurposeBusy, setRepurposeBusy] = useState(false);
-  const [publishBusyId, setPublishBusyId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const loadContent = useCallback(() => {
-    const params: Record<string, string> = {};
-    if (filter) params.status = filter;
-    api
-      .getContent(params)
-      .then((res) => setContent(res.items))
-      .catch((err: Error) => toast.error(err.message))
-      .finally(() => setLoading(false));
-  }, [filter]);
+  const [busy, setBusy] = useState<Record<string, PostAction>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [moderation, setModeration] = useState<{ post: QueuePost; issues: ModerationIssue[] } | null>(null);
+  const [scheduleFor, setScheduleFor] = useState<QueuePost | null>(null);
+  const [publishFor, setPublishFor] = useState<QueuePost | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  // Overdue badges depend on the clock, not just on data.
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
-    loadContent();
-  }, [loadContent]);
+    api
+      .getClients()
+      .then((res) => setClients(res.items))
+      .catch(() => setClients([]));
+  }, []);
 
-  function openRepurpose(piece: ContentPiece) {
-    const current = (piece.platform ?? "").toLowerCase();
-    setRepurposeTargets(
-      REPURPOSE_PLATFORMS.map((p) => p.id).filter((id) => id !== current)
+  const clientNames = useMemo(() => new Map(clients.map((c) => [c.id, c.brand_name])), [clients]);
+
+  // A newer request supersedes an older one; stale responses are dropped.
+  const loadSeq = useRef(0);
+  const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    const filters = { client_id: clientId || undefined, platform: platform || undefined };
+    setLoading(true);
+    setLoadError(null);
+    const countsP = Promise.all(
+      QUEUE_TABS.map(({ status }) =>
+        postsApi
+          .count(status, filters)
+          .then((n) => [status, n] as const)
+          .catch(() => [status, null] as const)
+      )
     );
-    setRepurposePiece(piece);
-  }
-
-  async function runRepurpose() {
-    if (!repurposePiece || repurposeTargets.length === 0) {
-      toast.error("Select at least one target platform");
-      return;
-    }
-    setRepurposeBusy(true);
     try {
-      const res = await api.repurposeContent(repurposePiece.id, repurposeTargets);
-      toast.success(`Repurposed to ${res.count} platform(s)`);
-      setRepurposePiece(null);
-      loadContent();
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Repurpose failed");
+      const res = await postsApi.list({ ...filters, content_status: tab, page, per_page: PER_PAGE });
+      if (seq !== loadSeq.current) return;
+      setItems(res.items);
+      setTotal(res.total);
+    } catch (err) {
+      if (seq !== loadSeq.current) return;
+      setItems([]);
+      setTotal(0);
+      setLoadError(err instanceof Error ? err.message : "Could not load posts");
     } finally {
-      setRepurposeBusy(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
+    const c = await countsP;
+    if (seq === loadSeq.current) setCounts(Object.fromEntries(c));
+  }, [tab, clientId, platform, page]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((p) =>
+      [p.title, p.body, ...(p.hashtags ?? []), clientNames.get(p.client_id) ?? ""].some((s) =>
+        (s ?? "").toLowerCase().includes(q)
+      )
+    );
+  }, [items, search, clientNames]);
+
+  function setPostBusy(id: string, action: PostAction | null) {
+    setBusy((prev) => {
+      const next = { ...prev };
+      if (action) next[id] = action;
+      else delete next[id];
+      return next;
+    });
   }
 
-  async function publishNow(piece: ContentPiece) {
-    const blocked = publishUnavailableReason(piece.platform);
-    if (blocked) {
-      toast.error(blocked);
-      return;
-    }
-    setPublishBusyId(piece.id);
+  function changeTab(status: QueueStatus) {
+    setTab(status);
+    setPage(1);
+    setEditingId(null);
+  }
+
+  // --- Actions -----------------------------------------------------------
+
+  async function approve(post: QueuePost, override = false) {
+    setPostBusy(post.id, "approve");
     try {
-      const res = await api.publishContent(piece.id);
-      trackFeature("content-publish", { platform: piece.platform });
-      // Report what the API actually did rather than assuming it worked.
-      toast.success(res?.url ? `Published to ${piece.platform}` : "Publish request accepted");
-      loadContent();
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Publish failed");
+      const res = await postsApi.approve(post.id, override);
+      setModeration(null);
+      const mod = res.moderation?.status;
+      if (mod === "unavailable") {
+        toast.warning("Moderation check unavailable — approved without it");
+      } else if (override || mod === "overridden") {
+        toast.success("Approved — moderation override recorded");
+      } else {
+        toast.success("Approved — ready to schedule");
+      }
+      trackFeature("post-approve", { platform: post.platform, override });
+      await load();
+    } catch (err) {
+      const code = apiErrorCode(err);
+      if (code === "moderation_flagged") {
+        setModeration({ post, issues: moderationIssues(err) });
+      } else if (code === "invalid_status") {
+        setModeration(null);
+        toast.error("This post is no longer Pending — refreshed the queue");
+        await load();
+      } else {
+        toast.error(err instanceof Error ? err.message : "Approve failed");
+      }
     } finally {
-      setPublishBusyId(null);
+      setPostBusy(post.id, null);
     }
   }
 
-  if (loading) {
-    return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>;
+  async function saveEdit(post: QueuePost, edit: PostEdit) {
+    setPostBusy(post.id, "save");
+    try {
+      const updated = await postsApi.edit(post.id, edit);
+      setItems((prev) => prev.map((p) => (p.id === post.id ? { ...p, ...updated } : p)));
+      setEditingId(null);
+      toast.success("Changes saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save changes");
+    } finally {
+      setPostBusy(post.id, null);
+    }
   }
+
+  function gateError(err: unknown, fallback: string) {
+    if (apiErrorCode(err) === "not_approved") {
+      toast.error("Approve this post first");
+      void load();
+    } else {
+      toast.error(err instanceof Error ? err.message : fallback);
+    }
+  }
+
+  async function schedule(post: QueuePost, iso: string) {
+    const rescheduling = post.status === "scheduled";
+    setPostBusy(post.id, "schedule");
+    try {
+      await api.scheduleContent(post.id, iso);
+      setScheduleFor(null);
+      toast.success(`${rescheduling ? "Rescheduled" : "Scheduled"} for ${format(new Date(iso), "EEE d MMM, HH:mm")}`);
+      trackFeature(rescheduling ? "post-reschedule" : "post-schedule", { platform: post.platform });
+      await load();
+    } catch (err) {
+      gateError(err, "Could not schedule");
+    } finally {
+      setPostBusy(post.id, null);
+    }
+  }
+
+  async function publish(post: QueuePost) {
+    setPostBusy(post.id, "publish");
+    try {
+      const res = await api.publishContent(post.id);
+      setPublishFor(null);
+      trackFeature("content-publish", { platform: post.platform });
+      // Report what the API actually returned rather than assuming it worked.
+      if (res?.url) {
+        const url = res.url;
+        toast.success("Published", { action: { label: "View", onClick: () => window.open(url, "_blank", "noopener") } });
+      } else {
+        toast.success("Publish request accepted");
+      }
+      await load();
+    } catch (err) {
+      setPublishFor(null);
+      gateError(err, "Publish failed");
+      await load();
+    } finally {
+      setPostBusy(post.id, null);
+    }
+  }
+
+  // --- Render ------------------------------------------------------------
+
+  const filtered = Boolean(clientId || platform);
+  const pageCount = Math.max(1, Math.ceil(total / PER_PAGE));
+  const empty = EMPTY[tab];
+  const tabLabel = QUEUE_TABS.find((t) => t.status === tab)?.label ?? tab;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Content Library</h1>
-          <p className="mt-1 text-slate-500">All AI-generated content across campaigns</p>
+      <PageHeader
+        eyebrow="Posts"
+        title="Queue"
+        description="Every post waits here for a person. Approving runs a moderation check first; only approved posts can be scheduled or published."
+        actions={
+          <>
+            <Link href="/calendar" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+              <CalendarDays className="h-3.5 w-3.5" />
+              Calendar
+            </Link>
+            <Link href="/amplify" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+              <Layers className="h-3.5 w-3.5" />
+              Amplify
+            </Link>
+          </>
+        }
+      />
+
+      <div className="space-y-3">
+        <QueueTabs active={tab} counts={counts} onChange={changeTab} />
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <label className="relative flex-1">
+            <span className="sr-only">Search posts</span>
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search title, text, hashtags, client"
+              className={cn(selectClass, "w-full pl-8 placeholder:text-slate-400")}
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-2 sm:flex">
+            <select
+              aria-label="Filter by client"
+              value={clientId}
+              onChange={(e) => {
+                setClientId(e.target.value);
+                setPage(1);
+              }}
+              className={selectClass}
+            >
+              <option value="">All clients</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.brand_name}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Filter by platform"
+              value={platform}
+              onChange={(e) => {
+                setPlatform(e.target.value);
+                setPage(1);
+              }}
+              className={selectClass}
+            >
+              <option value="">All platforms</option>
+              {QUEUE_PLATFORMS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-slate-400" />
-          <select
-            value={filter}
-            onChange={(e) => { setFilter(e.target.value); setLoading(true); }}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
-          >
-            <option value="">All Status</option>
-            <option value="draft">Draft</option>
-            <option value="approved">Approved</option>
-            <option value="scheduled">Scheduled</option>
-            <option value="published">Published</option>
-          </select>
-        </div>
+        {search && items.length < total && (
+          <p className="font-mono text-[11px] text-muted">
+            Search covers the {items.length} posts on this page of {total}.
+          </p>
+        )}
       </div>
 
-      {content.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 py-16">
-          <FileText className="mb-4 h-12 w-12 text-slate-300" />
-          <h3 className="text-lg font-semibold text-slate-900">No content yet</h3>
-          <p className="mt-1 text-slate-500">Run a campaign to generate content</p>
+      {loading && items.length === 0 ? (
+        <div className="flex h-48 items-center justify-center" aria-live="polite">
+          <Loader2 className="h-6 w-6 animate-spin text-accent" />
+          <span className="sr-only">Loading posts</span>
         </div>
-      ) : (
-        <div className="space-y-4">
-          {content.map((piece) => (
-            <div key={piece.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "rounded-full px-2.5 py-0.5 text-xs font-medium",
-                      PLATFORM_COLORS[piece.platform?.toLowerCase?.() ?? ""] ?? "bg-slate-50 text-slate-700"
-                    )}
-                  >
-                    {piece.platform}
-                  </span>
-                  <span className="text-xs text-slate-400">{piece.content_type}</span>
-                  <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", STATUS_COLORS[piece.status])}>
-                    {piece.status}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {piece.status === "draft" && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await api.approveContent(piece.id);
-                        loadContent();
-                        toast.success("Approved!");
-                      }}
-                      className="flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
-                    >
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Approve
-                    </button>
-                  )}
-                  {piece.status === "approved" &&
-                    (canPublish(piece.platform) ? (
-                      <button
-                        type="button"
-                        disabled={publishBusyId === piece.id}
-                        onClick={() => publishNow(piece)}
-                        className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-                      >
-                        {publishBusyId === piece.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Send className="h-3.5 w-3.5" />
-                        )}
-                        Publish Now
-                      </button>
-                    ) : (
-                      <span
-                        title={publishUnavailableReason(piece.platform) ?? undefined}
-                        className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800"
-                      >
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        Publishing unavailable
-                      </span>
-                    ))}
-                  <button
-                    type="button"
-                    onClick={() => openRepurpose(piece)}
-                    className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    <Layers className="h-3.5 w-3.5" />
-                    Repurpose
-                  </button>
-                </div>
-              </div>
-              {piece.title && <h3 className="mt-3 font-semibold text-slate-900">{piece.title}</h3>}
-              <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700 line-clamp-4">{piece.body}</p>
-              {piece.hashtags?.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {piece.hashtags.map((tag, i) => <span key={i} className="text-xs text-indigo-600">#{tag}</span>)}
+      ) : loadError ? (
+        <Panel className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+          <p className="text-sm font-medium text-ink">Could not load the queue</p>
+          <p className="max-w-md text-sm text-muted">{loadError}</p>
+          <Button variant="secondary" size="sm" onClick={() => load()}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            Try again
+          </Button>
+        </Panel>
+      ) : visible.length === 0 ? (
+        <Panel dashed className="flex flex-col items-center px-6 py-14 text-center">
+          <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-canvas">
+            <Inbox className="h-5 w-5 text-muted" />
+          </div>
+          {search || filtered ? (
+            <>
+              <h2 className="text-base font-semibold text-ink">No {tabLabel.toLowerCase()} posts match</h2>
+              <p className="mt-1 max-w-md text-sm text-muted">
+                {search ? "Nothing on this page matches your search." : "Nothing in this tab for the selected filters."}
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-4"
+                onClick={() => {
+                  setSearch("");
+                  setClientId("");
+                  setPlatform("");
+                  setPage(1);
+                }}
+              >
+                Clear filters
+              </Button>
+            </>
+          ) : (
+            <>
+              <h2 className="text-base font-semibold text-ink">{empty.title}</h2>
+              <p className="mt-1 max-w-md text-sm text-muted">{empty.body}</p>
+              {tab === "draft" && (
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <Link href="/campaigns" className={buttonVariants({ size: "sm" })}>
+                    Start a campaign
+                  </Link>
+                  <Link href="/amplify" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+                    Amplify a post
+                  </Link>
                 </div>
               )}
-            </div>
+            </>
+          )}
+        </Panel>
+      ) : (
+        <div className={cn("space-y-3 transition-opacity", loading && "opacity-60")} aria-busy={loading}>
+          {visible.map((post) => (
+            <PostCard
+              key={post.id}
+              post={post}
+              clientName={clientNames.get(post.client_id) ?? null}
+              busy={busy[post.id] ?? null}
+              editing={editingId === post.id}
+              now={now}
+              onApprove={() => approve(post)}
+              onEditStart={() => setEditingId(post.id)}
+              onEditCancel={() => setEditingId(null)}
+              onEditSave={(edit) => saveEdit(post, edit)}
+              onSchedule={() => setScheduleFor(post)}
+              onPublish={() => setPublishFor(post)}
+            />
           ))}
         </div>
       )}
 
-      {repurposePiece && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/40"
-            aria-label="Close repurpose dialog"
-            onClick={() => !repurposeBusy && setRepurposePiece(null)}
-          />
-          <div className="relative z-10 w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
-            <button
-              type="button"
-              disabled={repurposeBusy}
-              onClick={() => setRepurposePiece(null)}
-              className="absolute right-4 top-4 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
-            >
-              <X className="h-5 w-5" />
-            </button>
-            <h2 className="text-lg font-bold text-slate-900">Repurpose content</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Create variants for other platforms from &ldquo;{repurposePiece.title || "this post"}&rdquo;.
-            </p>
-            <div className="mt-4 space-y-2">
-              {REPURPOSE_PLATFORMS.filter(
-                (p) => p.id !== (repurposePiece.platform ?? "").toLowerCase()
-              ).map((p) => (
-                <label
-                  key={p.id}
-                  className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-100 px-3 py-2 hover:bg-slate-50"
-                >
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    checked={repurposeTargets.includes(p.id)}
-                    onChange={(e) => {
-                      setRepurposeTargets((prev) =>
-                        e.target.checked ? [...prev, p.id] : prev.filter((x) => x !== p.id)
-                      );
-                    }}
-                  />
-                  <span className="text-sm font-medium text-slate-800">{p.label}</span>
-                  {!canPublish(p.id) && (
-                    <span className="ml-auto rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
-                      draft only
-                    </span>
-                  )}
-                </label>
-              ))}
-              <p className="pt-1 text-xs text-slate-500">
-                &ldquo;Draft only&rdquo; platforms generate and schedule content, but CampaignForge
-                cannot publish to them yet — you post those manually.
-              </p>
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                disabled={repurposeBusy}
-                onClick={() => setRepurposePiece(null)}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={repurposeBusy || repurposeTargets.length === 0}
-                onClick={() => runRepurpose()}
-                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {repurposeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Layers className="h-4 w-4" />}
-                Repurpose
-              </button>
-            </div>
-          </div>
+      {pageCount > 1 && (
+        <div className="flex items-center justify-center gap-3">
+          <Button variant="secondary" size="sm" disabled={page <= 1 || loading} onClick={() => setPage((p) => p - 1)}>
+            <ChevronLeft className="h-3.5 w-3.5" /> Previous
+          </Button>
+          <span className="font-mono text-xs text-muted">
+            {page} / {pageCount}
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={page >= pageCount || loading}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
         </div>
       )}
+
+      <ModerationWarning
+        open={moderation !== null}
+        postTitle={moderation?.post.title ?? ""}
+        issues={moderation?.issues ?? []}
+        busy={moderation ? busy[moderation.post.id] === "approve" : false}
+        onClose={() => setModeration(null)}
+        onEdit={() => {
+          if (moderation) setEditingId(moderation.post.id);
+          setModeration(null);
+        }}
+        onOverride={() => moderation && approve(moderation.post, true)}
+      />
+
+      <ScheduleDialog
+        open={scheduleFor !== null}
+        mode={scheduleFor?.status === "scheduled" ? "reschedule" : "schedule"}
+        platform={scheduleFor?.platform ?? ""}
+        clientName={scheduleFor ? clientNames.get(scheduleFor.client_id) ?? null : null}
+        currentAt={scheduleFor?.scheduled_at}
+        busy={scheduleFor ? busy[scheduleFor.id] === "schedule" : false}
+        onClose={() => setScheduleFor(null)}
+        onConfirm={(iso) => scheduleFor && schedule(scheduleFor, iso)}
+      />
+
+      <PublishConfirm
+        open={publishFor !== null}
+        platform={publishFor?.platform ?? ""}
+        clientName={publishFor ? clientNames.get(publishFor.client_id) ?? null : null}
+        busy={publishFor ? busy[publishFor.id] === "publish" : false}
+        onClose={() => setPublishFor(null)}
+        onConfirm={() => publishFor && publish(publishFor)}
+      />
     </div>
   );
 }
