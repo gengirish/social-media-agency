@@ -2,13 +2,14 @@
 
 import json
 import re
-from urllib.parse import urlparse
+from typing import Any
 
 import httpx
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agency.services.llm_provider import get_worker_llm
+from agency.services.url_safety import UnsafeURLError, fetch_public_page
 
 logger = structlog.get_logger()
 
@@ -43,18 +44,18 @@ EXTRACTION_PROMPT = """You are a brand analyst. Given the HTML content of a comp
 Return ONLY valid JSON."""
 
 
-async def extract_brand_from_url(url: str) -> dict:
+async def extract_brand_from_url(url: str) -> dict[str, Any]:
     """Scrape a URL and extract brand profile using LLM."""
     try:
-        parsed = urlparse(url)
-        if not parsed.scheme:
+        url = url.strip()
+        # Not urlparse().scheme: "localhost:8080" parses with scheme "localhost".
+        if "://" not in url:
             url = f"https://{url}"
 
-        # Fetch page content
-        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-            resp = await client.get(url, headers={"User-Agent": "CampaignForge Bot/1.0"})
-            resp.raise_for_status()
-            html = resp.text
+        # The URL is user-supplied and fetched from inside our network, so every
+        # hop must resolve to a public address (see services/url_safety.py).
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            html = await fetch_public_page(url, client)
 
         # Strip HTML to text (basic approach)
         text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
@@ -76,7 +77,7 @@ async def extract_brand_from_url(url: str) -> dict:
         raw_content = response.content if isinstance(response.content, str) else str(response.content)
 
         try:
-            profile = json.loads(raw_content)
+            profile: dict[str, Any] = json.loads(raw_content)
         except json.JSONDecodeError:
             start = raw_content.find("{")
             end = raw_content.rfind("}") + 1
@@ -92,6 +93,9 @@ async def extract_brand_from_url(url: str) -> dict:
         logger.info("brand_extracted", url=url, brand=profile.get("brand_name"))
         return profile
 
+    except UnsafeURLError as e:
+        logger.warning("magic_brief_url_refused", url=url, reason=str(e))
+        return {"error": str(e)}
     except httpx.HTTPError as e:
         return {"error": f"Failed to fetch URL: {str(e)}"}
     except Exception as e:

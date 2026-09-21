@@ -80,7 +80,7 @@ Slack bot with event and slash-command handlers at `POST /api/v1/integrations/sl
 **Status**: [LIVE]
 **File**: `backend/src/agency/services/magic_brief.py`
 
-HTTP fetch of target URL + LLM-powered brand profile extraction. No external API key beyond LLM provider.
+HTTP fetch of target URL + LLM-powered brand profile extraction. No external API key beyond LLM provider. The fetch is restricted to public addresses by `services/url_safety.py`.
 
 ## Exa — Search
 **Status**: [PLANNED]

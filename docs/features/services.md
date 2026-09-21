@@ -150,7 +150,18 @@ Called automatically after campaign completion in `_persist_campaign_results`. S
 **Status**: [LIVE]
 **File**: `services/magic_brief.py`
 
-- `extract_brand_from_url(url)` — Fetches URL content, sends to LLM for brand profile extraction (voice, tone, audience, etc.)
+- `extract_brand_from_url(url)` — Fetches URL content, sends to LLM for brand profile extraction (voice, tone, audience, etc.). The fetch goes through `url_safety.fetch_public_page`; a refused URL comes back as `{"error": ...}` (→ 400) without reaching the LLM.
+
+## URL Safety
+**Status**: [LIVE]
+**File**: `services/url_safety.py`
+
+Guard for server-side fetches of user-typed URLs (SSRF). Use it for any new code that fetches a URL a user supplied.
+
+- `assert_public_url(url)` — http/https only, ports 80/443 only, no credentials in the URL, and **every** resolved address must be public (`ipaddress.is_global`; IPv4-mapped IPv6 unwrapped). Refuses loopback, RFC 1918, link-local/metadata `169.254.x`, CGNAT, and Fly's `fdaa::/16`. Raises `UnsafeURLError`, whose message is safe to show the user.
+- `fetch_public_page(url, client)` — GET with redirects followed **by hand**, re-checking each hop (max 5); body truncated at 2 MB.
+- Not closed: DNS rebinding between the check and httpx's own resolution (see the module docstring).
+- Not yet adopted by `webhook_dispatcher` or `slack_integration`, which POST to user-configured URLs.
 
 ## Team Service
 **Status**: [LIVE]

@@ -4,6 +4,14 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260921 — Magic Brief refuses internal URLs (SSRF)
+
+`POST /api/v1/magic-brief` fetched whatever URL a signed-in user gave it, from inside Fly, following redirects — so `localhost`, the `fdaa::/16` private network or `169.254.169.254` were all reachable, directly or via a public page that redirects there. The fetch now goes through the new `services/url_safety.py`: http/https on ports 80/443 only, every resolved address must be public, redirects are followed by hand and each hop re-checked, bodies are capped at 2 MB. A refused URL returns 400 with a readable reason and never reaches the LLM. Tests: `tests/test_url_safety.py`.
+
+Known gap: DNS rebinding is not closed. `webhook_dispatcher` and `slack_integration` still POST to user-configured URLs unguarded.
+
+---
+
 ## 260921 — Read website on the Clients form
 
 **The website-reading AI now lives on `/clients`.** `POST /api/v1/magic-brief` already extracted a brand profile from a URL, but only `/campaigns/new/magic-brief` called it — adding a client by hand meant typing everything and never capturing a brand voice. The New Client form now has a **Read website** button that drafts brand name, industry and description and previews voice and target audience. Nothing saves until the user presses Create Client, which also stores the extracted brand profile.
