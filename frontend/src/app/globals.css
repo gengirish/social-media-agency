@@ -19,8 +19,10 @@
     @apply font-display tracking-tight;
   }
 
+  /* indigo-500 is the ochre in light mode (≥3:1 on the light canvas, WCAG 2.2
+     focus appearance) and bright amber in dark mode. */
   :focus-visible {
-    outline: 2px solid rgb(var(--c-accent));
+    outline: 2px solid rgb(var(--c-indigo-500));
     outline-offset: 2px;
   }
 

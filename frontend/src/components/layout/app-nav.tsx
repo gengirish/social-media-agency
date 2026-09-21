@@ -5,7 +5,8 @@ import { useEffect, useState, type ComponentType } from "react";
 import { UserButton } from "@clerk/nextjs";
 import { ListChecks, Menu, Settings, Sparkles, TrendingUp, Wand2, X } from "lucide-react";
 import { NotificationsBell } from "@/components/notifications-bell";
-import { ThemeToggle } from "@/components/theme";
+import { ThemeToggle, useTheme } from "@/components/theme";
+import { clerkVariables } from "@/lib/clerk-appearance";
 import { NAV_GROUPS, resolveNav, type NavIconName } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ const ICONS: Record<NavIconName, ComponentType<{ className?: string }>> = {
 export function AppNav({ pathname, queryTab }: { pathname: string; queryTab: string | null }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const active = resolveNav(pathname, queryTab);
+  const theme = useTheme();
 
   useEffect(() => setMenuOpen(false), [pathname, queryTab]);
 
@@ -72,7 +74,7 @@ export function AppNav({ pathname, queryTab }: { pathname: string; queryTab: str
         <div className="ml-auto flex items-center gap-2 lg:ml-2">
           <ThemeToggle />
           <NotificationsBell />
-          <UserButton />
+          <UserButton appearance={{ variables: clerkVariables(theme) }} />
           <button
             type="button"
             onClick={() => setMenuOpen((o) => !o)}

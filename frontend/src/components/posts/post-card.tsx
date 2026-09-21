@@ -235,9 +235,7 @@ export function PostCard({
           {blocked && post.status !== "draft" && (
             <p className="mb-3 flex gap-2 text-xs text-amber-800">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-              {/* platforms.ts adds "you can still schedule it"; here scheduling is off too, since a
-                  scheduled post would only fail at publish time. Keep the first part, say what is true. */}
-              {blocked.split(" You can still")[0]} Scheduling is off for the same reason — post this one manually.
+              {blocked}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-2">
