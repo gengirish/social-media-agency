@@ -180,6 +180,7 @@ Targets are **goals set by this plan**, not forecasts; replace with real baselin
 | `02-lead-magnet.md` | *The Cohort Certificate Checklist* + outreach email sequence |
 | `03-content-calendar.csv` | Day-by-day plan, 22-Sep → 26-Oct |
 | `04-paid-plan.md` | $100 test: Google Search + LinkedIn boost, keywords, negatives, decision rules |
+| `05-campaignforge-brief.md` | Paste-ready inputs for CampaignForge's New Client / New Campaign forms (`campaignforge-brief` skill) |
 
 ## Decisions log
 
