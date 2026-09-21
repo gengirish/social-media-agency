@@ -46,7 +46,7 @@ Adopted from the Cadence Crew prototype (see [docs/cadence-port-plan-260921.md](
 
 1. **Never imply a capability that isn't real.** Publishing *is* real here (X, LinkedIn, Facebook post to live client accounts), which raises the stakes — Instagram/TikTok publishing, image posting, and any inbox/listening feature are not, and the UI must say so where it matters (`lib/platforms.ts::publishUnavailableReason`).
 2. **A human has final say.** No path auto-approves or auto-publishes. `autonomous_operator.py` plans; it must never schedule.
-3. **Moderation runs before approval, on every path that creates a post** — pipeline, manual, portal, Amplify, repurpose. Schedule and publish accept only approved content.
+3. **Moderation runs before approval, on every path that creates a post** — pipeline, manual, portal, Amplify, repurpose. Schedule and publish accept only approved content (enforced — see [Approval gate](#approval-gate-moderation-before-approval)).
 4. **No invented numbers.** Real data or an explicit empty state — never a placeholder metric, predicted CTR, or fabricated score. Same discipline as the marketing layer's data-reliability rules.
 5. **LLM access only through the four tier getters** (see [LLM routing](#llm-routing-servicesllm_providerpy)).
 6. **Before presenting a change:** `ruff` + `mypy` + `pytest` for backend, `npm run lint` + `npm run build` for frontend. A clean compile has missed runtime crashes before; run the tests.
@@ -155,6 +155,34 @@ Frontend auth: [middleware.ts](frontend/middleware.ts) marks only `/`, `/sign-in
 
 Agent progress streams over **SSE**, not WebSocket, despite `docs/features/websocket.md`. `GET /api/v1/campaigns/{id}/stream?token=...` passes the JWT as a **query param** because `EventSource` cannot set headers ([lib/agent-stream.ts](frontend/src/lib/agent-stream.ts)). The client closes the stream on `complete` or `error` events.
 
+### Approval gate (moderation before approval)
+
+`content_piece.status` stays `draft` in the database for anything awaiting review; the UI calls it **Pending**. The only path to `approved` is `POST /content/{id}/approve`, which runs [services/moderation.py](backend/src/agency/services/moderation.py) first — logic lives in [services/content_approval.py](backend/src/agency/services/content_approval.py), routers stay thin.
+
+- **Flagged** → `409 {code: "moderation_flagged", issues}`; `?override=true` approves anyway and records `metadata.moderation.override_by`. The portal approve path never allows override.
+- **Fail-open:** an LLM error/timeout/no provider approves with `metadata.moderation.status = "unavailable"` and logs `moderation_unavailable` — never silent. The character-limit and brand `vocabulary_exclude` checks run in code, so they still flag when the LLM is down.
+- **Schedule and publish** accept only `approved`/`scheduled` (`409 not_approved` otherwise). `PATCH /content/{id}` cannot set `approved`/`scheduled`/`published`, and editing the body or hashtags of approved/scheduled content resets it to `draft` so the edit is re-moderated.
+- Every content-creating path (pipeline, repurpose, variants, Amplify) writes `draft`. Keep it that way — a new path that writes `approved` or `scheduled` bypasses moderation and, since publishing is real, posts unreviewed copy to a client's live account.
+
+`backend/tests/test_approval_gate.py` verifies each gate fails its test when removed.
+
+### Amplify (repurposing engine)
+
+One source (a `content_piece` or pasted text) → up to 8 drafts, one per angle from the closed enum in [services/repurpose.py](backend/src/agency/services/repurpose.py) (`hook`, `how-to`, `contrarian`, `story`, `data-point`, `question`, `behind-the-scenes`, `listicle`). Angles are assigned in code (`plan_atoms`), not chosen by the model, so a pack cannot repeat one.
+
+- [agents/amplify.py](backend/src/agency/agents/amplify.py) uses `get_worker_llm` — not `lite`, because whether the angles are genuinely distinct *is* the judgement.
+- [routers/amplify.py](backend/src/agency/routers/amplify.py): `preview` generates and saves nothing to the queue; `{pack_id}/commit` writes the kept atoms as `draft`, whatever status the client sends; `packs` lists history (`repurpose_pack` table).
+- **Quota:** 1 pack = 1 generation against `subscription.generations_used`/`generations_limit` (per tier in `PLAN_CONFIG`, reset on `invoice.paid`), charged only when at least one usable draft comes back. `402 generation_quota_exceeded` when exhausted. The check and the increment are not atomic, so two concurrent previews can overshoot by one.
+- The old `POST /content/{id}/repurpose` still exists for API compatibility; the UI no longer calls it.
+
+### Frontend design system and navigation
+
+The look is the **Cadence** palette (navy + amber, glass panels, Space Grotesk / Inter / IBM Plex Mono) in light and dark. Tokens are CSS variables emitted from [tailwind.config.ts](frontend/tailwind.config.ts); `slate`, `white`, `indigo` and the status hues are **remapped** onto them, so a legacy `bg-white text-slate-900` class already themes. Prefer the semantic names (`canvas`, `panel`, `ink`, `muted`, `line`, `accent`, `accent-text`, `on-accent`) and the primitives in [components/ui/](frontend/src/components/ui/) for new work. Never hardcode a hex color in a page — it will be wrong in one of the two themes.
+
+- Theme: `.dark` on `<html>`, set before paint by `THEME_INIT_SCRIPT` ([lib/theme.ts](frontend/src/lib/theme.ts)); OS preference by default, the toggle persists to `localStorage`. Clerk widgets resolve colors in JS, so they get literal per-theme values from [lib/clerk-appearance.ts](frontend/src/lib/clerk-appearance.ts).
+- Navigation is a top bar with grouped sub-tabs defined in [lib/navigation.ts](frontend/src/lib/navigation.ts): **Setup** (Clients, Accounts) · **Posts** (Queue `/content`, Calendar) · **Create** (Campaigns, Templates, Amplify) · **Insights** · **Settings** (Workspace, Team, Billing). Routes did not move when the sidebar went away — add a page by adding a tab there. Settings' active tab lives in `?tab=` so Setup › Accounts can deep-link to it.
+- `e2e/navigation.spec.ts` asserts each route's H1; `/content`'s is now "Queue".
+
 ### Product analytics
 
 `product_event` + [services/product_analytics.py](backend/src/agency/services/product_analytics.py) back `GET /api/v1/beta-metrics`. Two rules when extending it:
@@ -168,7 +196,7 @@ To make a new flow show up in the adoption table, call `trackFeature("kebab-name
 
 ### Backend layering
 
-`routers/` (24 routers, all mounted under `/api/v1`) → `services/` (24 modules: billing, publishing, scheduler, brand_learning, cross_learning, white_label, webhook_dispatcher, platform_metrics, exa_client, …) → `models/` (`tables.py` SQLAlchemy, `schemas.py` Pydantic, `database.py` session factory). Keep business logic in `services/`; routers stay thin.
+`routers/` (25 routers, all mounted under `/api/v1`) → `services/` (28 modules: billing, publishing, scheduler, moderation, content_approval, repurpose, brand_learning, cross_learning, white_label, webhook_dispatcher, platform_metrics, exa_client, …) → `models/` (`tables.py` SQLAlchemy, `schemas.py` Pydantic, `database.py` session factory). Keep business logic in `services/`; routers stay thin.
 
 `main.py` registers a background `scheduler` on startup alongside the graph runtime — both need matching shutdown handling.
 
