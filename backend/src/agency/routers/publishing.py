@@ -10,6 +10,7 @@ from sqlalchemy import select
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import ContentPiece, PlatformAccount
 from agency.services.billing import billing
+from agency.services.content_approval import ContentGateError, ensure_publishable
 from agency.services.publishing import publisher
 from agency.services.scheduler import scheduler
 
@@ -47,6 +48,8 @@ async def publish_now(
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
+    """Publish now. Only ``approved``/``scheduled`` content; otherwise
+    409 ``{"code": "not_approved", "status": <current>}``."""
     result = await db.execute(
         select(ContentPiece).where(
             ContentPiece.id == content_id,
@@ -57,14 +60,13 @@ async def publish_now(
     if not piece:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
 
-    if piece.status == "published":
-        meta = piece.metadata_ or {}
-        return {
-            "status": "published",
-            "content_id": str(content_id),
-            "post_id": meta.get("post_id"),
-            "url": meta.get("post_url"),
-        }
+    # APPROVAL GATE: this posts to a client's live account. Only content that went
+    # through moderated approval may be published — anything else (including an
+    # already-published piece, so a double click cannot double-post) is a 409.
+    try:
+        ensure_publishable(piece)
+    except ContentGateError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
     if not await billing.check_quota(db, org_id, resource="posts"):
         raise HTTPException(
@@ -145,6 +147,8 @@ async def schedule_content(
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
+    """Schedule (or reschedule). Only ``approved``/``scheduled`` content; otherwise
+    409 ``{"code": "not_approved", "status": <current>}``."""
     result = await db.execute(
         select(ContentPiece).where(
             ContentPiece.id == content_id,
@@ -154,6 +158,13 @@ async def schedule_content(
     piece = result.scalar_one_or_none()
     if not piece:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
+
+    # APPROVAL GATE: the scheduler publishes whatever is ``scheduled`` when it comes
+    # due, so scheduling is the last point a human-approval check can happen.
+    try:
+        ensure_publishable(piece)
+    except ContentGateError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
     out = await scheduler.schedule_content(db, content_id, body.scheduled_at)
     if out.get("error"):

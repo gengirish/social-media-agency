@@ -1,12 +1,12 @@
 """Content scheduling engine — manages timed publishing queue."""
 
 import asyncio
-from datetime import UTC, date, datetime
-from typing import Any
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Any, Final
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.models.database import get_session_factory
@@ -17,6 +17,23 @@ from agency.services.publishing import publisher
 
 logger = structlog.get_logger()
 
+#: Longest the loop may sleep when nothing is due.
+#:
+#: This is the main cost dial, and it is counted in *wakes*, not queries. Every
+#: wake restarts the idle timer of everything it touches, so one wake costs a
+#: full idle-timeout window of billed compute no matter how cheap the query is.
+#: The loop used to sleep 60s unconditionally and ran a SELECT every tick —
+#: 1,440 queries/day at zero traffic, which pinned Neon awake permanently and
+#: made autosuspend unreachable however it was configured.
+#:
+#: At one hour that is ~24 wakes/day. Raise it to save more, lower it to publish
+#: more punctually. It only bounds lateness for content scheduled on a *different*
+#: machine — see :meth:`SchedulerEngine.notify_scheduled`.
+MAX_SLEEP_SECONDS: Final = 3600
+
+#: Floor, so a backlog of overdue content cannot spin the loop.
+MIN_SLEEP_SECONDS: Final = 5
+
 
 def _merge_metadata(piece: ContentPiece, updates: dict) -> None:
     base = dict(piece.metadata_ or {})
@@ -25,12 +42,30 @@ def _merge_metadata(piece: ContentPiece, updates: dict) -> None:
 
 
 class SchedulerEngine:
-    """Runs a background loop checking for content due for publishing."""
+    """Publishes content when it comes due, sleeping until then in between.
 
-    _running = False
-    #: UTC day the analytics refresh pass last completed. Keeps the daily job on
-    #: the existing one-minute loop without firing it every minute.
-    _last_metrics_refresh_day: date | None = None
+    The loop is deliberately *not* a fixed-interval poll. It computes the next
+    moment it actually has work — the earliest future ``scheduled_at``, or the
+    next daily analytics refresh — and sleeps until then, capped at
+    :data:`MAX_SLEEP_SECONDS`. With an empty queue it issues no queries at all,
+    which is what lets a scale-to-zero database suspend.
+    """
+
+    def __init__(self) -> None:
+        self._running = False
+        #: UTC day the analytics refresh pass last completed.
+        self._last_metrics_refresh_day: date | None = None
+        #: Broken early when content is scheduled on this machine, so a
+        #: near-term post does not wait out a sleep computed before it existed.
+        self._wake = asyncio.Event()
+
+    def notify_scheduled(self) -> None:
+        """Wake the loop now — content was scheduled on this machine.
+
+        Only reaches the local process. A second machine scheduling content will
+        not wake this one; that lateness is what :data:`MAX_SLEEP_SECONDS` bounds.
+        """
+        self._wake.set()
 
     async def start(self):
         """Start the scheduling loop (call at app startup)."""
@@ -54,7 +89,57 @@ class SchedulerEngine:
                 await self.refresh_analytics()
             except Exception as e:
                 logger.error("metrics_refresh_error", error=str(e))
-            await asyncio.sleep(60)  # Check every minute
+
+            try:
+                delay = await self._compute_next_wake()
+            except Exception as e:
+                # Never let a failed lookup degrade into a hot loop.
+                logger.error("scheduler_next_wake_failed", error=str(e))
+                delay = float(MAX_SLEEP_SECONDS)
+
+            logger.info("scheduler_sleeping", seconds=round(delay))
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=delay)
+            except TimeoutError:
+                pass
+            finally:
+                self._wake.clear()
+
+    def _seconds_until_next_daily_refresh(self, now: datetime) -> float:
+        """Seconds until the analytics refresh is next eligible to run."""
+        if self._last_metrics_refresh_day != now.date():
+            return 0.0
+        midnight = datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=UTC)
+        return (midnight - now).total_seconds()
+
+    async def _compute_next_wake(self, now: datetime | None = None) -> float:
+        """Seconds to sleep before there is plausibly work to do.
+
+        Opens its own short-lived session and closes it before the caller
+        sleeps. Holding a connection open across the sleep would defeat the
+        whole change — a scale-to-zero database cannot suspend while a client is
+        connected, however idle that connection is.
+        """
+        now = now or datetime.now(UTC)
+
+        factory = get_session_factory()
+        async with factory() as db:
+            next_due = (
+                await db.execute(
+                    select(func.min(ContentPiece.scheduled_at)).where(
+                        ContentPiece.status == "scheduled",
+                        ContentPiece.scheduled_at > now,
+                    )
+                )
+            ).scalar()
+
+        candidates = [float(MAX_SLEEP_SECONDS), self._seconds_until_next_daily_refresh(now)]
+        if next_due is not None:
+            if next_due.tzinfo is None:
+                next_due = next_due.replace(tzinfo=UTC)
+            candidates.append((next_due - now).total_seconds())
+
+        return max(float(MIN_SLEEP_SECONDS), min(candidates))
 
     async def refresh_analytics(self, now: datetime | None = None) -> dict[str, Any]:
         """Refresh live platform metrics for recently published content.
@@ -82,6 +167,10 @@ class SchedulerEngine:
         async with factory() as db:
             now = datetime.now(UTC)
 
+            # ``min_machines_running = 1`` keeps one machine warm, but
+            # ``auto_start_machines`` can add more under load and each runs its
+            # own engine. Without the lock, two machines select the same rows and
+            # publish the same post twice.
             result = await db.execute(
                 select(ContentPiece)
                 .where(
@@ -89,6 +178,7 @@ class SchedulerEngine:
                     ContentPiece.scheduled_at <= now,
                 )
                 .limit(10)
+                .with_for_update(skip_locked=True)
             )
             pieces = result.scalars().all()
 
@@ -166,6 +256,8 @@ class SchedulerEngine:
         piece.status = "scheduled"
         piece.scheduled_at = scheduled_at
         await db.commit()
+        # Recompute the sleep now the queue changed.
+        self.notify_scheduled()
         return {"status": "scheduled", "scheduled_at": scheduled_at.isoformat()}
 
     async def get_calendar(

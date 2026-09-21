@@ -48,11 +48,14 @@ interface CrossInsight {
 
 interface IndustryBenchmark {
   industry: string;
-  avg_impressions: number;
-  avg_engagement: number;
-  avg_clicks: number;
-  avg_likes: number;
+  status?: "available" | "unavailable";
+  reason?: string;
+  avg_impressions: number | null;
+  avg_engagement: number | null;
+  avg_clicks: number | null;
+  avg_likes: number | null;
   sample_size: number;
+  contributing_orgs?: number;
 }
 
 const TREND_PLATFORMS = [
@@ -484,13 +487,22 @@ export default function AnalyticsPage() {
                 <BenchmarkStat label="Avg engagement" value={benchmarks.avg_engagement} />
                 <BenchmarkStat label="Avg clicks" value={benchmarks.avg_clicks} />
                 <BenchmarkStat label="Avg likes" value={benchmarks.avg_likes} />
-                <BenchmarkStat label="Sample size" value={benchmarks.sample_size} />
+                <BenchmarkStat
+                  label="Sample size"
+                  value={benchmarks.sample_size}
+                  hint={benchmarks.contributing_orgs ? `across ${benchmarks.contributing_orgs} organisations` : undefined}
+                />
               </dl>
             ) : (
+              /* Show the server's own reason. It distinguishes "no data yet"
+                 from the cross-org privacy floor, and only the first of those
+                 is something the user can act on. */
               <p className="mt-4 text-sm text-amber-800">
-                {appliedIndustry
-                  ? "No benchmark rows for that industry yet. Try another industry or add analytics snapshots."
-                  : "Enter an industry and click Load benchmarks, or rely on cross-campaign insights below."}
+                {benchmarks?.reason
+                  ? benchmarks.reason
+                  : appliedIndustry
+                    ? "No benchmark rows for that industry yet. Try another industry or add analytics snapshots."
+                    : "Enter an industry and click Load benchmarks, or rely on cross-campaign insights below."}
               </p>
             )}
           </SectionCard>
@@ -527,11 +539,17 @@ export default function AnalyticsPage() {
   );
 }
 
-function BenchmarkStat({ label, value }: { label: string; value: number }) {
+function BenchmarkStat({ label, value, hint }: { label: string; value: number | null; hint?: string }) {
+  // `null` means the metric was not measured, which is not the same as zero —
+  // the backend deliberately keeps SQL NULL rather than coercing to 0, so
+  // rendering a 0 here would turn "no data" into a measurement.
   return (
     <div className="rounded-lg border border-line bg-canvas/40 p-4">
       <dt className="text-xs text-muted">{label}</dt>
-      <dd className="mt-1 font-display text-xl font-semibold tabular-nums text-ink">{value}</dd>
+      <dd className="mt-1 font-display text-xl font-semibold tabular-nums text-ink">
+        {value === null ? <span className="text-base font-medium text-muted">Not measured</span> : value}
+      </dd>
+      {hint && <dd className="mt-0.5 text-xs text-muted">{hint}</dd>}
     </div>
   );
 }
