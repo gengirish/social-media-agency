@@ -1,11 +1,24 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { IBM_Plex_Mono, Inter, Space_Grotesk } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
-import { Toaster } from "sonner";
 import { ClerkTokenSync } from "@/components/clerk-token-sync";
+import { ThemedToaster } from "@/components/theme";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const sans = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
+const display = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-display",
+  display: "swap",
+});
+const mono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "CampaignForge AI",
@@ -14,8 +27,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} scroll-smooth`}>
+    // suppressHydrationWarning: THEME_INIT_SCRIPT adds `dark` to <html> before
+    // React hydrates, which is intentional and would otherwise warn.
+    <html lang="en" suppressHydrationWarning className={`${sans.variable} ${display.variable} ${mono.variable}`}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
+      <body className="font-sans scroll-smooth">
         {/*
           Post-auth landing is set here, not via env. Clerk v7 dropped
           NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL entirely, so that variable is
@@ -27,10 +45,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ClerkProvider
           signInFallbackRedirectUrl="/campaigns"
           signUpFallbackRedirectUrl="/campaigns"
+          appearance={{ variables: { colorPrimary: "#F2C14E", colorTextOnPrimaryBackground: "#1A1406" } }}
         >
           <ClerkTokenSync />
           {children}
-          <Toaster position="top-right" richColors />
+          <ThemedToaster />
         </ClerkProvider>
       </body>
     </html>

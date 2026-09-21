@@ -1,12 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ElementType } from "react";
+import { Suspense, useCallback, useEffect, useState, type ElementType } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Settings, Key, Bell, Globe, Save, Plus, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { canPublish, publishUnavailableReason } from "@/lib/platforms";
 
 type Tab = "general" | "platforms" | "api-keys" | "notifications";
+
+const TABS: readonly Tab[] = ["general", "platforms", "api-keys", "notifications"];
+
+function isTab(value: string | null): value is Tab {
+  return TABS.includes(value as Tab);
+}
 
 interface ApiKeyRow {
   id: string;
@@ -85,7 +92,22 @@ const PLANNED_NOTIFICATION_TYPES = [
 ] as const;
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("general");
+  // useSearchParams needs a Suspense boundary to keep the route prerenderable.
+  return (
+    <Suspense>
+      <SettingsContent />
+    </Suspense>
+  );
+}
+
+function SettingsContent() {
+  // The active tab lives in the URL (?tab=platforms) so the app nav can deep-link
+  // Setup › Accounts here and highlight the right group.
+  const router = useRouter();
+  const tabParam = useSearchParams().get("tab");
+  const activeTab: Tab = isTab(tabParam) ? tabParam : "general";
+  const setActiveTab = (tab: Tab) =>
+    router.replace(tab === "general" ? "/settings" : `/settings?tab=${tab}`, { scroll: false });
   const [orgName, setOrgName] = useState("");
   const [domain, setDomain] = useState("");
   const [timezone, setTimezone] = useState("UTC");
