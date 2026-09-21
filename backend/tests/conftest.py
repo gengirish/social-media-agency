@@ -391,6 +391,8 @@ async def create_content_row(
     *,
     platform: str = "linkedin",
     status: str = "draft",
+    body: str = "Test body",
+    hashtags: list[str] | None = None,
 ) -> UUID:
     from agency.models.tables import ContentPiece
 
@@ -402,8 +404,8 @@ async def create_content_row(
         content_type="social_post",
         platform=platform,
         title="Test piece",
-        body="Test body",
-        hashtags=[],
+        body=body,
+        hashtags=list(hashtags or []),
         metadata_={},
         media_urls=[],
         ai_generated=True,

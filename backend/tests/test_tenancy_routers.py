@@ -44,8 +44,10 @@ async def orgs(session_factory):
     user_a = await create_user_row(session_factory, org_a, full_name="Alice A")
     user_b = await create_user_row(session_factory, org_b, full_name="Bob B")
 
-    content_a = await create_content_row(session_factory, org_a, client_a)
-    content_b = await create_content_row(session_factory, org_b, client_b)
+    # Approved: the publishing tests below exercise the account lookup that sits
+    # *behind* the approval gate, so the pieces must be publishable.
+    content_a = await create_content_row(session_factory, org_a, client_a, status="approved")
+    content_b = await create_content_row(session_factory, org_b, client_b, status="approved")
 
     return {
         "org_a": org_a,

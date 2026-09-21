@@ -61,11 +61,34 @@ The stream endpoint uses `?token=` query param because `EventSource` cannot send
 | POST | `/content/video-script` | Yes | `create_video_script` | Generate video/podcast scripts |
 | GET | `/content/{content_id}` | Yes | `get_content` | Single content piece |
 | GET | `/content/{content_id}/analytics` | Yes | `get_analytics` | Analytics snapshots for content |
-| PATCH | `/content/{content_id}` | Yes | `update_content` | Partial update (title, body, hashtags, status) |
+| PATCH | `/content/{content_id}` | Yes | `update_content` | Partial update (title, body, hashtags, status). `status` only `draft`/`rejected` — see [Approval gate](#approval-gate) |
 | POST | `/content/{content_id}/repurpose` | Yes | `repurpose_content` | Generate platform-adapted variants |
 | POST | `/content/{content_id}/variants` | Yes | `generate_variants` | A/B variant generation |
-| POST | `/content/{content_id}/approve` | Yes | `approve_content` | Set status to `approved` |
+| POST | `/content/{content_id}/approve` | Yes | `approve_content` | Moderate, then approve; `?override=true` approves over flagged issues — see [Approval gate](#approval-gate) |
 | POST | `/content/{content_id}/generate-image` | Yes | `generate_image` | AI image generation via fal.ai |
+
+### Approval gate
+
+Product rule 3: moderation runs before approval, and only approved content can be scheduled or published. Publishing is real (X, LinkedIn, Facebook), so these gates guard live client accounts. Logic lives in `services/content_approval.py` + `services/moderation.py`.
+
+Lifecycle (DB values; `draft` is labelled *Pending* in the UI): `draft`/`rejected` → **approve** → `approved` → **schedule** → `scheduled` → `published`, or `approved`/`scheduled` → **publish now** → `published`.
+
+**`POST /content/{id}/approve[?override=true]`** — only `draft` or `rejected` pieces.
+
+| Outcome | Status | Body |
+|---|---|---|
+| No issues | 200 | `{"id", "status": "approved", "moderation": {"status": "passed"\|"unavailable", "issues": []}}` |
+| Issues, no override | 409 | `detail = {"code": "moderation_flagged", "issues": [{"severity": "low"\|"medium"\|"high", "message"}]}` — status unchanged |
+| Issues, `override=true` | 200 | `moderation.status = "overridden"`; `metadata.moderation` records `issues`, `override_by` (caller user id), `at` |
+| Not `draft`/`rejected` | 409 | `detail = {"code": "invalid_status", "status": <current>}` |
+
+`moderation.status = "unavailable"` means the LLM check failed open (error, timeout, unparseable reply, no provider) — the piece is approved, `moderation_unavailable` is logged, and `metadata.moderation.status` records it. The deterministic checks (platform character limit incl. appended hashtags; brand `vocabulary_exclude`) run regardless and still flag when the LLM is down.
+
+**`PATCH /content/{id}`** — `status` may be set to `draft` or `rejected` only. `approved`/`scheduled`/`published` → 400 `{"code": "status_via_dedicated_endpoint"}`; any other value → 400 `{"code": "unsupported_status"}`. Changing `body` or `hashtags` of an `approved`/`scheduled` piece **resets it to `draft`** (clears `scheduled_at` and `metadata.moderation`) — edited content must be re-approved.
+
+**`POST /publishing/{id}/schedule`, `POST /publishing/{id}/publish`** — only `approved` or `scheduled` pieces; otherwise 409 `{"code": "not_approved", "status": <current>}` (including `published`, so a repeated publish cannot double-post). The scheduler loop only ever publishes `scheduled` rows.
+
+**Portal** `PATCH /portal/{org_slug}/content/{id}` with `decision: "approve"` runs the same moderation with **no override**; a flag returns the same 409 `moderation_flagged` shape.
 
 ## Stats
 **Status**: [LIVE]
@@ -92,8 +115,8 @@ The stream endpoint uses `?token=` query param because `EventSource` cannot send
 
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
-| POST | `/publishing/{content_id}/publish` | Yes | `publish_now` | Publish immediately via PlatformPublisher |
-| POST | `/publishing/{content_id}/schedule` | Yes | `schedule_content` | Schedule content; body: `scheduled_at` |
+| POST | `/publishing/{content_id}/publish` | Yes | `publish_now` | Publish immediately via PlatformPublisher; `approved`/`scheduled` only, else 409 `not_approved` |
+| POST | `/publishing/{content_id}/schedule` | Yes | `schedule_content` | Schedule content; body: `scheduled_at`; `approved`/`scheduled` only, else 409 `not_approved` |
 | GET | `/publishing/calendar` | Yes | `get_calendar` | Scheduled/published items in date range |
 
 ## Team
@@ -202,7 +225,7 @@ The stream endpoint uses `?token=` query param because `EventSource` cannot send
 
 | GET | `/portal/{org_slug}/campaigns` | No | `portal_campaigns` | White-label campaign list |
 | GET | `/portal/{org_slug}/content` | No | `portal_content` | White-label content list |
-| PATCH | `/portal/{org_slug}/content/{content_id}` | No | `portal_review_content` | Client approve/reject |
+| PATCH | `/portal/{org_slug}/content/{content_id}` | No | `portal_review_content` | Client approve (moderated, no override — 409 `moderation_flagged`) / reject |
 
 ## Slack
 **Status**: [LIVE]

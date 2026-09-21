@@ -78,6 +78,27 @@ Platform publishing. Singleton: `publisher = PlatformPublisher()`.
 - `_publish_facebook(content, credentials)` — Facebook Graph API **[LIVE]**
 - `_publish_instagram(content, credentials)` — **[STUB]** returns an explicit "not available yet" message. Text-only posts are unsupported; a real implementation needs the Meta Graph container+publish flow with media
 
+## Moderation
+**Status**: [LIVE]
+**File**: `services/moderation.py`
+
+Pre-approval moderation (product rule 3).
+
+- `moderate_content(body, platform, brand_context, *, hashtags=None) -> ModerationResult` — `status` `passed`/`flagged`/`unavailable`, `issues: [{severity, message}]`, `llm_checked`. Never raises.
+- Deterministic checks: `check_char_limit` (`PLATFORM_CHAR_LIMITS`: X 280, LinkedIn 3000, Instagram/TikTok 2200, Facebook 63206 — measured on `published_text()`, i.e. with the hashtags the publisher appends) and `check_excluded_vocabulary` (brand `vocabulary_exclude`, whole-word, case-insensitive).
+- Judgement check via `get_brain_llm()` (policy risk, unverifiable/guaranteed claims, fabricated scarcity, brand vocabulary/voice), capped at `MODERATION_TIMEOUT_SECONDS`. **Fails open**: error/timeout/unparseable → `unavailable`, logs `moderation_unavailable`.
+- `load_brand_context(db, client_id, org_id)` — client + brand profile, both filtered on `org_id`.
+
+## Content Approval
+**Status**: [LIVE]
+**File**: `services/content_approval.py`
+
+The approval gate; raises `ContentGateError(status_code, detail)` which routers map to HTTP errors.
+
+- `approve_content_piece(db, piece, *, org_id, override, user_id)` — `draft`/`rejected` only; moderates; records `metadata.moderation`; commits. Used by `/content/{id}/approve` and the portal (override always false).
+- `ensure_publishable(piece)` — `approved`/`scheduled` only; used by schedule and publish-now.
+- `apply_content_edit(piece, ...)` — PATCH logic: refuses gated statuses; body/hashtag edits reset approved/scheduled content to `draft`.
+
 ## Scheduler
 **Status**: [LIVE]
 **File**: `services/scheduler.py`

@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from agency.dependencies import get_db
 from agency.models.tables import Campaign, ContentPiece, Organization, WhiteLabel
+from agency.services.content_approval import ContentGateError, approve_content_piece
 
 router = APIRouter(prefix="/portal", tags=["Client Portal"])
 
@@ -128,7 +129,13 @@ async def portal_review_content(
     body: dict,
     db=Depends(get_db),
 ):
-    """Allow clients to approve/reject content via portal."""
+    """Allow clients to approve/reject content via portal.
+
+    ``approve`` goes through the same moderated approval as the dashboard
+    (``services/content_approval.py``) with **no override**: a flagged piece returns
+    409 ``{"code": "moderation_flagged", "issues": [...]}`` and stays unchanged —
+    only an authenticated agency user may approve over moderation issues.
+    """
     org = await _resolve_org(db, org_slug)
     if not org:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
@@ -146,14 +153,20 @@ async def portal_review_content(
 
     decision = body.get("decision", "")
     if decision == "approve":
-        piece.status = "approved"
-    elif decision == "reject":
+        try:
+            approved = await approve_content_piece(db, piece, org_id=org.id, override=False)
+        except ContentGateError as exc:
+            raise HTTPException(exc.status_code, exc.detail) from None
+        return {
+            "status": "approved",
+            "content_id": str(content_id),
+            "moderation": approved["moderation"],
+        }
+    if decision == "reject":
         piece.status = "rejected"
-    else:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "decision must be 'approve' or 'reject'",
-        )
-
-    await db.commit()
-    return {"status": piece.status, "content_id": str(content_id)}
+        await db.commit()
+        return {"status": piece.status, "content_id": str(content_id)}
+    raise HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        "decision must be 'approve' or 'reject'",
+    )

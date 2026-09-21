@@ -4,6 +4,19 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260921 — Approval Gate (moderation before approval)
+
+Publishing posts to live X/LinkedIn/Facebook accounts, and until now nothing stood between a draft and that: `PATCH /content/{id}` accepted any status string, `schedule` and `publish` accepted any piece, and approve set `approved` unconditionally. Now (cadence port plan §4, phase 2):
+
+- **`POST /content/{id}/approve` moderates first** (`services/moderation.py`, brain tier). Issues → 409 `moderation_flagged`; `?override=true` approves anyway and records `override_by`/`at` in `metadata.moderation`. Only `draft`/`rejected` can be approved (409 `invalid_status`). LLM failure **fails open** as `moderation.status = "unavailable"` with a `moderation_unavailable` log; the character-limit and excluded-vocabulary checks are code-level and still flag without the LLM.
+- **Schedule and publish-now accept only `approved`/`scheduled`** → otherwise 409 `not_approved`. This includes `published`: the old idempotent 200 for an already-published piece is now a 409.
+- **`PATCH /content/{id}`** can set `status` only to `draft`/`rejected`; editing body/hashtags of approved or scheduled content resets it to `draft`.
+- **Portal approve** runs the same moderation, never with override.
+
+**Behaviour change:** anything scripted to schedule or publish drafts now gets 409s. A publish that failed leaves the piece `failed`; to retry, PATCH it to `draft` and re-approve.
+
+---
+
 ## 260818 — Groq Provider + Production LLM Activation
 
 **`groq` added as a seventh LLM provider.** It is OpenAI-compatible but had no home here, so a `GROQ_API_KEY` had nowhere to go. Registering it took **two** edits, not one: a `ProviderSpec` *and* an entry in `DEFAULT_PROVIDER_ORDER`. `_configured_order()` filters names against that tuple, so a provider with settings and a spec but no entry there is dropped from the order silently — no error, no log, it simply never gets picked. A test now asserts groq is selectable by explicit order, which is what fails if a future provider is added the same half-way.
