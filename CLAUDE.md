@@ -120,6 +120,14 @@ Per tier, the first provider in `LLM_PROVIDER_ORDER` (default `anthropic,google,
 
 If no provider is configured, `get_llm()` raises naming the variables to set. Do not restore a silent default: the previous code built a client with an empty key, which killed the pipeline inside the first agent and left campaigns stuck in `running` with no diagnostic.
 
+### Tracing (Langfuse, `services/tracing.py`)
+
+Off unless `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are both set; startup logs `langfuse_enabled` or `langfuse_disabled`. Pass `config=trace_config("<feature-name>", org_id=...)` to every `ainvoke`/`astream` you add — it returns `{}` when disabled, so there is nothing to branch on. Tracing is attached per call, **not** inside `get_llm()`: binding a handler there as well would double-count every LLM call inside the graph.
+
+A campaign is **one trace** across the human-review pause: `_campaign_trace` seeds the trace id with the campaign id, because the resume runs in a later request (possibly after a restart), where Langfuse's in-memory resume linking cannot reach. Use `merge_config` onto the graph config so `configurable.thread_id` survives.
+
+Traces carry client briefs and brand data, so all input, output and metadata is run through `mask_trace_data` before export. `LANGFUSE_MASK_MODE=pii` (the default) scrubs emails, phone numbers, cards, credentials and IPs but still sends the brief text. `full` redacts every string except the lookup ids in `_FULL_MODE_KEEP_KEYS`, which is what to use when client content must not leave the server. Unknown values fall back to `full`. A new metadata key carrying an id you need in `full` mode must be added to that allowlist, or it will arrive redacted.
+
 `GET /api/v1/health/llm` (authenticated) reports the resolved provider, model, and fallback chain per tier without exposing key material.
 
 ### Auth & tenant isolation

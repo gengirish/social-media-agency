@@ -74,7 +74,7 @@ def fake_llm(monkeypatch):
     state = {"payload": "{}", "invocations": 0, "prompts": []}
 
     class _FakeLLM:
-        async def ainvoke(self, prompt):
+        async def ainvoke(self, prompt, config=None):
             state["invocations"] += 1
             state["prompts"].append(prompt)
             payload = state["payload"]

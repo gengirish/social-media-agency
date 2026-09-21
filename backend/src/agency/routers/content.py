@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.schemas import ContentPieceResponse, ContentUpdateRequest
 from agency.models.tables import Client, ContentPiece
+from agency.services.tracing import trace_config
 from agency.services.webhook_dispatcher import EVENT_CONTENT_APPROVED, dispatch_webhook
 
 logger = structlog.get_logger()
@@ -299,7 +300,9 @@ listed above. Every object must carry the platform name it belongs to:
 [{{"platform": "<name>", "title": "...", "body": "...", "hashtags": ["..."]}}]"""
 
     llm = get_lite_llm()
-    response = await llm.ainvoke(prompt)
+    response = await llm.ainvoke(
+        prompt, config=trace_config("repurpose", org_id=org_id, user_id=user.get("sub"))
+    )
     raw = response.content if hasattr(response, "content") else str(response)
     parsed = parse_llm_json(raw if isinstance(raw, str) else str(raw))
 
@@ -399,7 +402,9 @@ Return ONLY a JSON array with one object per variant, in label order:
 [{{"label": "<label>", "title": "...", "body": "...", "hashtags": ["..."]}}]"""
 
     llm = get_lite_llm()
-    response = await llm.ainvoke(prompt)
+    response = await llm.ainvoke(
+        prompt, config=trace_config("ab-variants", org_id=org_id, user_id=user.get("sub"))
+    )
     raw = response.content if hasattr(response, "content") else str(response)
     parsed = parse_llm_json(raw if isinstance(raw, str) else str(raw))
 
