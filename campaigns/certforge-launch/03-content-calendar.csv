@@ -1,0 +1,36 @@
+Date,Weekday,Day,Phase,Primary Action,Platform,Copy/Asset Source,Status
+2026-09-22,Tue,1,P0 Setup,"Pull baselines (signups, active issuers, credentials issued) from CertForge admin; write into control doc §6",Internal,00 §6,Not started
+2026-09-23,Wed,2,P0 Setup,Decide + ship fix for homepage 'one upload' vs Starter-only CSV; reconcile passports / email delivery wording,Site,00 §1 inconsistencies,Not started
+2026-09-24,Thu,3,P0 Setup,Add web analytics (GA4/Plausible) + generate UTM links for every copy id + Paid setup: Google tag/GA4 sign_up event; create Google Ads + LinkedIn Campaign Manager accounts with $100 cap (04 §2),Site/Analytics,00 §6,Not started
+2026-09-25,Fri,4,P0 Setup,Issue AI Bootcamp certificates via CertForge; get one graduate's consent; set {DEMO_VERIFY_URL} — run as end-to-end test: send_email on → graduate opens verify page → claims into passport; log results in 00 §2,CertForge/Email,00 §2,Not started
+2026-09-26,Sat,5,P0 Setup,Build outreach tracker + first 40 prospects (ICP A 20 / B 10 / C 10); design lead-magnet PDF; create visuals from creative briefs,Sheet/Design,02 Part A+E · 01 §9,Not started
+2026-09-27,Sun,6,P0 Setup,"Update founder + company LinkedIn headline/About/featured link to sign-up (UTM) + Build Google Search campaign (3 ad groups, keywords, full negative list) — paused (04 §3)",LinkedIn,01 §1,Not started
+2026-09-28,Mon,7,P1 Launch,Founder launch post (P1 Trust),LinkedIn,01 §2 launch post,Not started
+2026-09-29,Tue,8,P1 Launch,Outreach: 10 ICP A emails (day-0) + 10 LinkedIn connection notes,Email/LinkedIn,02 Part B · 01 §6,Not started
+2026-09-30,Wed,9,P1 Launch,Company page post #1 + X thread 'how verification by ID works',LinkedIn/X,01 §3 · 01 §4,Not started
+2026-10-01,Thu,10,P1 Launch,Founder post: myth vs fact — PDF certificates (P1),LinkedIn,01 §2,Not started
+2026-10-02,Fri,11,P1 Launch,Outreach: 10 ICP B + 5 ICP C emails; day-3 follow-ups to Mon batch,Email,02 Part B,Not started
+2026-10-03,Sat,12,P1 Launch,Share lead magnet in 2 organiser/edtech groups (with admin permission),WhatsApp/Telegram,01 §5 · 02 Part A,Not started
+2026-10-04,Sun,13,P1 Launch,"Weekly review: signups, activations, replies → log in control doc + GATE: homepage hero fix live? Yes → Google on /sign-up from Mon; No → hold Google to Phase 3 on /pricing (04 §1)",Internal,00 §6,Not started
+2026-10-05,Mon,14,P2 Proof,"Founder post: live demo walkthrough using {DEMO_VERIFY_URL} (P1/P2) + Google Search ON ($70, ≈$3.30/day)",LinkedIn,01 §2,Not started
+2026-10-06,Tue,15,P2 Proof,Outreach: day-7 follow-ups; 15 new ICP A/B touches,Email/LinkedIn,02 Part B,Not started
+2026-10-07,Wed,16,P2 Proof,Founder post: behind the build — validation before signing (P2 Time),LinkedIn,01 §2,Not started
+2026-10-08,Thu,17,P2 Proof,"API post for ICP D + 2 X posts; share API docs in 1 dev community + Paid: search terms review, add negatives (04 §3)",LinkedIn/X,01 §2 API · 01 §4,Not started
+2026-10-09,Fri,18,P2 Proof,Company page post #2 + nurture emails live for all Community sign-ups,LinkedIn/Email,01 §3 · 02 Part C,Not started
+2026-10-10,Sat,19,P2 Proof,Personal check-in to every signup that hasn't issued a credential,Email,02 Part C,Not started
+2026-10-11,Sun,20,P2 Proof,Weekly review + adjust: double down on the best-replying ICP + Paid: search terms review; pick best organic founder post for LinkedIn boost (04 §4),Internal,00 §6,Not started
+2026-10-12,Mon,21,P3 Objections,Founder post: revoke a wrong certificate / tamper-evident explained (P3 Control),LinkedIn,01 §2,Not started
+2026-10-13,Tue,22,P3 Objections,Outreach: 15 new touches + follow-ups; offer a 15-min walkthrough + LinkedIn Thought Leader boost ON ($10/day × 3),Email/LinkedIn,02 Part B,Not started
+2026-10-14,Wed,23,P3 Objections,Founder post: Open Badges 3.0 — your credentials aren't trapped (P4),LinkedIn,01 §2,Not started
+2026-10-15,Thu,24,P3 Objections,Company page post #3 + X post on revocation + LinkedIn boost ends; search terms review,LinkedIn/X,01 §3 · 01 §4,Not started
+2026-10-16,Fri,25,P3 Objections,Founder post: checklist carousel from lead magnet,LinkedIn,01 §2 · 02 Part A,Not started
+2026-10-17,Sat,26,P3 Objections,Answer objections in comments/DMs using objection bank; log new objections,LinkedIn,01 §8,Not started
+2026-10-18,Sun,27,P3 Objections,Weekly review; list activated issuers for Phase-4 direct offers + Paid: pause any ad group at $20 spend with 0 sign-ups (04 §5),Internal,00 §6,Not started
+2026-10-19,Mon,28,P4 Convert,Founder post: 'coming soon' roadmap — in-build items clearly labelled,LinkedIn,01 §2 roadmap,Not started
+2026-10-20,Tue,29,P4 Convert,Direct 'Talk to us' email to every activated Community issuer with a cohort date,Email,02 Part C/D,Not started
+2026-10-21,Wed,30,P4 Convert,Founder post: direct offer — next cohort's certificates on Starter,LinkedIn,01 §2 Phase-4 offer,Not started
+2026-10-22,Thu,31,P4 Convert,Company page post #4 + X recap + Paid: search terms review; shift budget to ad group with most activated issuers,LinkedIn/X,01 §3 · 01 §4,Not started
+2026-10-23,Fri,32,P4 Convert,Close loop on all open 'Talk to us' threads; send upgrade steps,Email,02 Part D,Not started
+2026-10-24,Sat,33,P4 Convert,"Founder post: what we learned this month (real numbers only, or none)",LinkedIn,00 §8,Not started
+2026-10-25,Sun,34,P4 Convert,"Pull final numbers for retro + Paid: Google OFF; export spend, clicks, search terms",Internal,00 §6,Not started
+2026-10-26,Mon,35,Review,Retro vs KPIs; decide next sprint (paid ads? more ICP C?),Internal,00 §6,Not started
