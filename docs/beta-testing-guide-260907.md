@@ -57,7 +57,7 @@ The core loop. If only one track gets run, make it this one.
 
 | # | Do this | Watch for | Report if |
 |---|---|---|---|
-| 1.1 | **Magic Brief.** Go to `/campaigns/new/magic-brief` **by URL** — there is no nav link yet (known, see §4). Paste a client's website URL. | Does the generated brand profile actually match the site? Voice, audience, positioning. | The profile is generic, wrong, or invents facts not on the site. |
+| 1.1 | **Read website.** `/clients` → **Add Client**, paste a client's website URL, press **Read website**, then **Create Client**. | Does the generated brand profile actually match the site? Voice, audience, positioning. | The profile is generic, wrong, or invents facts not on the site. |
 | 1.2 | **Create a campaign.** `/campaigns/new`. Set objective, dates, and pick channels. | Instagram and TikTok carry a "draft only" badge. That is intentional. | The badge is missing, or a badged channel behaves as if it will publish. |
 | 1.3 | **Watch the pipeline live.** Stay on the campaign detail page. | Progress streams over SSE. Strategy and SEO should move together, then Content and Ads together. | The stream dies, stalls with no message, or the two fan-outs run one after another instead of together. |
 | 1.4 | **Hit the review gate.** The run halts at Human Review. Read every generated piece. | Is this genuinely client-ready, or does it need a rewrite? This is the single most important judgement you can give us. | Copy is off-brand, factually wrong, or generic enough that you would not send it. |
@@ -131,7 +131,6 @@ Everything here is already on the board. Each is visibly marked in the UI rather
 
 | Issue | Workaround |
 |---|---|
-| Magic Brief has no nav entry point | Go to `/campaigns/new/magic-brief` directly. |
 | `/templates` has no nav link, and launching a template drops its channels/objective | Reachable by URL; expect a blank wizard. Create campaigns manually for now. |
 | OAuth return is not handled in-app | Report how far the connect flow got. |
 | Image generation calls the wrong fal.ai endpoint and always errors | Skip it. Already diagnosed. |

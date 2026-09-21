@@ -38,7 +38,7 @@ Defined as data in `src/lib/navigation.ts` (`NAV_GROUPS`) and resolved by `resol
 - A group pill links to its first tab. Sub-tabs render only when the active group has more than one.
 - `/settings?tab=platforms` resolves to **Setup › Accounts**, not Settings › Workspace: a tab with a matching `queryTab` outranks a path-only match, and a longer path outranks a shorter one.
 - The breadcrumb reads `CAMPAIGNFORGE/<TAB>`. The brand links to `/campaigns`.
-- Not in the nav: `/campaigns/new`, `/campaigns/new/magic-brief`, `/campaigns/[id]`, `/clients/[id]` (reached from their parent pages; they resolve to the parent's tab by path prefix). **Magic Brief has no link anywhere in the UI** — reachable by URL only.
+- Not in the nav: `/campaigns/new`, `/campaigns/[id]`, `/clients/[id]` (reached from their parent pages; they resolve to the parent's tab by path prefix).
 
 ## Pages
 
@@ -60,11 +60,7 @@ Campaign list with `CampaignStatusBadge`. Links to detail and `/campaigns/new`. 
 
 ### New Campaign `/campaigns/new`
 **File**: `src/app/(dashboard)/campaigns/new/page.tsx` | **Client**
-3-step wizard: Brief → Channels/Budget → Review. Accepts a Magic Brief draft from sessionStorage (`campaignforge_magic_brief_client`) and creates the client + brand profile from it. Calls `api.createCampaign()` then navigates to detail.
-
-### Magic Brief `/campaigns/new/magic-brief`
-**File**: `src/app/(dashboard)/campaigns/new/magic-brief/page.tsx` | **Client**
-URL input → `api.extractBrand()` → brand profile → "Use This Profile" saves to sessionStorage and redirects to the wizard. Restyled 260921. **No in-app link points here.**
+3-step wizard: Brief → Channels/Budget → Review. Calls `api.createCampaign()` then navigates to detail.
 
 ### Campaign Detail `/campaigns/[id]`
 **File**: `src/app/(dashboard)/campaigns/[id]/page.tsx` | **Client**
@@ -76,7 +72,7 @@ URL input → `api.extractBrand()` → brand profile → "Use This Profile" save
 
 ### Clients `/clients` — Setup › Clients
 **File**: `src/app/(dashboard)/clients/page.tsx` | **Client**
-Client list + "New Client" `SectionCard` form. `api.getClients()` / `api.createClient()`.
+Client list + "New Client" `SectionCard` form. `api.getClients()` / `api.createClient()`. **Read website** calls `api.extractBrand()` (`POST /magic-brief`) to draft brand name, industry and description — only into empty or previously-read fields unless "Replace details I've already typed" is ticked — and previews voice + audience. On create, that profile is saved via `api.createBrandProfile()`; a profile failure warns but keeps the client.
 
 ### Client Detail `/clients/[id]`
 **File**: `src/app/(dashboard)/clients/[id]/page.tsx` | **Client**
@@ -138,4 +134,4 @@ H1 "Campaign Templates". Category filter, template cards, **Use Template** launc
 **File**: `src/app/(dashboard)/team/page.tsx` | **Client**
 Member list with role badges, invite form (email + role), amber banner that roles are labels, not restrictions.
 
-**Total: 17 page files.** `/amplify` was added 260921; the dead `src/app/(dashboard)/page.tsx` (a second `/`) was removed 260818, so there is no in-app dashboard-overview page — `components/dashboard-content.tsx` is no longer imported anywhere.
+**Total: 16 page files.** `/amplify` was added and `/campaigns/new/magic-brief` removed 260921; the dead `src/app/(dashboard)/page.tsx` (a second `/`) was removed 260818, so there is no in-app dashboard-overview page — `components/dashboard-content.tsx` is no longer imported anywhere.

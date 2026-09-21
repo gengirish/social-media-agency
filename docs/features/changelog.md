@@ -4,6 +4,16 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260921 — Read website on the Clients form
+
+**The website-reading AI now lives on `/clients`.** `POST /api/v1/magic-brief` already extracted a brand profile from a URL, but only `/campaigns/new/magic-brief` called it — adding a client by hand meant typing everything and never capturing a brand voice. The New Client form now has a **Read website** button that drafts brand name, industry and description and previews voice and target audience. Nothing saves until the user presses Create Client, which also stores the extracted brand profile.
+
+By default a read only fills empty fields or fields the previous read filled, so typed values survive a re-read; a **Replace details I've already typed** checkbox lets it overwrite them.
+
+**Removed:** the `/campaigns/new/magic-brief` page, its sessionStorage hand-off banner on `/campaigns/new`, and `e2e/magic-brief.spec.ts` (replaced by an LLM-gated test in `e2e/clients.spec.ts`). Analytics: `magic-brief-client-create` is gone; `client-website-read` is new, and `client-create` carries `from_website_read`.
+
+---
+
 ## 260921 — Cadence Port: Design System, Approval Gate, Queue, Amplify
 
 Ports the *design and flow* of the Cadence Crew prototype (not its code) — plan and open decisions in [`docs/cadence-port-plan-260921.md`](../cadence-port-plan-260921.md). Phases 0–5 shipped; phase 6 (authenticated client portal) is not started.

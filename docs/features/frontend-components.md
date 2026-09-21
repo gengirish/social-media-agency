@@ -171,7 +171,7 @@ See [Design System](#design-system).
 `connectAgentStream(campaignId, token, onEvent, onError?)` — Opens EventSource to SSE endpoint with JWT in query param. Returns teardown function.
 
 ### `lib/analytics.ts`
-Product-analytics client. Batches events to `POST /api/v1/events` (max 50 per request). `trackFeature("kebab-name")` is the call to add at the point of success for any new flow that should appear in the adoption table. Currently fired for: `campaign-create`, `client-create`, `magic-brief-client-create`, `content-publish`, `post-approve`, `post-schedule`, `post-reschedule`, `amplify`.
+Product-analytics client. Batches events to `POST /api/v1/events` (max 50 per request). `trackFeature("kebab-name")` is the call to add at the point of success for any new flow that should appear in the adoption table. Currently fired for: `campaign-create`, `client-create` (with `from_website_read`), `client-website-read`, `content-publish`, `post-approve`, `post-schedule`, `post-reschedule`, `amplify`.
 
 ### `lib/utils.ts`
 `cn(...inputs)` — `clsx` + `tailwind-merge` for class name composition.

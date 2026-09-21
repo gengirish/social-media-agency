@@ -2,24 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, type BrandProfileRequest, type Client, type CreateClientRequest } from "@/lib/api";
+import { api, type Client } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
-import { Sparkles, ArrowLeft, ArrowRight, Rocket, Wand2, Check } from "lucide-react";
+import { Sparkles, ArrowLeft, ArrowRight, Rocket, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { canPublish } from "@/lib/platforms";
 import { Button } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/panel";
 import { SectionCard } from "@/components/ui/section-card";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
-
-const MAGIC_BRIEF_STORAGE_KEY = "campaignforge_magic_brief_client";
-
-type MagicBriefStored = {
-  clientDraft: CreateClientRequest;
-  brandProfile: BrandProfileRequest;
-  targetAudienceHint?: string;
-};
 
 const STEP_LABELS = ["Brief", "Channels", "Launch"] as const;
 
@@ -47,46 +39,10 @@ export default function NewCampaignPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [additionalContext, setAdditionalContext] = useState("");
-  const [magicBriefDraft, setMagicBriefDraft] = useState<MagicBriefStored | null>(null);
-  const [creatingFromBrief, setCreatingFromBrief] = useState(false);
 
   useEffect(() => {
     api.getClients().then((res) => setClients(res.items)).catch(() => {});
   }, []);
-
-  useEffect(() => {
-    const raw = sessionStorage.getItem(MAGIC_BRIEF_STORAGE_KEY);
-    if (!raw) return;
-    try {
-      const data = JSON.parse(raw) as MagicBriefStored;
-      if (data?.clientDraft?.brand_name) {
-        setMagicBriefDraft(data);
-        if (data.targetAudienceHint) setTargetAudience(data.targetAudienceHint);
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  async function handleCreateClientFromMagicBrief() {
-    if (!magicBriefDraft) return;
-    setCreatingFromBrief(true);
-    try {
-      const client = await api.createClient(magicBriefDraft.clientDraft);
-      await api.createBrandProfile(client.id, magicBriefDraft.brandProfile);
-      sessionStorage.removeItem(MAGIC_BRIEF_STORAGE_KEY);
-      setMagicBriefDraft(null);
-      const res = await api.getClients();
-      setClients(res.items);
-      setClientId(client.id);
-      trackFeature("magic-brief-client-create");
-      toast.success("Client created from Magic Brief");
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Could not create client");
-    } finally {
-      setCreatingFromBrief(false);
-    }
-  }
 
   function toggleChannel(ch: string) {
     setChannels((prev) =>
@@ -113,7 +69,7 @@ export default function NewCampaignPage() {
         end_date: endDate || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
         additional_context: additionalContext,
       });
-      trackFeature("campaign-create", { channels, from_magic_brief: !!magicBriefDraft });
+      trackFeature("campaign-create", { channels });
       toast.success("Campaign launched! Agents are running...");
       router.push(`/campaigns/${campaign.id}`);
     } catch (err) {
@@ -181,35 +137,6 @@ export default function NewCampaignPage() {
       {/* Step 1: Brief */}
       {step === 1 && (
         <SectionCard key="step-1" eyebrow="The brief" bodyClassName="space-y-5">
-          {magicBriefDraft && (
-            <div className="rounded-lg border border-accent/40 bg-accent/10 p-4">
-              <div className="flex items-start gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent bg-accent/15 text-accent-text">
-                  <Wand2 className="h-4 w-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-ink">Magic Brief profile ready</p>
-                  <p className="mt-1 text-sm text-ink">
-                    {magicBriefDraft.clientDraft.brand_name}
-                    {magicBriefDraft.clientDraft.industry
-                      ? ` · ${magicBriefDraft.clientDraft.industry}`
-                      : ""}
-                  </p>
-                  <p className="mt-2 text-xs text-muted">
-                    Create this client (and save brand voice) to use it in this campaign.
-                  </p>
-                  <Button
-                    size="sm"
-                    disabled={creatingFromBrief}
-                    onClick={handleCreateClientFromMagicBrief}
-                    className="mt-3"
-                  >
-                    {creatingFromBrief ? "Creating…" : "Create client from profile"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
           <Field label="Client *" htmlFor="campaign-client">
             <Select id="campaign-client" value={clientId} onChange={(e) => setClientId(e.target.value)}>
               <option value="">Select a client...</option>
