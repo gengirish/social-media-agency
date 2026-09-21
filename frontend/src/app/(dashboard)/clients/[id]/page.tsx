@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { PageHeader } from "@/components/ui/panel";
+import { SectionCard } from "@/components/ui/section-card";
+import { StatCard } from "@/components/ui/stat-card";
+import { EmptyState, LoadingState } from "@/components/ui/empty-state";
 
 interface TopContentRow {
   id: string;
@@ -54,109 +58,98 @@ export default function ClientDetailPage() {
   }, [clientId]);
 
   if (loading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-      </div>
-    );
+    return <LoadingState label="Loading client" />;
   }
 
   if (!data) {
     return (
-      <div className="space-y-4 py-12 text-center">
-        <p className="text-slate-500">Client not found or you don&apos;t have access.</p>
-        <Link href="/clients" className="text-sm font-medium text-indigo-600 hover:text-indigo-500">
-          Back to clients
-        </Link>
-      </div>
+      <EmptyState
+        title="Client not found or you don't have access."
+        action={
+          <Link href="/clients" className="font-mono text-xs text-accent-text hover:underline">
+            Back to clients
+          </Link>
+        }
+      />
     );
   }
 
   const statusBreakdown = data.status_breakdown || {};
   const platformBreakdown = data.platform_breakdown || {};
   const totalContent = Object.values(statusBreakdown).reduce((a, b) => a + b, 0);
+  const maxPlatform = Math.max(1, ...Object.values(platformBreakdown));
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{data.client_name}</h1>
-          <p className="text-sm text-slate-500">{data.industry || "No industry set"}</p>
-        </div>
+    <div className="space-y-8">
+      <div className="space-y-3">
         <Link
           href="/clients"
-          className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
+          className="inline-flex items-center gap-1 font-mono text-[11px] text-muted transition-colors hover:text-ink"
         >
           ← All clients
         </Link>
+        <PageHeader eyebrow="Client" title={data.client_name} description={data.industry || "No industry set"} />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Campaigns" value={data.campaign_count} />
-        <Stat label="Total Content" value={totalContent} />
-        <Stat label="Published" value={statusBreakdown.published ?? 0} />
-        <Stat label="Platforms" value={Object.keys(platformBreakdown).length} />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="Campaigns" value={data.campaign_count} />
+        <StatCard label="Total Content" value={totalContent} delay={0.05} />
+        <StatCard label="Published" value={statusBreakdown.published ?? 0} tone="success" delay={0.1} />
+        <StatCard label="Platforms" value={Object.keys(platformBreakdown).length} delay={0.15} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Platform breakdown</h2>
-          <div className="mt-4 space-y-2">
-            {Object.keys(platformBreakdown).length === 0 ? (
-              <p className="text-sm text-slate-500">No content by platform yet.</p>
-            ) : (
-              Object.entries(platformBreakdown).map(([platform, count]) => (
-                <div key={platform} className="flex items-center justify-between">
-                  <span className="text-sm capitalize text-slate-600">{platform}</span>
-                  <span className="text-sm font-medium text-slate-900">{count}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <SectionCard eyebrow="Distribution" title="Platform breakdown" delay={0.1}>
+          {Object.keys(platformBreakdown).length === 0 ? (
+            <p className="text-sm text-muted">No content by platform yet.</p>
+          ) : (
+            <ul className="space-y-3">
+              {Object.entries(platformBreakdown).map(([platform, count]) => (
+                <li key={platform}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="capitalize text-ink">{platform}</span>
+                    <span className="font-mono text-xs text-muted">{count}</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full rounded-full bg-accent"
+                      style={{ width: `${Math.round((count / maxPlatform) * 100)}%` }}
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Brand voice</h2>
-          <p className="mt-2 text-sm text-slate-600">
+        <SectionCard eyebrow="Voice" title="Brand voice" delay={0.15} bodyClassName="space-y-3">
+          <p className="text-sm leading-relaxed text-ink">
             {data.brand_voice?.voice_description || "Not configured"}
           </p>
-          <p className="mt-2 text-sm text-slate-600">
-            <strong className="text-slate-800">Target:</strong>{" "}
+          <p className="border-l-2 border-accent/60 pl-3 text-sm text-muted">
+            <strong className="font-medium text-ink">Target:</strong>{" "}
             {data.brand_voice?.target_audience || "N/A"}
           </p>
-        </div>
+        </SectionCard>
       </div>
 
       {(data.top_content || []).length > 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Top performing content</h2>
-          <div className="mt-4 space-y-3">
+        <SectionCard eyebrow="Performance" title="Top performing content" delay={0.2}>
+          <ul className="divide-y divide-line">
             {data.top_content.map((c) => (
-              <div
-                key={c.id}
-                className="flex items-center justify-between border-b border-slate-100 pb-3 last:border-0 last:pb-0"
-              >
-                <div>
-                  <p className="text-sm font-medium text-slate-900">{c.title || "Untitled"}</p>
-                  <p className="text-xs capitalize text-slate-500">{c.platform}</p>
+              <li key={c.id} className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-ink">{c.title || "Untitled"}</p>
+                  <p className="font-mono text-[11px] capitalize text-muted">{c.platform}</p>
                 </div>
-                <span className="text-sm font-medium text-indigo-600">
+                <span className="font-display text-lg font-semibold tabular-nums text-accent-text">
                   {c.performance_score != null ? c.performance_score.toFixed(1) : "N/A"}
                 </span>
-              </div>
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </SectionCard>
       )}
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-sm text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-bold text-slate-900">{value}</p>
     </div>
   );
 }

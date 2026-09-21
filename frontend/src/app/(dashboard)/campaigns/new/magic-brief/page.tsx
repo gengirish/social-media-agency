@@ -3,8 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Sparkles, Globe, Loader2, ArrowLeft } from "lucide-react";
+import { Sparkles, Globe, Loader2, ArrowLeft, ArrowUpRight } from "lucide-react";
 import { api, type BrandProfile } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Eyebrow } from "@/components/ui/panel";
+import { controlClass } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 
 const MAGIC_BRIEF_STORAGE_KEY = "campaignforge_magic_brief_client";
@@ -70,162 +73,158 @@ export default function MagicBriefPage() {
   }
 
   return (
-    <div className="relative min-h-[calc(100vh-8rem)] overflow-hidden rounded-2xl">
-      <div
-        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-indigo-600/15 via-purple-500/10 to-sky-500/15"
-        aria-hidden
-      />
-      <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-indigo-400/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-32 -left-24 h-80 w-80 rounded-full bg-purple-400/15 blur-3xl" />
-
-      <div className="relative mx-auto max-w-3xl space-y-8 px-1 py-4">
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="rounded-lg p-2 text-slate-600 transition-colors hover:bg-white/80"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm">
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">Magic Brief</h1>
-              <p className="text-sm text-slate-600">Scan any site — we extract voice, tone, and audience</p>
-            </div>
-          </div>
-        </div>
-
-        <form
-          onSubmit={handleScan}
-          className="rounded-xl border border-slate-200/80 bg-white/90 p-6 shadow-sm backdrop-blur-sm"
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div className="flex items-start gap-3">
+        <button
+          type="button"
+          onClick={() => router.back()}
+          aria-label="Go back"
+          className="press-scale mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-muted transition-colors hover:border-slate-300 hover:text-ink"
         >
-          <label className="mb-2 block text-sm font-medium text-slate-700">Website URL</label>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative flex-1">
-              <Globe className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://acme.com"
-                className="w-full rounded-lg border border-slate-300 py-2.5 pl-10 pr-4 text-slate-900 placeholder-slate-400 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 disabled:opacity-60"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Scanning…
-                </>
-              ) : (
-                <>
-                  <Sparkles className="h-4 w-4" />
-                  Scan Website
-                </>
-              )}
-            </button>
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <div className="space-y-1.5">
+          <Eyebrow>Create · Brand intake</Eyebrow>
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Magic Brief</h1>
+          <p className="text-sm text-muted">Scan any site — we extract voice, tone, and audience</p>
+        </div>
+      </div>
+
+      {/* The dashed "working surface" from Cadence's intake flow, with a soft amber glow. */}
+      <form
+        onSubmit={handleScan}
+        className="relative overflow-hidden rounded-xl border border-dashed border-slate-300 bg-panel/50 p-6 backdrop-blur-xl motion-safe:animate-screen-in sm:p-8"
+      >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-accent/15 blur-3xl"
+        />
+        <label htmlFor="magic-brief-url" className="relative mb-2 block text-xs font-medium text-muted">
+          Website URL
+        </label>
+        <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Globe className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <input
+              id="magic-brief-url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://acme.com"
+              className={cn(controlClass, "pl-10 font-mono")}
+            />
           </div>
-        </form>
-
-        {profile && !profile.error && (
-          <div className="space-y-6 rounded-xl border border-indigo-100 bg-white/95 p-6 shadow-sm backdrop-blur-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Brand profile</p>
-                <h2 className="mt-1 text-xl font-bold text-slate-900">{profile.brand_name || "Detected brand"}</h2>
-                <p className="mt-1 text-sm text-slate-500">{profile.industry}</p>
-              </div>
-              {profile.source_url && (
-                <a
-                  href={profile.source_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
-                >
-                  View source
-                </a>
-              )}
-            </div>
-
-            {profile.description && (
-              <p className="text-sm leading-relaxed text-slate-700">{profile.description}</p>
+          <Button type="submit" disabled={loading} className="py-2.5">
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Scanning…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" />
+                Scan Website
+              </>
             )}
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-4">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Voice</h3>
-                <p className="mt-2 text-sm text-slate-800">{profile.voice_description || "—"}</p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-4">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Target audience</h3>
-                <p className="mt-2 text-sm text-slate-800">{profile.target_audience || "—"}</p>
-              </div>
-            </div>
-
-            {profile.tone_attributes && Object.keys(profile.tone_attributes).length > 0 && (
-              <div>
-                <h3 className="mb-3 text-sm font-semibold text-slate-900">Tone</h3>
-                <div className="space-y-3">
-                  {Object.entries(profile.tone_attributes).map(([key, value]) => {
-                    const n = Number(value);
-                    const pct =
-                      Number.isFinite(n) && n > 1
-                        ? Math.min(100, Math.max(0, Math.round(n)))
-                        : Math.min(100, Math.max(0, Math.round(n * 100)));
-                    return (
-                      <div key={key}>
-                        <div className="mb-1 flex justify-between text-xs text-slate-600">
-                          <span>{TONE_LABELS[key] ?? key}</span>
-                          <span className="font-medium text-slate-900">{pct}%</span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {profile.style_rules && profile.style_rules.length > 0 && (
-              <div>
-                <h3 className="mb-2 text-sm font-semibold text-slate-900">Style rules</h3>
-                <ul className="space-y-2">
-                  {profile.style_rules.map((rule, i) => (
-                    <li
-                      key={i}
-                      className={cn(
-                        "flex gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm text-slate-700"
-                      )}
-                    >
-                      <span className="font-medium text-indigo-600">{i + 1}.</span>
-                      {rule}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={handleUseProfile}
-              className="w-full rounded-lg bg-indigo-600 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500"
-            >
-              Use This Profile
-            </button>
+          </Button>
+        </div>
+        {loading && (
+          <div className="relative mt-4 h-1 overflow-hidden rounded-full bg-slate-200" aria-hidden>
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-accent" />
           </div>
         )}
-      </div>
+      </form>
+
+      {profile && !profile.error && (
+        <div className="space-y-6 rounded-xl border border-line bg-panel/70 p-6 shadow-[0_0_40px_rgb(var(--c-accent)/0.1)] backdrop-blur-xl motion-safe:animate-screen-in sm:p-8">
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-line pb-5">
+            <div className="space-y-1.5">
+              <Eyebrow>Brand profile</Eyebrow>
+              <h2 className="font-display text-2xl font-semibold tracking-tight text-ink">
+                {profile.brand_name || "Detected brand"}
+              </h2>
+              <p className="text-sm text-muted">{profile.industry}</p>
+            </div>
+            {profile.source_url && (
+              <a
+                href={profile.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-mono text-xs text-accent-text hover:underline"
+              >
+                View source
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </a>
+            )}
+          </div>
+
+          {profile.description && (
+            <p className="text-sm leading-relaxed text-ink">{profile.description}</p>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="border-l-2 border-accent/60 py-1 pl-4">
+              <h3 className="font-mono text-[11px] text-muted">Voice</h3>
+              <p className="mt-1.5 text-sm text-ink">{profile.voice_description || "—"}</p>
+            </div>
+            <div className="border-l-2 border-line py-1 pl-4">
+              <h3 className="font-mono text-[11px] text-muted">Target audience</h3>
+              <p className="mt-1.5 text-sm text-ink">{profile.target_audience || "—"}</p>
+            </div>
+          </div>
+
+          {profile.tone_attributes && Object.keys(profile.tone_attributes).length > 0 && (
+            <div>
+              <h3 className="mb-3 text-sm font-semibold text-ink">Tone</h3>
+              <div className="space-y-3">
+                {Object.entries(profile.tone_attributes).map(([key, value]) => {
+                  const n = Number(value);
+                  const pct =
+                    Number.isFinite(n) && n > 1
+                      ? Math.min(100, Math.max(0, Math.round(n)))
+                      : Math.min(100, Math.max(0, Math.round(n * 100)));
+                  return (
+                    <div key={key}>
+                      <div className="mb-1 flex justify-between text-xs text-muted">
+                        <span>{TONE_LABELS[key] ?? key}</span>
+                        <span className="font-mono font-medium text-ink">{pct}%</span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-[#E4A72E] to-accent transition-all duration-700"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {profile.style_rules && profile.style_rules.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-ink">Style rules</h3>
+              <ul className="space-y-2">
+                {profile.style_rules.map((rule, i) => (
+                  <li
+                    key={i}
+                    className="flex gap-3 rounded-lg border border-line bg-canvas/40 px-3 py-2 text-sm text-ink"
+                  >
+                    <span className="font-mono text-xs leading-5 text-accent-text">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    {rule}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <Button onClick={handleUseProfile} className="w-full py-3">
+            Use This Profile
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,10 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Loader2, UserPlus } from "lucide-react";
+import { UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { api, type TeamMember } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Eyebrow, PageHeader } from "@/components/ui/panel";
+import { SectionCard } from "@/components/ui/section-card";
+import { Field, Input, Select } from "@/components/ui/field";
+import { LoadingState, Notice } from "@/components/ui/empty-state";
 
 const ROLES = [
   { value: "admin", label: "Admin" },
@@ -15,11 +20,11 @@ const ROLES = [
 
 function roleBadgeClass(role: string) {
   const r = role.toLowerCase();
-  if (r === "admin") return "bg-violet-100 text-violet-800";
-  if (r === "manager") return "bg-indigo-100 text-indigo-800";
-  if (r === "content_creator") return "bg-sky-100 text-sky-800";
-  if (r === "viewer") return "bg-slate-100 text-slate-700";
-  return "bg-slate-100 text-slate-700";
+  if (r === "admin") return "border-violet-200 bg-violet-50 text-violet-700";
+  if (r === "manager") return "border-indigo-300 bg-indigo-50 text-accent-text";
+  if (r === "content_creator") return "border-sky-200 bg-sky-50 text-sky-700";
+  if (r === "viewer") return "border-line bg-slate-100 text-slate-600";
+  return "border-line bg-slate-100 text-slate-600";
 }
 
 function initials(name: string, email: string) {
@@ -84,111 +89,93 @@ export default function TeamPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-      </div>
-    );
+    return <LoadingState label="Loading team" />;
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Team</h1>
-          <p className="mt-1 text-slate-500">Members in your organization</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowInvite((v) => !v)}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500"
-        >
-          <UserPlus className="h-4 w-4" />
-          Invite Member
-        </button>
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        eyebrow="Settings"
+        title="Team"
+        description="Members in your organization"
+        actions={
+          <Button onClick={() => setShowInvite((v) => !v)} aria-expanded={showInvite}>
+            <UserPlus className="h-4 w-4" />
+            Invite Member
+          </Button>
+        }
+      />
 
       {showInvite && (
-        <form
-          onSubmit={handleInvite}
-          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4"
-        >
-          <h2 className="text-lg font-semibold text-slate-900">Invite a teammate</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                required
-                placeholder="colleague@company.com"
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-              />
+        <form onSubmit={handleInvite}>
+          <SectionCard eyebrow="Invite" title="Invite a teammate" bodyClassName="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Email" htmlFor="invite-email">
+                <Input
+                  id="invite-email"
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  required
+                  placeholder="colleague@company.com"
+                />
+              </Field>
+              <Field label="Role" htmlFor="invite-role">
+                <Select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                  {ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
             </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Role</label>
-              <select
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-              >
-                {ROLES.map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
+            <div className="flex justify-end gap-2 border-t border-line pt-4">
+              <Button variant="secondary" onClick={() => setShowInvite(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={inviting}>
+                {inviting ? "Sending…" : "Send invite"}
+              </Button>
             </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setShowInvite(false)}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={inviting}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {inviting ? "Sending…" : "Send invite"}
-            </button>
-          </div>
+          </SectionCard>
         </form>
       )}
 
       {/* `services/team.py::check_permission` exists but no route calls it, so a
           role badge is a label, not a restriction. Say so rather than let the
           badge imply enforced access control. */}
-      <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-        <p className="text-sm text-amber-900">
-          <span className="font-medium">Roles are not enforced yet.</span> Every member of this
-          organization can currently read and change everything in it — the role shown below is a
-          label only. Invite people accordingly.
-        </p>
-      </div>
+      <Notice tone="warning">
+        <span className="font-medium">Roles are not enforced yet.</span> Every member of this
+        organization can currently read and change everything in it — the role shown below is a
+        label only. Invite people accordingly.
+      </Notice>
 
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-        <ul className="divide-y divide-slate-100">
+      <div className="overflow-hidden rounded-xl border border-line bg-panel/70 shadow-soft backdrop-blur-xl">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3">
+          <Eyebrow>Members</Eyebrow>
+          <span className="font-mono text-[11px] text-muted">{members.length}</span>
+        </div>
+        <ul className="divide-y divide-line">
           {members.length === 0 ? (
-            <li className="px-6 py-12 text-center text-sm text-slate-500">No team members yet</li>
+            <li className="px-6 py-12 text-center text-sm text-muted">No team members yet</li>
           ) : (
-            members.map((m) => (
-              <li key={m.id} className="flex items-center gap-4 px-6 py-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">
+            members.map((m, i) => (
+              <li
+                key={m.id}
+                style={{ animationDelay: `${Math.min(i, 10) * 0.04}s` }}
+                className="flex items-center gap-4 px-5 py-4 transition-colors hover:bg-slate-500/5 motion-safe:animate-screen-in"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-accent/40 bg-accent/10 font-display text-sm font-semibold text-accent-text">
                   {initials(m.full_name, m.email)}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-slate-900 truncate">{m.full_name}</p>
-                  <p className="text-sm text-slate-500 truncate">{m.email}</p>
+                  <p className="truncate font-medium text-ink">{m.full_name}</p>
+                  <p className="truncate font-mono text-xs text-muted">{m.email}</p>
                 </div>
                 <span
                   className={cn(
-                    "shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold capitalize",
+                    "shrink-0 rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-medium capitalize",
                     roleBadgeClass(m.role)
                   )}
                 >

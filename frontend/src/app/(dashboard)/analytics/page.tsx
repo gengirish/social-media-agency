@@ -2,18 +2,21 @@
 
 import { useEffect, useState } from "react";
 import { api, type DashboardStats } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/panel";
+import { SectionCard } from "@/components/ui/section-card";
+import { StatCard } from "@/components/ui/stat-card";
+import { Field, Input, Select } from "@/components/ui/field";
+import { EmptyState, LoadingState, Notice } from "@/components/ui/empty-state";
+import { SegmentedTabs } from "@/components/ui/tabs";
 import {
   BarChart3,
   Users,
   Layers,
   Bot,
   FileText,
-  ArrowUpRight,
-  Loader2,
   TrendingUp,
   Clock,
-  AlertTriangle,
 } from "lucide-react";
 
 type AnalyticsTab = "overview" | "trends" | "benchmarks";
@@ -135,68 +138,43 @@ export default function AnalyticsPage() {
       .finally(() => setCrossLoading(false));
   }, [tab, appliedIndustry]);
 
+
+  const header = (
+    <PageHeader
+      eyebrow="Insights"
+      title="Analytics"
+      description="Campaign performance and platform insights"
+    />
+  );
+
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Analytics</h1>
-          <p className="mt-1 text-slate-500">Campaign performance and platform insights</p>
-        </div>
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-        </div>
+      <div className="space-y-8">
+        {header}
+        <LoadingState label="Loading stats" />
       </div>
     );
   }
 
   if (error || !stats) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Analytics</h1>
-          <p className="mt-1 text-slate-500">Campaign performance and platform insights</p>
-        </div>
-        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-700">
-          {error || "No data available"}
-        </div>
+      <div className="space-y-8">
+        {header}
+        <Notice tone="danger">{error || "No data available"}</Notice>
       </div>
     );
   }
 
   const kpis = [
-    {
-      label: "Total Clients",
-      value: stats.total_clients,
-      icon: Users,
-      iconBg: "bg-indigo-50",
-      iconClass: "text-indigo-600",
-    },
-    {
-      label: "Campaigns",
-      value: stats.total_campaigns,
-      icon: Layers,
-      iconBg: "bg-emerald-50",
-      iconClass: "text-emerald-600",
-    },
-    {
-      label: "Content Pieces",
-      value: stats.total_content_pieces,
-      icon: FileText,
-      iconBg: "bg-amber-50",
-      iconClass: "text-amber-600",
-    },
-    {
-      label: "Agent Runs",
-      value: stats.total_agent_runs,
-      icon: Bot,
-      iconBg: "bg-purple-50",
-      iconClass: "text-purple-600",
-    },
+    { label: "Total Clients", value: stats.total_clients, icon: Users },
+    { label: "Campaigns", value: stats.total_campaigns, icon: Layers },
+    { label: "Content Pieces", value: stats.total_content_pieces, icon: FileText },
+    { label: "Agent Runs", value: stats.total_agent_runs, icon: Bot },
   ];
 
   const nonDraft = Math.max(0, stats.total_content_pieces - stats.content_drafts);
   const contentBreakdown = [
-    { label: "Draft", value: stats.content_drafts, color: "bg-amber-500" },
+    { label: "Draft", value: stats.content_drafts, color: "bg-accent" },
     { label: "Approved / scheduled / published", value: nonDraft, color: "bg-emerald-500" },
   ];
   const totalContent = stats.total_content_pieces || 1;
@@ -208,115 +186,89 @@ export default function AnalyticsPage() {
   ];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Analytics</h1>
-        <p className="mt-1 text-slate-500">Campaign performance and platform insights</p>
-      </div>
-
-      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-1">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={cn(
-              "rounded-t-lg px-4 py-2 text-sm font-medium transition-colors",
-              tab === t.id
-                ? "bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        {header}
+        <SegmentedTabs label="Analytics views" items={tabs} value={tab} onChange={setTab} />
       </div>
 
       {tab === "overview" && (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {kpis.map((kpi) => (
-              <div
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {kpis.map((kpi, i) => (
+              <StatCard
                 key={kpi.label}
-                className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
-              >
-                <div className="flex items-center justify-between">
-                  <div className={`rounded-lg p-2 ${kpi.iconBg}`}>
-                    <kpi.icon className={`h-5 w-5 ${kpi.iconClass}`} />
-                  </div>
-                  <ArrowUpRight className="h-4 w-4 text-slate-300" />
-                </div>
-                <div className="mt-3">
-                  <p className="text-2xl font-bold text-slate-900">{kpi.value.toLocaleString()}</p>
-                  <p className="text-sm text-slate-500">{kpi.label}</p>
-                </div>
-              </div>
+                label={kpi.label}
+                value={kpi.value.toLocaleString()}
+                icon={kpi.icon}
+                delay={i * 0.05}
+              />
             ))}
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="mb-1 font-semibold text-slate-900">Content Pipeline</h3>
-              <p className="mb-4 text-sm text-slate-500">
-                Draft vs all other statuses (approved, scheduled, published).
-              </p>
-              <div className="space-y-3">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <SectionCard
+              eyebrow="Content"
+              title="Content Pipeline"
+              description="Draft vs all other statuses (approved, scheduled, published)."
+              delay={0.1}
+            >
+              <div className="space-y-4">
                 {contentBreakdown.map((item) => (
                   <div key={item.label}>
-                    <div className="mb-1 flex items-center justify-between text-sm">
-                      <span className="text-slate-600">{item.label}</span>
-                      <span className="font-medium text-slate-900">{item.value}</span>
+                    <div className="mb-1.5 flex items-center justify-between text-sm">
+                      <span className="text-muted">{item.label}</span>
+                      <span className="font-mono text-xs font-medium text-ink">{item.value}</span>
                     </div>
-                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
                       <div
-                        className={`h-full rounded-full ${item.color} transition-all`}
+                        className={`h-full rounded-full ${item.color} transition-all duration-700`}
                         style={{ width: `${Math.round((item.value / totalContent) * 100)}%` }}
                       />
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </SectionCard>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="mb-4 font-semibold text-slate-900">Campaign Status</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-lg bg-indigo-50 p-4 text-center">
-                  <p className="text-3xl font-bold text-indigo-700">{stats.campaigns_running}</p>
-                  <p className="mt-1 text-sm text-indigo-600">Running</p>
+            <SectionCard eyebrow="Campaigns" title="Campaign Status" delay={0.15}>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-accent/40 bg-accent/10 p-4">
+                  <p className="font-display text-3xl font-semibold tabular-nums text-accent-text">{stats.campaigns_running}</p>
+                  <p className="mt-1 text-xs text-muted">Running</p>
                 </div>
-                <div className="rounded-lg bg-emerald-50 p-4 text-center">
-                  <p className="text-3xl font-bold text-emerald-700">
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                  <p className="font-display text-3xl font-semibold tabular-nums text-emerald-700">
                     {stats.total_campaigns - stats.campaigns_running}
                   </p>
-                  <p className="mt-1 text-sm text-emerald-600">Completed</p>
+                  <p className="mt-1 text-xs text-muted">Completed</p>
                 </div>
               </div>
-              <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                <TrendingUp className="h-4 w-4" />
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-line bg-canvas/40 px-3 py-2 text-sm text-muted">
+                <TrendingUp className="h-4 w-4 shrink-0 text-accent-text" />
                 <span>{stats.total_agent_runs} total agent executions across all campaigns</span>
               </div>
-            </div>
+            </SectionCard>
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="mb-1 font-semibold text-slate-900">Campaign activity</h3>
-              <p className="mb-4 text-sm text-slate-500">
-                Share of campaigns currently running vs the rest of your portfolio (from live stats, not a
-                dated timeline).
-              </p>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <SectionCard
+              eyebrow="Portfolio"
+              title="Campaign activity"
+              description="Share of campaigns currently running vs the rest of your portfolio (from live stats, not a dated timeline)."
+              delay={0.2}
+            >
               {stats.total_campaigns > 0 ? (
                 <>
-                  <div className="mb-2 flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div className="mb-2 flex h-2 w-full gap-0.5 overflow-hidden rounded-full bg-slate-200">
                     <div
-                      className="h-full bg-indigo-500 transition-all"
+                      className="h-full rounded-full bg-accent transition-all duration-700"
                       style={{
                         width: `${Math.round((stats.campaigns_running / stats.total_campaigns) * 100)}%`,
                       }}
                     />
                     <div
-                      className="h-full bg-slate-300 transition-all"
+                      className="h-full rounded-full bg-slate-400 transition-all duration-700"
                       style={{
                         width: `${Math.round(
                           ((stats.total_campaigns - stats.campaigns_running) / stats.total_campaigns) * 100
@@ -324,148 +276,133 @@ export default function AnalyticsPage() {
                       }}
                     />
                   </div>
-                  <div className="flex justify-between text-xs text-slate-500">
-                    <span>Running: {stats.campaigns_running}</span>
-                    <span>Other: {stats.total_campaigns - stats.campaigns_running}</span>
+                  <div className="flex justify-between font-mono text-[11px] text-muted">
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-accent" />
+                      Running: {stats.campaigns_running}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-slate-400" />
+                      Other: {stats.total_campaigns - stats.campaigns_running}
+                    </span>
                   </div>
                 </>
               ) : (
-                <p className="text-sm text-slate-500">Create a campaign to see activity distribution.</p>
+                <p className="text-sm text-muted">Create a campaign to see activity distribution.</p>
               )}
-            </div>
+            </SectionCard>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="mb-4 font-semibold text-slate-900">Agent run metrics</h3>
-              <dl className="space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <dt className="text-sm text-slate-600">Total runs</dt>
-                  <dd className="text-lg font-semibold text-slate-900">
+            <SectionCard eyebrow="Agents" title="Agent run metrics" delay={0.25}>
+              <dl className="divide-y divide-line">
+                <div className="flex items-center justify-between pb-3">
+                  <dt className="text-sm text-muted">Total runs</dt>
+                  <dd className="font-display text-xl font-semibold tabular-nums text-ink">
                     {stats.total_agent_runs.toLocaleString()}
                   </dd>
                 </div>
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <dt className="text-sm text-slate-600">Avg runs per campaign</dt>
-                  <dd className="text-lg font-semibold text-slate-900">
+                <div className="flex items-center justify-between py-3">
+                  <dt className="text-sm text-muted">Avg runs per campaign</dt>
+                  <dd className="font-display text-xl font-semibold tabular-nums text-ink">
                     {stats.total_campaigns > 0
                       ? (stats.total_agent_runs / stats.total_campaigns).toFixed(1)
                       : "—"}
                   </dd>
                 </div>
-                <div className="flex items-center justify-between">
-                  <dt className="text-sm text-slate-600">Content in draft</dt>
-                  <dd className="text-lg font-semibold text-slate-900">
+                <div className="flex items-center justify-between pt-3">
+                  <dt className="text-sm text-muted">Content in draft</dt>
+                  <dd className="font-display text-xl font-semibold tabular-nums text-ink">
                     {stats.total_content_pieces > 0
                       ? `${Math.round((stats.content_drafts / stats.total_content_pieces) * 100)}%`
                       : "—"}
                   </dd>
                 </div>
               </dl>
-            </div>
+            </SectionCard>
           </div>
 
           {/* No code path ever populates this panel — there is no per-platform
               analytics view in the dashboard. Say so instead of implying that
               connecting an account unlocks it. */}
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mb-2 flex items-center gap-2">
-              <h3 className="font-semibold text-slate-900">Platform Insights</h3>
-              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+          <div className="rounded-xl border border-dashed border-slate-300 bg-panel/50 p-5 backdrop-blur-xl sm:p-6">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <h3 className="font-display font-semibold text-ink">Platform Insights</h3>
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-mono text-[11px] font-medium text-amber-800">
                 Not available yet
               </span>
             </div>
-            <p className="text-sm text-slate-500">
+            <p className="max-w-3xl text-sm text-muted">
               Per-platform engagement, ROI, and optimal-posting-time breakdowns are not built yet.
               Live metrics for individual posts are fetched from connected accounts and shown on
               each content piece; there is no roll-up view here.
             </p>
-            <div className="mt-4 flex gap-4 text-sm text-slate-300">
+            <div className="mt-4 flex flex-wrap gap-4 font-mono text-[11px] text-muted">
               <div className="flex items-center gap-1">
-                <TrendingUp className="h-4 w-4" /> Engagement
+                <TrendingUp className="h-3.5 w-3.5" /> Engagement
               </div>
               <div className="flex items-center gap-1">
-                <BarChart3 className="h-4 w-4" /> ROI
+                <BarChart3 className="h-3.5 w-3.5" /> ROI
               </div>
               <div className="flex items-center gap-1">
-                <Clock className="h-4 w-4" /> Posting Times
+                <Clock className="h-3.5 w-3.5" /> Posting Times
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {tab === "trends" && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div>
-              <label htmlFor="trend-platform" className="block text-xs font-medium text-slate-500">
-                Platform
-              </label>
-              <select
-                id="trend-platform"
-                value={trendPlatform}
-                onChange={(e) => setTrendPlatform(e.target.value)}
-                className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-              >
+          <SectionCard bodyClassName="flex flex-wrap items-end gap-4" className="p-4 sm:p-5">
+            <Field label="Platform" htmlFor="trend-platform" className="w-full sm:w-56">
+              <Select id="trend-platform" value={trendPlatform} onChange={(e) => setTrendPlatform(e.target.value)}>
                 {TREND_PLATFORMS.map((p) => (
                   <option key={p.value || "all"} value={p.value}>
                     {p.label}
                   </option>
                 ))}
-              </select>
-            </div>
-            <p className="text-sm text-slate-500">
+              </Select>
+            </Field>
+            <p className="pb-2.5 text-sm text-muted">
               Live web results from the Exa search API. Every row links to its source.
             </p>
-          </div>
+          </SectionCard>
 
           {trendsLoading ? (
-            <div className="flex justify-center py-16">
-              <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-            </div>
+            <LoadingState label="Fetching trends" className="h-48" />
           ) : trendsError ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              {trendsError}
-            </div>
+            <Notice tone="danger">{trendsError}</Notice>
           ) : trendsUnavailable ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
-              <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>Not available — {trendsUnavailable}</span>
-              </p>
-              <p className="mt-2 pl-6 text-sm text-amber-800">
-                No trend data is shown rather than estimated topics. Once a key is configured, this
-                tab lists real, source-linked results.
-              </p>
-            </div>
+            <Notice tone="warning" title={<>Not available — {trendsUnavailable}</>}>
+              No trend data is shown rather than estimated topics. Once a key is configured, this
+              tab lists real, source-linked results.
+            </Notice>
           ) : trends.length === 0 ? (
-            <p className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500 shadow-sm">
-              No trend rows returned.
-            </p>
+            <EmptyState icon={TrendingUp} title="No trend rows returned." />
           ) : (
             <>
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-slate-100 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+              <div className="overflow-x-auto rounded-xl border border-line bg-panel/70 shadow-soft backdrop-blur-xl">
+                <table className="w-full min-w-[560px] text-left text-sm">
+                  <thead className="border-b border-line font-mono text-[11px] text-muted">
                     <tr>
-                      <th className="px-4 py-3">Topic</th>
-                      <th className="px-4 py-3">Platform</th>
-                      <th className="px-4 py-3">Published</th>
-                      <th className="px-4 py-3">Source</th>
+                      <th className="px-4 py-3 font-medium">Topic</th>
+                      <th className="px-4 py-3 font-medium">Platform</th>
+                      <th className="px-4 py-3 font-medium">Published</th>
+                      <th className="px-4 py-3 font-medium">Source</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-line">
                     {trends.map((row, i) => (
                       <tr
                         key={`${row.topic}-${row.url ?? ""}-${i}`}
-                        className="border-b border-slate-50"
+                        className="transition-colors hover:bg-slate-500/5"
                       >
-                        <td className="px-4 py-3 font-medium text-slate-900">
+                        <td className="px-4 py-3 font-medium text-ink">
                           {row.url ? (
                             <a
                               href={row.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-indigo-700 hover:underline"
+                              className="text-accent-text hover:underline"
                             >
                               {row.topic}
                             </a>
@@ -473,24 +410,24 @@ export default function AnalyticsPage() {
                             row.topic
                           )}
                         </td>
-                        <td className="px-4 py-3 capitalize text-slate-600">
+                        <td className="px-4 py-3 capitalize text-muted">
                           {row.platform ?? "All platforms"}
                         </td>
-                        <td className="px-4 py-3 text-slate-600">
+                        <td className="px-4 py-3 font-mono text-xs text-muted">
                           {typeof row.recency_days === "number"
                             ? row.recency_days === 0
                               ? "Today"
                               : `${row.recency_days}d ago`
                             : "—"}
                         </td>
-                        <td className="px-4 py-3 text-slate-600">{row.source ?? "—"}</td>
+                        <td className="px-4 py-3 text-muted">{row.source ?? "—"}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               {trendsProvenance && (
-                <p className="text-xs text-slate-400">{trendsProvenance}</p>
+                <p className="font-mono text-[11px] text-muted">{trendsProvenance}</p>
               )}
             </>
           )}
@@ -498,63 +435,56 @@ export default function AnalyticsPage() {
       )}
 
       {tab === "benchmarks" && (
-        <div className="space-y-6">
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-lg font-semibold text-slate-900">Industry benchmarks</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Compare your org against aggregated analytics snapshots for clients in the same industry (when
-              data exists).
-            </p>
-            <div className="mt-4 flex flex-wrap items-end gap-3">
-              <div>
-                <label htmlFor="benchmark-industry" className="block text-xs font-medium text-slate-500">
-                  Industry (match client &quot;industry&quot; field)
-                </label>
-                <input
+        <div className="space-y-4">
+          <SectionCard
+            eyebrow="Industry"
+            title="Industry benchmarks"
+            description="Compare your org against aggregated analytics snapshots for clients in the same industry (when data exists)."
+          >
+            <div className="flex flex-wrap items-end gap-3">
+              <Field
+                label={<>Industry (match client &quot;industry&quot; field)</>}
+                htmlFor="benchmark-industry"
+                className="w-full sm:w-72"
+              >
+                <Input
                   id="benchmark-industry"
                   value={industryDraft}
                   onChange={(e) => setIndustryDraft(e.target.value)}
                   placeholder="e.g. SaaS, Healthcare"
-                  className="mt-1 w-64 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900"
                 />
-              </div>
-              <button
-                type="button"
+              </Field>
+              <Button
+                className="py-2.5"
                 onClick={() =>
                   setAppliedIndustry(industryDraft.trim() ? industryDraft.trim() : undefined)
                 }
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
               >
                 Load benchmarks
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
+                className="py-2.5"
                 onClick={() => {
                   setIndustryDraft("");
                   setAppliedIndustry(undefined);
                 }}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Clear industry
-              </button>
+              </Button>
             </div>
 
             {crossLoading ? (
-              <div className="mt-6 flex justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-              </div>
+              <LoadingState className="h-32" />
             ) : crossError ? (
-              <p className="mt-4 text-sm text-red-600">{crossError}</p>
+              <Notice tone="danger" className="mt-4">{crossError}</Notice>
             ) : benchmarks && benchmarks.sample_size > 0 ? (
-              <dl className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <dl className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
                 <BenchmarkStat label="Avg impressions" value={benchmarks.avg_impressions} />
                 <BenchmarkStat label="Avg engagement" value={benchmarks.avg_engagement} />
                 <BenchmarkStat label="Avg clicks" value={benchmarks.avg_clicks} />
                 <BenchmarkStat label="Avg likes" value={benchmarks.avg_likes} />
-                <div className="rounded-lg bg-slate-50 p-4">
-                  <p className="text-xs text-slate-500">Sample size</p>
-                  <p className="text-lg font-semibold text-slate-900">{benchmarks.sample_size}</p>
-                </div>
+                <BenchmarkStat label="Sample size" value={benchmarks.sample_size} />
               </dl>
             ) : (
               <p className="mt-4 text-sm text-amber-800">
@@ -563,38 +493,34 @@ export default function AnalyticsPage() {
                   : "Enter an industry and click Load benchmarks, or rely on cross-campaign insights below."}
               </p>
             )}
-          </div>
+          </SectionCard>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-lg font-semibold text-slate-900">Cross-campaign insights</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Patterns from your org&apos;s highest-scoring content, grouped by platform.
-            </p>
+          <SectionCard
+            eyebrow="Learning"
+            title="Cross-campaign insights"
+            description="Patterns from your org's highest-scoring content, grouped by platform."
+            delay={0.05}
+          >
             {crossLoading && insights.length === 0 ? (
-              <div className="mt-6 flex justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-              </div>
+              <LoadingState className="h-32" />
             ) : insights.length === 0 ? (
-              <p className="mt-4 text-sm text-slate-500">
+              <p className="text-sm text-muted">
                 No scored content yet — publish or score content to populate insights.
               </p>
             ) : (
-              <ul className="mt-4 space-y-3">
+              <ul className="space-y-2.5">
                 {insights.map((row) => (
-                  <li
-                    key={row.platform}
-                    className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3"
-                  >
-                    <p className="text-sm font-medium capitalize text-slate-900">{row.platform}</p>
-                    <p className="mt-1 text-sm text-slate-600">{row.insight}</p>
-                    <p className="mt-1 text-xs text-slate-400">
+                  <li key={row.platform} className="border-l-2 border-accent/60 py-1 pl-4">
+                    <p className="text-sm font-medium capitalize text-ink">{row.platform}</p>
+                    <p className="mt-1 text-sm text-muted">{row.insight}</p>
+                    <p className="mt-1 font-mono text-[11px] text-muted">
                       Avg score {row.avg_performance} · {row.content_count} pieces
                     </p>
                   </li>
                 ))}
               </ul>
             )}
-          </div>
+          </SectionCard>
         </div>
       )}
     </div>
@@ -603,9 +529,9 @@ export default function AnalyticsPage() {
 
 function BenchmarkStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg bg-slate-50 p-4">
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className="text-lg font-semibold text-slate-900">{value}</p>
+    <div className="rounded-lg border border-line bg-canvas/40 p-4">
+      <dt className="text-xs text-muted">{label}</dt>
+      <dd className="mt-1 font-display text-xl font-semibold tabular-nums text-ink">{value}</dd>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { connectAgentStream } from "@/lib/agent-stream";
 import { api } from "@/lib/api";
 import type { AgentStreamEvent, ReviewDecision } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import {
   Brain,
   Target,
@@ -148,35 +149,62 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
     };
   }, [campaignId, getToken, onComplete, onWaitingHuman]);
 
+
   function getStatusIcon(agentId: string) {
     const status = agentStatuses[agentId];
     switch (status) {
       case "running":
-        return <Loader2 className="h-5 w-5 animate-spin text-indigo-600" />;
+        return <Loader2 className="h-4 w-4 animate-spin text-accent-text" />;
       case "complete":
-        return <CheckCircle2 className="h-5 w-5 text-emerald-500" />;
+        return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
       case "error":
-        return <AlertCircle className="h-5 w-5 text-red-500" />;
+        return <AlertCircle className="h-4 w-4 text-red-600" />;
       case "waiting":
-        return <Pause className="h-5 w-5 text-amber-500" />;
+        return <Pause className="h-4 w-4 text-amber-600" />;
       default:
-        return <div className="h-5 w-5 rounded-full border-2 border-slate-200" />;
+        return <div className="h-3 w-3 rounded-full border border-slate-300" />;
     }
   }
 
+  const STATUS_TEXT: Record<AgentStatus, string> = {
+    pending: "queued",
+    running: "running",
+    complete: "done",
+    error: "error",
+    waiting: "waiting on you",
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Progress bar */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between text-sm">
-          <span className="font-medium text-slate-700">Pipeline Progress</span>
-          <span className="text-slate-500">{progress}%</span>
+      <div className="rounded-xl border border-line bg-panel/70 p-5 shadow-soft backdrop-blur-xl">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <div className="font-mono text-[11px] text-muted">Pipeline Progress</div>
+            <div className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight text-ink">
+              {progress}
+              <span className="text-lg text-muted">%</span>
+            </div>
+          </div>
+          {!isComplete && progress > 0 && (
+            <span className="flex items-center gap-1.5 font-mono text-[11px] text-accent-text">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse-dot" />
+              live
+            </span>
+          )}
         </div>
-        <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div
+          className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200"
+          role="progressbar"
+          aria-label="Pipeline progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progress}
+        >
           <div
             className={cn(
               "h-full rounded-full transition-all duration-700 ease-out",
-              isComplete ? "bg-emerald-500" : "bg-indigo-600"
+              isComplete ? "bg-emerald-500" : "bg-gradient-to-r from-[#E4A72E] to-accent shadow-[0_0_10px_rgb(var(--c-accent)/0.5)]"
             )}
             style={{ width: `${progress}%` }}
           />
@@ -184,113 +212,102 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
       </div>
 
       {/* Agent pipeline */}
-      <div className="space-y-2">
-        {AGENT_CONFIG.map((agent) => {
+      <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {AGENT_CONFIG.map((agent, i) => {
           const status = agentStatuses[agent.id] || "pending";
           const isActive = status === "running";
 
           return (
-            <div
+            <li
               key={agent.id}
+              style={{ animationDelay: `${i * 0.04}s` }}
               className={cn(
-                "flex items-center gap-4 rounded-xl border p-4 transition-all",
+                "flex items-center gap-3 rounded-xl border p-3.5 backdrop-blur-xl transition-colors duration-300 motion-safe:animate-screen-in",
                 isActive
-                  ? "border-indigo-200 bg-indigo-50/50 shadow-sm"
+                  ? "border-accent/60 bg-accent/10 shadow-[0_0_24px_rgb(var(--c-accent)/0.15)]"
                   : status === "complete"
-                  ? "border-emerald-100 bg-emerald-50/30"
+                  ? "border-emerald-200 bg-emerald-50/60"
                   : status === "waiting"
-                  ? "border-amber-200 bg-amber-50/50"
+                  ? "border-amber-300 bg-amber-50/70"
                   : status === "error"
-                  ? "border-red-200 bg-red-50/30"
-                  : "border-slate-100 bg-white"
+                  ? "border-red-200 bg-red-50/60"
+                  : "border-line bg-panel/60"
               )}
             >
-              {getStatusIcon(agent.id)}
+              <span
+                className={cn(
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border",
+                  isActive ? "border-accent/60 text-accent-text" : "border-line text-muted"
+                )}
+              >
+                <agent.icon className="h-4 w-4" />
+              </span>
 
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <agent.icon className={cn(
-                    "h-4 w-4",
-                    isActive ? "text-indigo-600" : "text-slate-400"
-                  )} />
-                  <span className={cn(
-                    "text-sm font-semibold",
-                    isActive ? "text-indigo-900" : "text-slate-700"
-                  )}>
-                    {agent.label}
-                  </span>
+                  <span className="font-mono text-[10px] text-muted">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="truncate text-sm font-semibold text-ink">{agent.label}</span>
                 </div>
-                <p className="mt-0.5 text-xs text-slate-500">{agent.description}</p>
+                <p className="mt-0.5 truncate text-xs text-muted">{agent.description}</p>
               </div>
 
-              {isActive && (
-                <div className="flex gap-1">
-                  {[0, 1, 2].map((i) => (
-                    <div
-                      key={i}
-                      className="h-1.5 w-1.5 rounded-full bg-indigo-600 animate-pulse-dot"
-                      style={{ animationDelay: `${i * 0.3}s` }}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                {getStatusIcon(agent.id)}
+                <span className="font-mono text-[10px] text-muted">{STATUS_TEXT[status]}</span>
+              </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
 
       {agentStatuses["human_review"] === "waiting" && (
-        <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-5">
-          <div className="mb-3 flex items-center gap-2">
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 shadow-[0_0_30px_rgb(var(--c-accent)/0.12)] motion-safe:animate-screen-in">
+          <div className="mb-2 flex items-center gap-2">
             <UserCheck className="h-5 w-5 text-amber-600" />
-            <h3 className="font-semibold text-amber-900">Review Required</h3>
+            <h3 className="font-display font-semibold text-amber-900">Review Required</h3>
           </div>
-          <p className="mb-4 text-sm text-amber-700">
+          <p className="mb-4 text-sm text-amber-800">
             Content has been generated. Review the content tab and approve or request revisions.
           </p>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => submitDecision("approved")}
-              disabled={reviewSubmitting !== null}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => submitDecision("approved")} disabled={reviewSubmitting !== null}>
               {reviewSubmitting === "approved" ? "Approving…" : "Approve & Continue"}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
               onClick={() => submitDecision("revise_content")}
               disabled={reviewSubmitting !== null}
-              className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="border-amber-300 bg-panel text-amber-800 hover:bg-amber-100 hover:text-amber-900"
             >
               {reviewSubmitting === "revise_content" ? "Requesting…" : "Request Revisions"}
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {/* Event log */}
       {events.length > 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-semibold text-slate-700">Agent Activity Log</h3>
+        <div className="overflow-hidden rounded-xl border border-line bg-panel/70 shadow-soft backdrop-blur-xl">
+          <div className="flex items-center justify-between border-b border-line px-4 py-3">
+            <h3 className="text-sm font-semibold text-ink">Agent Activity Log</h3>
+            <span className="font-mono text-[10px] text-muted">SSE</span>
           </div>
-          <div className="max-h-48 overflow-y-auto p-4">
-            <div className="space-y-2">
+          <div className="max-h-56 overflow-y-auto bg-canvas/40 p-4" aria-live="polite">
+            <div className="space-y-2 font-mono text-[11.5px]">
               {events.filter(e => e.type !== "heartbeat").map((event, idx) => (
-                <div key={idx} className="flex items-start gap-2 text-xs">
-                  <span className="mt-0.5 text-slate-400">
+                <div key={idx} className="flex items-start gap-2">
+                  <span className="mt-0.5 shrink-0 text-muted">
                     {new Date(event.timestamp).toLocaleTimeString()}
                   </span>
                   <span className={cn(
-                    "rounded px-1.5 py-0.5 font-mono",
-                    event.type === "error" ? "bg-red-100 text-red-700" :
-                    event.type === "complete" ? "bg-emerald-100 text-emerald-700" :
-                    "bg-slate-100 text-slate-600"
+                    "shrink-0 rounded border px-1.5 py-0.5",
+                    event.type === "error" ? "border-red-200 bg-red-50 text-red-700" :
+                    event.type === "complete" ? "border-emerald-200 bg-emerald-50 text-emerald-700" :
+                    "border-line bg-slate-500/5 text-accent-text"
                   )}>
                     {event.agent}
                   </span>
-                  <span className="text-slate-600">{event.content}</span>
+                  <span className="min-w-0 break-words text-ink">{event.content}</span>
                 </div>
               ))}
             </div>
