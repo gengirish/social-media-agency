@@ -84,9 +84,9 @@ Lifecycle (DB values; `draft` is labelled *Pending* in the UI): `draft`/`rejecte
 
 `moderation.status = "unavailable"` means the LLM check failed open (error, timeout, unparseable reply, no provider) — the piece is approved, `moderation_unavailable` is logged, and `metadata.moderation.status` records it. The deterministic checks (platform character limit incl. appended hashtags; brand `vocabulary_exclude`) run regardless and still flag when the LLM is down.
 
-**`PATCH /content/{id}`** — `status` may be set to `draft` or `rejected` only. `approved`/`scheduled`/`published` → 400 `{"code": "status_via_dedicated_endpoint"}`; any other value → 400 `{"code": "unsupported_status"}`. Changing `body` or `hashtags` of an `approved`/`scheduled` piece **resets it to `draft`** (clears `scheduled_at` and `metadata.moderation`) — edited content must be re-approved.
+**`PATCH /content/{id}`** — `status` may be set to `draft` or `rejected` only. `approved`/`scheduled`/`published` → 400 `{"code": "status_via_dedicated_endpoint"}`; any other value → 400 `{"code": "unsupported_status"}`. A `published` piece cannot change status at all → 409 `{"code": "published_locked"}` (reopening it would allow a second live post). Changing `body` or `hashtags` of an `approved`/`scheduled` piece **resets it to `draft`** (clears `scheduled_at` and `metadata.moderation`) — edited content must be re-approved.
 
-**`POST /publishing/{id}/schedule`, `POST /publishing/{id}/publish`** — only `approved` or `scheduled` pieces; otherwise 409 `{"code": "not_approved", "status": <current>}` (including `published`, so a repeated publish cannot double-post). The scheduler loop only ever publishes `scheduled` rows.
+**`POST /publishing/{id}/schedule`, `POST /publishing/{id}/publish`** — only `approved` or `scheduled` pieces; otherwise 409 `{"code": "not_approved", "status": <current>}` (including `published`, so a repeated publish cannot double-post). Schedule additionally refuses platforms with no working publisher (Instagram, TikTok) → 409 `{"code": "platform_unavailable", "platform", "reason"}`, since a scheduled post there would only fail when due. The scheduler loop only ever publishes `scheduled` rows.
 
 **Portal** `PATCH /portal/{org_slug}/content/{id}` with `decision: "approve"` runs the same moderation with **no override**; a flag returns the same 409 `moderation_flagged` shape.
 
@@ -199,7 +199,7 @@ Each kept atom becomes a `content_piece` with `status="draft"` (hard-coded), `co
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
 | POST | `/publishing/{content_id}/publish` | Yes | `publish_now` | Publish immediately via PlatformPublisher; `approved`/`scheduled` only, else 409 `not_approved` |
-| POST | `/publishing/{content_id}/schedule` | Yes | `schedule_content` | Schedule content; body: `scheduled_at`; `approved`/`scheduled` only, else 409 `not_approved` |
+| POST | `/publishing/{content_id}/schedule` | Yes | `schedule_content` | Schedule content; body: `scheduled_at`; `approved`/`scheduled` only, else 409 `not_approved`; Instagram/TikTok → 409 `platform_unavailable` |
 | GET | `/publishing/calendar` | Yes | `get_calendar` | Scheduled/published items in date range |
 
 ## Team

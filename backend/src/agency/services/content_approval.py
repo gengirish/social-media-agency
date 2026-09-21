@@ -26,6 +26,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.services.moderation import load_brand_context, moderate_content
+from agency.services.publishing import UNAVAILABLE_PUBLISH_PLATFORMS
 
 logger = structlog.get_logger()
 
@@ -131,6 +132,20 @@ def ensure_publishable(piece: ContentRow) -> None:
         raise ContentGateError(409, {"code": "not_approved", "status": piece.status})
 
 
+def ensure_schedulable(piece: ContentRow) -> None:
+    """Schedule gate: publishable *and* on a platform the scheduler can publish to.
+
+    A scheduled Instagram/TikTok post would only turn into a ``failed`` row when it
+    comes due, so refuse it up front with 409 ``platform_unavailable``.
+    """
+    ensure_publishable(piece)
+    reason = UNAVAILABLE_PUBLISH_PLATFORMS.get((piece.platform or "").lower())
+    if reason:
+        raise ContentGateError(
+            409, {"code": "platform_unavailable", "platform": piece.platform, "reason": reason}
+        )
+
+
 def apply_content_edit(
     piece: ContentRow,
     *,
@@ -141,6 +156,7 @@ def apply_content_edit(
 ) -> None:
     """Apply a PATCH to ``piece`` in place (caller commits).
 
+    - ``status`` cannot change once ``published`` (409 ``published_locked``).
     - ``status`` may only be ``draft`` or ``rejected``; ``approved``/``scheduled``/
       ``published`` → 400 ``status_via_dedicated_endpoint``, anything else → 400
       ``unsupported_status``.
@@ -149,6 +165,10 @@ def apply_content_edit(
       record): edited content must be re-moderated before it can be published.
     """
     if status is not None:
+        # A published piece is live on the client's account. Moving it back to
+        # draft/rejected would let it be re-approved and published a second time.
+        if piece.status == "published":
+            raise ContentGateError(409, {"code": "published_locked", "status": piece.status})
         if status in GATED_STATUSES:
             raise ContentGateError(
                 400, {"code": "status_via_dedicated_endpoint", "status": status}

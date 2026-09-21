@@ -16,7 +16,7 @@ Where the build differs from the plan below:
 ### Open decisions
 
 1. **Failed-publish retry path.** A `failed` post has no action in the Queue. The only API path is `PATCH status=draft` → re-approve (re-moderates) → schedule/publish. Decide: a Retry button over that path, a dedicated retry endpoint, or leave it.
-2. **Published posts can be reopened via PATCH.** `apply_content_edit` checks only the *target* status, so `PATCH /content/{id} {"status": "draft"}` on a `published` (or `failed`, `scheduled`) piece is accepted. A reopened published post can be re-approved and published again — a second live post. Decide whether `published` is terminal.
+2. ~~**Published posts can be reopened via PATCH.**~~ **Fixed 260921:** a `published` piece can no longer change status (409 `published_locked`). Scheduling Instagram/TikTok is now refused server-side too (409 `platform_unavailable`), not only in the UI.
 3. **No content DELETE endpoint.** The Queue has no delete or undo; drafts can only be rejected (and `rejected` has no Queue tab, so rejected posts vanish from the UI).
 4. **Magic Brief is unlinked in the UI.** `/campaigns/new/magic-brief` works and was restyled, but nothing links to it. Link it from New Campaign / Clients, or retire it.
 5. **Landing vs in-app plan copy.** Landing Free card says "30 posts / mo"; in-app `/pricing` says "5 campaigns / mo". Both are real `PLAN_CONFIG` values, but pick one headline allowance per tier. Neither surface mentions the Amplify pack allowance.

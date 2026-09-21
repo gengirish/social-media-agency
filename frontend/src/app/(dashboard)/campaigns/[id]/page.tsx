@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { api, type Campaign, type ContentPiece } from "@/lib/api";
+import { api, apiErrorCode, moderationIssues, type Campaign, type ContentPiece } from "@/lib/api";
 import { LiveAgentDashboard } from "@/components/agents/live-agent-dashboard";
 import { toast } from "sonner";
 import { FileText, CheckCircle2, Bot, ArrowLeft } from "lucide-react";
@@ -16,6 +16,7 @@ import { SegmentedTabs, Tag } from "@/components/ui/tabs";
 
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [content, setContent] = useState<ContentPiece[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,9 +129,25 @@ export default function CampaignDetailPage() {
                       <Button
                         size="sm"
                         onClick={async () => {
-                          await api.approveContent(piece.id);
-                          loadContent();
-                          toast.success("Content approved!");
+                          try {
+                            await api.approveContent(piece.id);
+                            toast.success("Content approved!");
+                          } catch (err) {
+                            // Moderation runs on approve. The full review, with
+                            // "Approve anyway", lives in the Queue — send them there.
+                            const code = apiErrorCode(err);
+                            if (code === "moderation_flagged") {
+                              const [first] = moderationIssues(err);
+                              toast.warning("Moderation flagged this post", {
+                                description: first?.message,
+                                action: { label: "Review in Queue", onClick: () => router.push("/content") },
+                              });
+                            } else {
+                              toast.error(err instanceof Error ? err.message : "Could not approve");
+                            }
+                          } finally {
+                            loadContent();
+                          }
                         }}
                       >
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approve

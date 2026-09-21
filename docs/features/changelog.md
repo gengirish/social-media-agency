@@ -17,7 +17,7 @@ Publishing posts to live X/LinkedIn/Facebook accounts, and until now nothing sto
 - **`PATCH /content/{id}`** can set `status` only to `draft`/`rejected`; editing body/hashtags of approved or scheduled content resets it to `draft`.
 - **Portal approve** runs the same moderation, never with override.
 
-**Behaviour change:** anything scripted to schedule or publish drafts now gets 409s. A publish that failed leaves the piece `failed`; to retry, PATCH it to `draft` and re-approve (the UI has no retry action). The same PATCH also reopens a `published` piece as `draft` — no guard on the current status.
+**Behaviour change:** anything scripted to schedule or publish drafts now gets 409s. A publish that failed leaves the piece `failed`; to retry, PATCH it to `draft` and re-approve (the UI has no retry action). A `published` piece cannot change status (409 `published_locked`), so it cannot be reopened and posted twice. Scheduling Instagram/TikTok returns 409 `platform_unavailable`.
 
 ### Design system + IA (phases 1, 5)
 

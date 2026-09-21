@@ -382,6 +382,27 @@ async def test_schedule_accepts_approved_and_reschedule(
     assert (await _piece(session_factory, content_id)).status == "scheduled"
 
 
+@pytest.mark.parametrize("platform", ["instagram", "tiktok"])
+async def test_schedule_rejects_platform_without_publisher(
+    client, session_factory, tenant, platform
+):
+    # A scheduled Instagram/TikTok post would only fail when it came due.
+    content_id = await _new(session_factory, tenant, status="approved", platform=platform)
+    when = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+
+    resp = await client.post(
+        f"{API}/publishing/{content_id}/schedule",
+        json={"scheduled_at": when},
+        headers=tenant.headers,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "platform_unavailable"
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == "approved"
+    assert piece.scheduled_at is None
+
+
 # ---------------------------------------------------------------------------
 # PATCH /content/{id}
 # ---------------------------------------------------------------------------
@@ -439,6 +460,20 @@ async def test_editing_approved_content_resets_to_draft(
     assert piece.status == "draft"
     assert piece.scheduled_at is None
     assert "moderation" not in piece.metadata_
+
+
+@pytest.mark.parametrize("target", ["draft", "rejected"])
+async def test_published_piece_cannot_be_reopened(client, session_factory, tenant, target):
+    # Reopening a live post would let it be re-approved and published a second time.
+    content_id = await _new(session_factory, tenant, status="published")
+
+    resp = await client.patch(
+        f"{API}/content/{content_id}", json={"status": target}, headers=tenant.headers
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == {"code": "published_locked", "status": "published"}
+    assert (await _piece(session_factory, content_id)).status == "published"
 
 
 async def test_title_only_edit_keeps_approval(client, session_factory, tenant):

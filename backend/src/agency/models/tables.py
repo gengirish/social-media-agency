@@ -308,8 +308,8 @@ class RepurposePack(Base):
     __tablename__ = "repurpose_pack"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False)
-    client_id = Column(UUID(as_uuid=True), ForeignKey("client.id"), nullable=False)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False)
     source_content_id = Column(
         UUID(as_uuid=True), ForeignKey("content_piece.id", ondelete="SET NULL"), nullable=True
     )

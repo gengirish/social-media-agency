@@ -10,7 +10,11 @@ from sqlalchemy import select
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import ContentPiece, PlatformAccount
 from agency.services.billing import billing
-from agency.services.content_approval import ContentGateError, ensure_publishable
+from agency.services.content_approval import (
+    ContentGateError,
+    ensure_publishable,
+    ensure_schedulable,
+)
 from agency.services.publishing import publisher
 from agency.services.scheduler import scheduler
 
@@ -148,7 +152,8 @@ async def schedule_content(
     org_id: UUID = Depends(get_org_id),
 ):
     """Schedule (or reschedule). Only ``approved``/``scheduled`` content; otherwise
-    409 ``{"code": "not_approved", "status": <current>}``."""
+    409 ``{"code": "not_approved", "status": <current>}``. Platforms with no working
+    publisher → 409 ``{"code": "platform_unavailable"}``."""
     result = await db.execute(
         select(ContentPiece).where(
             ContentPiece.id == content_id,
@@ -162,7 +167,7 @@ async def schedule_content(
     # APPROVAL GATE: the scheduler publishes whatever is ``scheduled`` when it comes
     # due, so scheduling is the last point a human-approval check can happen.
     try:
-        ensure_publishable(piece)
+        ensure_schedulable(piece)
     except ContentGateError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None
 
