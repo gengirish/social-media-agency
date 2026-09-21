@@ -116,7 +116,9 @@ def create_app() -> FastAPI:
     async def startup():
         from agency.agents.graph_runtime import init_campaign_graph_runtime
         from agency.services.scheduler import scheduler
+        from agency.services.tracing import init_langfuse
 
+        init_langfuse()
         await init_campaign_graph_runtime()
         await scheduler.start()
 
@@ -124,9 +126,11 @@ def create_app() -> FastAPI:
     async def shutdown():
         from agency.agents.graph_runtime import shutdown_campaign_graph_runtime
         from agency.services.scheduler import scheduler
+        from agency.services.tracing import shutdown_langfuse
 
         await scheduler.stop()
         await shutdown_campaign_graph_runtime()
+        await shutdown_langfuse()
 
     return app
 

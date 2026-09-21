@@ -9,6 +9,7 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agency.services.llm_provider import get_worker_llm
+from agency.services.tracing import trace_config
 
 logger = structlog.get_logger()
 
@@ -72,7 +73,7 @@ async def extract_brand_from_url(url: str) -> dict:
             HumanMessage(content=f"Analyze the website at {url} and extract the brand profile."),
         ]
 
-        response = await llm.ainvoke(messages)
+        response = await llm.ainvoke(messages, config=trace_config("magic-brief"))
         raw_content = response.content if isinstance(response.content, str) else str(response.content)
 
         try:
