@@ -1587,3 +1587,111 @@ export interface BetaMetrics {
     }[];
   };
 }
+
+// --- Amplify (phase 4) ---
+// One source → up to 8 angle-distinct drafts. Preview saves nothing to the
+// queue; commit writes the kept atoms as `draft` (Pending). Backend:
+// backend/src/agency/routers/amplify.py.
+
+/** Closed angle taxonomy — mirrors REPURPOSE_ANGLES in services/repurpose.py. */
+export const AMPLIFY_ANGLES = [
+  "hook",
+  "how-to",
+  "contrarian",
+  "story",
+  "data-point",
+  "question",
+  "behind-the-scenes",
+  "listicle",
+] as const;
+export type AmplifyAngle = (typeof AMPLIFY_ANGLES)[number];
+export const AMPLIFY_MAX_ATOMS = AMPLIFY_ANGLES.length;
+
+/** Platforms the Amplify endpoint accepts (PLATFORM_CHAR_LIMITS keys). */
+export const AMPLIFY_PLATFORMS = [
+  { id: "twitter", label: "X / Twitter" },
+  { id: "linkedin", label: "LinkedIn" },
+  { id: "instagram", label: "Instagram" },
+  { id: "facebook", label: "Facebook" },
+  { id: "tiktok", label: "TikTok" },
+] as const;
+
+// Declaration merge: `/billing/subscription` also reports the Amplify quota.
+export interface SubscriptionInfo {
+  generations_used?: number;
+  generations_limit?: number;
+}
+
+export interface AmplifyAtom {
+  platform: string;
+  angle: AmplifyAngle;
+  title: string;
+  body: string;
+  hashtags: string[];
+  /** Overlaps a recent post of this client, or an earlier atom in the pack. A warning, not a block. */
+  duplicate_warning: boolean;
+  /** Published length (body + appended hashtags) and the platform's hard cap. */
+  char_count: number;
+  char_limit: number;
+}
+
+export interface AmplifyPreviewRequest {
+  client_id: string;
+  source_content_id?: string;
+  source_text?: string;
+  platforms: string[];
+  max_atoms?: number;
+}
+
+export interface AmplifyPreviewResponse {
+  pack_id: string;
+  atoms: AmplifyAtom[];
+  /** How many atoms were asked of the model, and how many it returned unusably. */
+  requested: number;
+  dropped: number;
+}
+
+export type AmplifyCommitAtom = Pick<AmplifyAtom, "platform" | "angle" | "title" | "body" | "hashtags">;
+
+export interface AmplifyCommitResponse {
+  created: string[];
+  count: number;
+}
+
+export interface AmplifyPack {
+  id: string;
+  client_id: string;
+  client_name: string | null;
+  source_content_id: string | null;
+  source_title: string | null;
+  source_excerpt: string | null;
+  platforms: string[];
+  atom_count: number;
+  committed_count: number;
+  created_at: string | null;
+}
+
+/** HTTP status of a failed api call, when it has one. */
+export function apiErrorStatus(err: unknown): number | null {
+  return err instanceof ApiError ? err.status : null;
+}
+
+/** 402 from preview: the org's Amplify generations for this period are used up. */
+export function isGenerationQuotaError(err: unknown): boolean {
+  return apiErrorStatus(err) === 402;
+}
+
+export const amplifyApi = {
+  preview: (data: AmplifyPreviewRequest, signal?: AbortSignal) =>
+    request<AmplifyPreviewResponse>("/api/v1/amplify/preview", {
+      method: "POST",
+      body: JSON.stringify(data),
+      signal,
+    }),
+  commit: (packId: string, atoms: AmplifyCommitAtom[]) =>
+    request<AmplifyCommitResponse>(`/api/v1/amplify/${packId}/commit`, {
+      method: "POST",
+      body: JSON.stringify({ atoms }),
+    }),
+  packs: (clientId?: string) => request<{ items: AmplifyPack[] }>(`/api/v1/amplify/packs${qs({ client_id: clientId })}`),
+};
