@@ -40,6 +40,17 @@ npx vercel --prod --archive=tgz   # from the repo ROOT, not frontend/
 
 [frontend/vercel.json](frontend/vercel.json) still patches a missing `page_client-reference-manifest.js` after `next build`. It is probably now **vestigial**: it was papering over an intermittent `InvariantError: Expected clientReferenceManifest` whose real cause was two pages resolving to `/` (`app/page.tsx` and a dead `app/(dashboard)/page.tsx`), fixed on 260818. The hack could never have helped anyway — it runs *after* `next build` returns, so a build that dies during prerender never reaches it. Removing it is safe to try, but verify a few consecutive clean builds first; the failure it masked was intermittent (~1 in 4), so a single green build proves nothing.
 
+## Product rules
+
+Adopted from the Cadence Crew prototype (see [docs/cadence-port-plan-260921.md](docs/cadence-port-plan-260921.md)). They apply to every agent and every code path that creates or moves content, not just the AI ones.
+
+1. **Never imply a capability that isn't real.** Publishing *is* real here (X, LinkedIn, Facebook post to live client accounts), which raises the stakes — Instagram/TikTok publishing, image posting, and any inbox/listening feature are not, and the UI must say so where it matters (`lib/platforms.ts::publishUnavailableReason`).
+2. **A human has final say.** No path auto-approves or auto-publishes. `autonomous_operator.py` plans; it must never schedule.
+3. **Moderation runs before approval, on every path that creates a post** — pipeline, manual, portal, Amplify, repurpose. Schedule and publish accept only approved content.
+4. **No invented numbers.** Real data or an explicit empty state — never a placeholder metric, predicted CTR, or fabricated score. Same discipline as the marketing layer's data-reliability rules.
+5. **LLM access only through the four tier getters** (see [LLM routing](#llm-routing-servicesllm_providerpy)).
+6. **Before presenting a change:** `ruff` + `mypy` + `pytest` for backend, `npm run lint` + `npm run build` for frontend. A clean compile has missed runtime crashes before; run the tests.
+
 ## Commands
 
 ### Backend (`backend/`, Python 3.12+)

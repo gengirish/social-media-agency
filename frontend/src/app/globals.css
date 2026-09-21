@@ -1,3 +1,66 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Colors and fonts are tokens defined in tailwind.config.ts (light on :root,
+ * dark on .dark). The .dark class is set before paint by the inline script in
+ * app/layout.tsx.
+ */
+
+@layer base {
+  body {
+    @apply bg-canvas text-ink antialiased;
+  }
+
+  /* Dashboard headings use the display face. Scoped to the app shell so the
+     landing page, which carries its own type system, is untouched. */
+  .app-shell :is(h1, h2) {
+    @apply font-display tracking-tight;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--c-accent));
+    outline-offset: 2px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--c-slate-300)) transparent;
+  }
+}
+
+@layer components {
+  /* Faint 32px grid + two soft glows behind the app shell — the Cadence canvas. */
+  .app-canvas {
+    background-image:
+      radial-gradient(60rem 40rem at 10% -10%, rgb(var(--c-accent) / 0.1), transparent 60%),
+      radial-gradient(50rem 36rem at 100% 0%, rgb(94 161 255 / 0.08), transparent 60%),
+      linear-gradient(rgb(var(--c-slate-500) / 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--c-slate-500) / 0.06) 1px, transparent 1px);
+    background-size: auto, auto, 32px 32px, 32px 32px;
+    background-attachment: fixed;
+  }
+
+  .glass {
+    @apply border border-line bg-panel/70 shadow-soft backdrop-blur-xl;
+  }
+
+  .press-scale {
+    transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .press-scale:active {
+    transform: scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
