@@ -10,6 +10,7 @@ from agency.middleware.request_metrics import RequestMetricsMiddleware
 from agency.middleware.tenant import TenantMiddleware
 from agency.routers import (
     acquisition,
+    amplify,
     audit,
     auth,
     billing,
@@ -109,6 +110,7 @@ def create_app() -> FastAPI:
         brand_analytics,
         competitive,
         product_analytics,
+        amplify,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

@@ -162,6 +162,7 @@ async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
                     plan_tier="free",
                     clients_limit=free["clients_limit"],
                     posts_limit=free["posts_limit"],
+                    generations_limit=free["generations_limit"],
                 )
                 db.add(sub)
                 await db.commit()

@@ -37,6 +37,10 @@ SESSION_ENDED = "session_ended"
 PAGE_VIEW = "page_view"
 FEATURE_USED = "feature_used"
 API_ERROR = "api_error"
+# Amplify outcomes. Server-authored (never client-writable) so generation and
+# commit counts cannot be inflated from the browser.
+AMPLIFY_PACK_GENERATED = "amplify_pack_generated"
+AMPLIFY_PACK_COMMITTED = "amplify_pack_committed"
 
 # Categories keep the table queryable without an enum migration.
 CATEGORY_BY_NAME = {
@@ -50,6 +54,8 @@ CATEGORY_BY_NAME = {
     PAGE_VIEW: "session",
     FEATURE_USED: "feature",
     API_ERROR: "error",
+    AMPLIFY_PACK_GENERATED: "feature",
+    AMPLIFY_PACK_COMMITTED: "feature",
 }
 
 # Only these may be written by the browser. Pipeline/error events are

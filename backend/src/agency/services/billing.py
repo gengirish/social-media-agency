@@ -20,6 +20,10 @@ PLAN_CONFIG = {
         "clients_limit": 1,
         "posts_limit": 30,
         "campaigns_limit": 5,
+        # Amplify packs per billing period (1 pack = up to 8 drafts). Sized so a
+        # tier's packs roughly cover its publishing allowance with room to drop
+        # atoms at review. Mirrored in db/migrations/260921_amplify.sql.
+        "generations_limit": 10,
         "features": ["1 client", "5 campaigns/mo", "No publishing"],
     },
     "starter": {
@@ -27,6 +31,7 @@ PLAN_CONFIG = {
         "clients_limit": 3,
         "posts_limit": 200,
         "campaigns_limit": 20,
+        "generations_limit": 50,
         "amount": 4900,
         # No report is ever emailed (nothing in reports.py sends mail), so
         # "Email reports" was dropped in the 260817 stub audit.
@@ -37,6 +42,7 @@ PLAN_CONFIG = {
         "clients_limit": 10,
         "posts_limit": 1000,
         "campaigns_limit": 9999,
+        "generations_limit": 250,
         "amount": 14900,
         "features": [
             "10 clients",
@@ -53,6 +59,7 @@ PLAN_CONFIG = {
         "clients_limit": 999,
         "posts_limit": 99999,
         "campaigns_limit": 9999,
+        "generations_limit": 9999,
         "amount": 39900,
         "features": [
             "Unlimited clients",
@@ -64,6 +71,19 @@ PLAN_CONFIG = {
         ],
     },
 }
+
+
+def generations_limit_for(sub: Subscription) -> int:
+    """The org's Amplify pack allowance.
+
+    A NULL column (a row created before 260921 that the migration's backfill
+    missed, e.g. an unknown tier) falls back to the tier's PLAN_CONFIG value,
+    then to the free tier -- never to "unlimited".
+    """
+    if sub.generations_limit is not None:
+        return int(sub.generations_limit)
+    plan = PLAN_CONFIG.get(str(sub.plan_tier), PLAN_CONFIG["free"])
+    return int(plan["generations_limit"])
 
 
 def _tier_for_price_id(price_id: str) -> str | None:
@@ -167,6 +187,7 @@ class BillingService:
             sub.plan_tier = plan_tier
             sub.clients_limit = plan["clients_limit"]
             sub.posts_limit = plan["posts_limit"]
+            sub.generations_limit = plan["generations_limit"]  # type: ignore[assignment]
             sub.status = "active"
         else:
             sub = Subscription(
@@ -176,6 +197,7 @@ class BillingService:
                 plan_tier=plan_tier,
                 clients_limit=plan["clients_limit"],
                 posts_limit=plan["posts_limit"],
+                generations_limit=plan["generations_limit"],
                 status="active",
             )
             db.add(sub)
@@ -198,6 +220,7 @@ class BillingService:
             return {"status": "ignored", "reason": "no_subscription_for_customer"}
 
         sub.posts_used = 0  # Reset usage on new billing period
+        sub.generations_used = 0  # type: ignore[assignment]
         await db.commit()
         return {"status": "usage_reset"}
 
@@ -213,6 +236,7 @@ class BillingService:
             sub.plan_tier = "free"
             sub.clients_limit = free["clients_limit"]
             sub.posts_limit = free["posts_limit"]
+            sub.generations_limit = free["generations_limit"]  # type: ignore[assignment]
             await db.commit()
         return {"status": "cancelled"}
 
@@ -260,6 +284,7 @@ class BillingService:
         sub.plan_tier = tier
         sub.clients_limit = plan["clients_limit"]
         sub.posts_limit = plan["posts_limit"]
+        sub.generations_limit = plan["generations_limit"]  # type: ignore[assignment]
         sub.status = data.get("status") or sub.status
 
         for column, key in (
@@ -283,7 +308,7 @@ class BillingService:
         result = await db.execute(select(Subscription).where(Subscription.org_id == org_id))
         sub = result.scalar_one_or_none()
         if not sub:
-            return {"plan_tier": "free", **PLAN_CONFIG["free"]}
+            return {"plan_tier": "free", **PLAN_CONFIG["free"], "generations_used": 0}
         plan = PLAN_CONFIG.get(sub.plan_tier, {})
         return {
             "plan_tier": sub.plan_tier,
@@ -292,6 +317,10 @@ class BillingService:
             "posts_limit": sub.posts_limit,
             "posts_used": sub.posts_used,
             **plan,
+            # After the spread: the row's usage and limit are the truth, not the
+            # tier default (which would hide a per-org override).
+            "generations_used": sub.generations_used or 0,
+            "generations_limit": generations_limit_for(sub),
         }
 
     async def check_quota(self, db: AsyncSession, org_id: UUID, resource: str = "posts") -> bool:

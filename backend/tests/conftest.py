@@ -214,6 +214,8 @@ async def create_subscription(
     clients_limit: int | None = None,
     posts_limit: int | None = None,
     posts_used: int = 0,
+    generations_used: int = 0,
+    generations_limit: int | None = None,
     status: str = "active",
     stripe_customer_id: str | None = None,
     stripe_subscription_id: str | None = None,
@@ -229,6 +231,10 @@ async def create_subscription(
         clients_limit=plan["clients_limit"] if clients_limit is None else clients_limit,
         posts_limit=plan["posts_limit"] if posts_limit is None else posts_limit,
         posts_used=posts_used,
+        generations_used=generations_used,
+        generations_limit=(
+            plan["generations_limit"] if generations_limit is None else generations_limit
+        ),
         status=status,
         stripe_customer_id=stripe_customer_id,
         stripe_subscription_id=stripe_subscription_id,
