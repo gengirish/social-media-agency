@@ -219,6 +219,7 @@ async def _mark_campaign_failed(campaign_id: str, org_id: str, error: str) -> No
     which both misleads the user and hides the failure from the failure-rate
     metric.
     """
+    logger.error("campaign_pipeline_failed", campaign_id=campaign_id, org_id=org_id, error=error)
     try:
         factory = get_session_factory()
         async with factory() as db:
@@ -236,8 +237,8 @@ async def _mark_campaign_failed(campaign_id: str, org_id: str, error: str) -> No
                 workflow.completed_at = datetime.now(UTC)
 
             await db.commit()
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — recording the failure must not raise
+        logger.error("campaign_mark_failed_error", campaign_id=campaign_id, error=str(e))
 
     await pa.track_detached(
         name=pa.CAMPAIGN_FAILED,
