@@ -1,34 +1,34 @@
 # Feature Documentation
-<!-- verified: 260817 -->
+<!-- verified: 260921 -->
 
 Living documentation of all platform features. Updated whenever the codebase changes.
 
 ## Quick Stats
-- **API Endpoints**: 82 across 24 routers (all mounted under `/api/v1`)
-- **Database Tables**: 18
-- **Services**: 23 modules in `services/`
+- **API Endpoints**: 86 across 25 routers (all mounted under `/api/v1`)
+- **Database Tables**: 22
+- **Services**: 27 modules in `services/`
 - **Background Workers**: 3 asyncio tasks (no Celery; there is no `workers/` package)
 - **Frontend Pages**: 17 `page.tsx` files
-- **Frontend Components**: 5 reusable + 4 lib modules
+- **Frontend Components**: 11 `ui/` primitive files + feature folders (`layout/`, `posts/`, `amplify/`, `agents/`, `landing/`) + app-level components; 8 lib modules
 - **Platform Integrations**: 7 (Clerk, Stripe, AgentMail, Social publishing, LLM, fal.ai, Slack)
 - **LangGraph Nodes**: 9 (7 LLM agents + `human_review` + `compile_output`)
-- **Agent Modules**: 10 (7 graph agents + 3 standalone entry points)
+- **Agent Modules**: 11 (7 graph agents + 4 standalone: `autonomous_operator`, `competitive_intel`, `video_script`, `amplify`)
 
 ## Documents
 
 | Document | Description | Last Updated |
 |----------|-------------|-------------|
-| [api-endpoints.md](api-endpoints.md) | All 82 REST API endpoints | 260817 |
-| [database-schema.md](database-schema.md) | 18 tables, columns, relationships | 260817 |
-| [services.md](services.md) | 23 business logic services | 260817 |
+| [api-endpoints.md](api-endpoints.md) | All 86 REST API endpoints, approval gate, Amplify | 260921 |
+| [database-schema.md](database-schema.md) | 22 tables, columns, relationships, migrations | 260921 |
+| [services.md](services.md) | Business logic services, moderation, repurpose, Amplify agent | 260921 |
 | [workers.md](workers.md) | Asyncio background tasks | 260817 |
 | [integrations.md](integrations.md) | Social, Stripe, Clerk, AgentMail, LLM, fal.ai, Slack | 260817 |
-| [websocket.md](websocket.md) | SSE real-time agent streaming | 260817 |
-| [frontend-pages.md](frontend-pages.md) | 17 UI pages and routes | 260817 |
-| [frontend-components.md](frontend-components.md) | Reusable components + lib modules | 260817 |
-| [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, roles, multi-tenancy | 260817 |
-| [billing.md](billing.md) | Stripe billing, 4 plan tiers | 260817 |
-| [changelog.md](changelog.md) | Chronological change log | 260817 |
+| [websocket.md](websocket.md) | SSE real-time agent streaming (no WebSocket) | 260921 |
+| [frontend-pages.md](frontend-pages.md) | 17 UI pages, top-nav IA, Queue, Amplify | 260921 |
+| [frontend-components.md](frontend-components.md) | Design system, `ui/` primitives, posts/amplify components, lib modules | 260921 |
+| [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, roles, multi-tenancy, portal | 260921 |
+| [billing.md](billing.md) | Stripe billing, 4 plan tiers, Amplify generation quota | 260921 |
+| [changelog.md](changelog.md) | Chronological change log | 260921 |
 
 ## Feature Honesty
 
@@ -50,30 +50,31 @@ Remaining gaps — all surfaced honestly to the user:
 | Org logo upload | no endpoint | Not implemented | Settings shows "Logo upload not available yet" |
 | Slack campaign creation | `routers/slack.py` | No pipeline is started | `/campaignforge create` replies that it is unavailable |
 | Analytics agent insights | `agents/analytics.py` | Needs published + measured content | Returns `status: unavailable` with a reason instead of calling the LLM on `{}` |
+| Amplify output quality | `agents/amplify.py` | Validated structurally (angles, limits, duplicates); not yet reviewed on real generations | Nothing reaches the queue until a human keeps it; every draft still needs moderated approval |
 
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Frontend (Next.js 15 + React 19 + Clerk)            │
-│  Vercel · 17 pages · Tailwind + Inter                │
+│  Vercel · 17 pages · Tailwind tokens, light/dark     │
 └────────────────────┬────────────────────────────────┘
                      │ HTTPS + SSE
 ┌────────────────────▼────────────────────────────────┐
 │  Backend (FastAPI)                                   │
-│  Fly.io · 82 endpoints · 24 routers                  │
+│  Fly.io · 86 endpoints · 25 routers                  │
 │  Clerk JWT + HS256 fallback + X-API-Key              │
 ├──────────────────────────────────────────────────────┤
 │  LangGraph Agent Pipeline (9 nodes)                  │
 │  Orchestrator → [Strategy ∥ SEO] → [Content ∥ Ads]   │
 │  → Human Review → QA/Brand → Compile → Analytics     │
 ├──────────────────────────────────────────────────────┤
-│  Services: 23 modules — Billing · Publishing · Scheduler · LLM   │
-│  Brand Learning · Magic Brief · Team · API Keys · Reports · …     │
+│  Services: 27 modules — Billing · Publishing · Scheduler · LLM   │
+│  Moderation · Approval gate · Repurpose · Magic Brief · …        │
 └────────────────────┬────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────┐
-│  PostgreSQL (Neon) · 18 tables · Multi-tenant        │
+│  PostgreSQL (Neon) · 22 tables · Multi-tenant        │
 └─────────────────────────────────────────────────────┘
 ```
 

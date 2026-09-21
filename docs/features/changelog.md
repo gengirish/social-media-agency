@@ -4,16 +4,52 @@ Chronological record of feature changes. Newest first.
 
 ---
 
-## 260921 — Approval Gate (moderation before approval)
+## 260921 — Cadence Port: Design System, Approval Gate, Queue, Amplify
 
-Publishing posts to live X/LinkedIn/Facebook accounts, and until now nothing stood between a draft and that: `PATCH /content/{id}` accepted any status string, `schedule` and `publish` accepted any piece, and approve set `approved` unconditionally. Now (cadence port plan §4, phase 2):
+Ports the *design and flow* of the Cadence Crew prototype (not its code) — plan and open decisions in [`docs/cadence-port-plan-260921.md`](../cadence-port-plan-260921.md). Phases 0–5 shipped; phase 6 (authenticated client portal) is not started.
+
+### Approval gate (phase 2) — behaviour change
+
+Publishing posts to live X/LinkedIn/Facebook accounts, and until now nothing stood between a draft and that: `PATCH /content/{id}` accepted any status string, `schedule` and `publish` accepted any piece, and approve set `approved` unconditionally. Now (plan §4):
 
 - **`POST /content/{id}/approve` moderates first** (`services/moderation.py`, brain tier). Issues → 409 `moderation_flagged`; `?override=true` approves anyway and records `override_by`/`at` in `metadata.moderation`. Only `draft`/`rejected` can be approved (409 `invalid_status`). LLM failure **fails open** as `moderation.status = "unavailable"` with a `moderation_unavailable` log; the character-limit and excluded-vocabulary checks are code-level and still flag without the LLM.
 - **Schedule and publish-now accept only `approved`/`scheduled`** → otherwise 409 `not_approved`. This includes `published`: the old idempotent 200 for an already-published piece is now a 409.
 - **`PATCH /content/{id}`** can set `status` only to `draft`/`rejected`; editing body/hashtags of approved or scheduled content resets it to `draft`.
 - **Portal approve** runs the same moderation, never with override.
 
-**Behaviour change:** anything scripted to schedule or publish drafts now gets 409s. A publish that failed leaves the piece `failed`; to retry, PATCH it to `draft` and re-approve.
+**Behaviour change:** anything scripted to schedule or publish drafts now gets 409s. A publish that failed leaves the piece `failed`; to retry, PATCH it to `draft` and re-approve (the UI has no retry action). The same PATCH also reopens a `published` piece as `draft` — no guard on the current status.
+
+### Design system + IA (phases 1, 5)
+
+- **Added**: Cadence tokens in `tailwind.config.ts` — every colour a CSS variable, light on `:root`, dark on `.dark`; `slate`/`white`/`indigo` and 12 status hues remapped so existing pages theme without a rewrite; semantic `canvas`/`panel`/`ink`/`muted`/`line`/`accent`/`on-accent`. Inter / Space Grotesk / IBM Plex Mono via `next/font`.
+- **Added**: light/dark themes — OS preference by default, toggle in the nav/landing/auth screens, stored in `localStorage` (`cf-theme`), applied before first paint by `THEME_INIT_SCRIPT`. Clerk widgets themed via `lib/clerk-appearance.ts`. AA focus ring.
+- **Added**: `components/ui/*` primitives (Button, Panel, PageHeader, SectionCard, StatCard, EmptyState/Notice, Field, SegmentedTabs, StatusBadge, CampaignStatusBadge, QuotaHint, AuthCanvas).
+- **Changed**: left sidebar → sticky top nav (`components/layout/app-nav.tsx`, data in `lib/navigation.ts`) with groups Setup · Posts · Create · Insights · Settings and sub-tabs. Routes unchanged; Setup › Accounts is `/settings?tab=platforms`, and Settings tabs now live in `?tab=`.
+- **Changed**: every dashboard page, the landing page (now a Server Component; placeholder logos/testimonials removed) and sign-in/up restyled.
+- **Changed**: `draft` is labelled **Pending** everywhere in the UI. DB value unchanged.
+
+### Posts › Queue (phase 3)
+
+- **Changed**: `/content` is now the Queue (H1 "Queue", was "Content Library"): status tabs Pending · Approved · Scheduled · Published · Failed with counts, client/platform filters, moderation-aware approve with "Approve anyway", schedule picker (the first UI to call `POST /publishing/{id}/schedule` outside the calendar), publish-now confirm, failed-publish reason, Amplify deep link. Components in `components/posts/*`.
+- **Removed**: the Repurpose dialog and Suggestions tab from `/content`.
+- **Not built**: bulk select, delete and undo — there is no content `DELETE` endpoint. `rejected` posts have no tab.
+- **Changed**: Calendar restyled; drag-to-reschedule kept.
+
+### Amplify (phase 4)
+
+- **Added**: `POST /amplify/preview`, `POST /amplify/{pack_id}/commit`, `GET /amplify/packs` (`routers/amplify.py`) — one source → up to 8 drafts on distinct angles from a closed taxonomy; preview saves nothing, commit writes kept atoms as Pending drafts only. Worker tier at 0.8 (`agents/amplify.py`); pure helpers in `services/repurpose.py`. The prompt now reads brand `example_posts`, previously unused.
+- **Added**: `repurpose_pack` table; `subscription.generations_used` / `generations_limit`. **Run `db/migrations/260921_amplify.sql` on Neon before deploying the backend.**
+- **Added**: generation quota — 1 pack = 1 generation; `PLAN_CONFIG` limits free 10 / starter 50 / growth 250 / agency 9999; 402 `generation_quota_exceeded`; reset on `invoice.paid`; failed generations charge nothing. Reported by `GET /billing/subscription`.
+- **Added**: server-authored product events `amplify_pack_generated`, `amplify_pack_committed`; frontend `trackFeature("amplify")`.
+- **Added**: `/amplify` screen (`components/amplify/*`) under Create — form, cancel, review grid, pack history, `?source=` deep link.
+- `POST /content/{id}/repurpose` stays for API compatibility; the UI no longer calls it.
+
+### Other
+
+- **Fixed**: pipeline failures are now logged (`campaign_pipeline_failed`, `campaign_mark_failed_error`) instead of only being streamed.
+- **Docs**: `websocket.md` — `step_start`/`step_update` are declared but never emitted by the backend; one consumer per stream queue. `api-endpoints.md` — `GET /content` filters on `content_status`, not `status`. Counts: 86 endpoints / 25 routers / 27 service modules / 22 tables.
+
+**Known gaps, not fixed here:** quota check-then-increment race; Cancel on Amplify does not refund a generation the server finished; Free orgs never get `invoice.paid`, so their `posts_used` and `generations_used` never reset; Amplify output quality not yet eyeballed on a live LLM; the Approve button on the campaign detail page does not handle the new 409; landing and in-app plan copy disagree for Free.
 
 ---
 

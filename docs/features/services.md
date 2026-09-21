@@ -1,7 +1,7 @@
 # Services
-<!-- verified: 260817 -->
+<!-- verified: 260921 -->
 
-Business logic layer in `backend/src/agency/services/` — 23 modules. Routers stay thin; business logic lives here.
+Business logic layer in `backend/src/agency/services/` — 27 modules (260921). Routers stay thin; business logic lives here.
 
 ## LLM Provider
 **Status**: [LIVE]
@@ -48,12 +48,12 @@ Stripe subscription management. Singleton: `billing = BillingService()`.
 
 Source of truth is `PLAN_CONFIG` in `services/billing.py`.
 
-| Tier | Price | Clients | Posts/mo | Campaigns/mo |
-|------|-------|---------|----------|--------------|
-| free | $0 | 1 | 30 | 5 (no publishing) |
-| starter | $4900 (¢) | 3 | 200 | 20 |
-| growth | $14900 (¢) | 10 | 1000 | 9999 (unlimited) |
-| agency | $39900 (¢) | 999 (unlimited) | 99999 (unlimited) | 9999 (unlimited) |
+| Tier | Price | Clients | Posts/mo | Campaigns/mo | Amplify packs/period |
+|------|-------|---------|----------|--------------|----------------------|
+| free | $0 | 1 | 30 | 5 (no publishing) | 10 |
+| starter | $4900 (¢) | 3 | 200 | 20 | 50 |
+| growth | $14900 (¢) | 10 | 1000 | 9999 (unlimited) | 250 |
+| agency | $39900 (¢) | 999 (unlimited) | 99999 (unlimited) | 9999 (unlimited) | 9999 (unlimited) |
 
 "Unlimited" tiers use large sentinel numbers rather than nulls — quota checks are plain integer comparisons.
 
@@ -61,7 +61,8 @@ Source of truth is `PLAN_CONFIG` in `services/billing.py`.
 
 - `create_checkout_session(db, org_id, plan_tier, success_url, cancel_url)` — Stripe Checkout
 - `handle_webhook(db, event)` — Routes: checkout.completed, invoice.paid, subscription.cancelled/updated
-- `get_subscription(db, org_id)` — Current subscription + limits
+- `get_subscription(db, org_id)` — Current subscription + limits; also `generations_used` and `generations_limit` (the row's values, not the tier default)
+- `generations_limit_for(sub)` (module function) — the org's Amplify allowance: the row's `generations_limit`, or the tier's `PLAN_CONFIG` value when it is NULL, then the free tier — never unlimited
 - `check_quota(db, org_id, resource="posts")` — Quota enforcement
 - `get_plans()` — Plan catalog
 
@@ -98,6 +99,33 @@ The approval gate; raises `ContentGateError(status_code, detail)` which routers 
 - `approve_content_piece(db, piece, *, org_id, override, user_id)` — `draft`/`rejected` only; moderates; records `metadata.moderation`; commits. Used by `/content/{id}/approve` and the portal (override always false).
 - `ensure_publishable(piece)` — `approved`/`scheduled` only; used by schedule and publish-now.
 - `apply_content_edit(piece, ...)` — PATCH logic: refuses gated statuses; body/hashtag edits reset approved/scheduled content to `draft`.
+
+## Repurpose (Amplify helpers)
+**Status**: [LIVE]
+**File**: `services/repurpose.py`
+<!-- verified: 260921 -->
+
+Pure helpers for Amplify — no DB, no LLM — so the guards are unit-tested in isolation (`tests/test_repurpose.py`).
+
+- `REPURPOSE_ANGLES` — closed taxonomy: `hook`, `how-to`, `contrarian`, `story`, `data-point`, `question`, `behind-the-scenes`, `listicle`. `MAX_ATOMS = len(REPURPOSE_ANGLES)` (8). `ANGLE_DEFINITIONS` spells each out for the prompt.
+- `PLATFORM_CHAR_LIMITS` — derived from `agents/content_writer.PLATFORM_GUIDELINES[*]["max_length"]` (not restated), keys `twitter`, `linkedin`, `instagram`, `facebook`, `tiktok`. `PLATFORM_FORMATS` — per-platform format guidance for the prompt.
+- `plan_atoms(platforms, max_atoms, used_angles)` — assigns `(platform, angle)` pairs before the LLM call; platforms rotate, angles already used for the same source go last.
+- `validate_atoms(raw, platforms, max_atoms)` → `AtomValidation(kept, dropped)` — drops non-objects, unrequested platforms, unknown or repeated angles, empty bodies, and bodies whose `rendered_length` exceeds the platform limit; hashtags are stripped of `#`, de-duplicated, capped at 10.
+- `rendered_length(body, hashtags)` — body + blank line + every hashtag as `#tag`.
+- `jaccard(a, b)` / `is_angle_duplicate(candidate, recent, threshold=0.6)` — stopword-filtered token-set overlap; a reworded-duplicate catch, not semantic similarity.
+- `drip_schedule(n, start, per_week=5)` — `n` suggested 09:00 slots, one per day at most, starting the day after `start`. **Not called by any endpoint or UI** yet.
+
+## Amplify Agent
+**Status**: [LIVE]
+**File**: `agents/amplify.py`
+<!-- verified: 260921 -->
+
+Not a graph node — called directly by `routers/amplify.py`.
+
+- `generate_amplify_atoms(*, source_text, requests, brand, campaign_brief=None) -> AmplifyResult(atoms, dropped)` — one `get_worker_llm(0.8)` call (`AMPLIFY_TEMPERATURE`). Worker, not `lite`: whether eight atoms are genuinely different angles *is* the judgement.
+- Prompt: system rules (ground every atom in the source, no invented claims/numbers, one angle each, hashtags in their own array, no outcome promises), `format_brand_context(brand)` (empty fields omitted; up to 3 example posts truncated to 600 chars), optional campaign brief, source excerpt (first 6000 chars), the used angles' definitions, and the numbered requests with format + hard limit.
+- Output is never trusted: atoms whose `(platform, angle)` was not requested are dropped as off-plan, then `validate_atoms` runs. Drops are logged as `amplify_atoms_dropped`.
+- LLM errors propagate; the router maps them to 502 without charging quota.
 
 ## Scheduler
 **Status**: [LIVE]
@@ -254,3 +282,5 @@ Backs the beta metrics dashboard (`docs/beta-testing-plan.md` §7).
 - `record_request()` / `request_rate_snapshot()` — in-memory request counters; reset on process restart
 
 `CLIENT_WRITABLE_EVENTS` allowlists the four events the browser may write, so pipeline and error counts stay server-authored.
+
+Amplify adds two server-authored `feature`-category events, written from `routers/amplify.py` and **not** client-writable: `amplify_pack_generated` (properties: `pack_id`, `requested`, `atoms`, `dropped`, `platforms`, `source`) and `amplify_pack_committed` (`pack_id`, `committed`, `generated`, `angles`).

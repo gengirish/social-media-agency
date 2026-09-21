@@ -1,5 +1,5 @@
 # API Endpoints
-<!-- verified: 260817 -->
+<!-- verified: 260921 -->
 
 All routes are prefixed with `/api/v1`. Authentication uses `Authorization: Bearer <JWT>` unless noted. `ApiKeyAuthMiddleware` accepts `X-API-Key` for `/public/*` and other key-gated routes as implemented.
 
@@ -56,13 +56,13 @@ The stream endpoint uses `?token=` query param because `EventSource` cannot send
 
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
-| GET | `/content` | Yes | `list_content` | Paginated; filters: campaign_id, client_id, status, platform |
+| GET | `/content` | Yes | `list_content` | Paginated (`page`, `per_page` ≤100); filters: `campaign_id`, `client_id`, `content_status`, `platform`. The status filter is **`content_status`** — a `status` param is silently ignored |
 | GET | `/content/suggestions` | Yes | `content_suggestions` | Top-performing content for recycling |
 | POST | `/content/video-script` | Yes | `create_video_script` | Generate video/podcast scripts |
 | GET | `/content/{content_id}` | Yes | `get_content` | Single content piece |
 | GET | `/content/{content_id}/analytics` | Yes | `get_analytics` | Analytics snapshots for content |
 | PATCH | `/content/{content_id}` | Yes | `update_content` | Partial update (title, body, hashtags, status). `status` only `draft`/`rejected` — see [Approval gate](#approval-gate) |
-| POST | `/content/{content_id}/repurpose` | Yes | `repurpose_content` | Generate platform-adapted variants |
+| POST | `/content/{content_id}/repurpose` | Yes | `repurpose_content` | Generate platform-adapted variants (lite tier, one per platform). Kept for API compatibility; the UI uses [Amplify](#amplify) instead |
 | POST | `/content/{content_id}/variants` | Yes | `generate_variants` | A/B variant generation |
 | POST | `/content/{content_id}/approve` | Yes | `approve_content` | Moderate, then approve; `?override=true` approves over flagged issues — see [Approval gate](#approval-gate) |
 | POST | `/content/{content_id}/generate-image` | Yes | `generate_image` | AI image generation via fal.ai |
@@ -90,6 +90,89 @@ Lifecycle (DB values; `draft` is labelled *Pending* in the UI): `draft`/`rejecte
 
 **Portal** `PATCH /portal/{org_slug}/content/{id}` with `decision: "approve"` runs the same moderation with **no override**; a flag returns the same 409 `moderation_flagged` shape.
 
+## Amplify
+**Status**: [LIVE] (output quality not yet reviewed against a live LLM)
+**File**: `backend/src/agency/routers/amplify.py` · agent `agents/amplify.py` · helpers `services/repurpose.py`
+<!-- verified: 260921 -->
+
+One source (an existing content piece or pasted text) → up to 8 drafts, each on a different angle from a closed taxonomy (`hook`, `how-to`, `contrarian`, `story`, `data-point`, `question`, `behind-the-scenes`, `listicle`). Two steps on purpose: **preview** generates and writes nothing to `content_piece`; **commit** writes only the atoms the human kept, always as `status="draft"` (Pending). Nothing here approves, schedules or publishes — committed drafts go through the normal [approval gate](#approval-gate).
+
+| Method | Path | Auth | Handler | Purpose |
+|--------|------|------|---------|---------|
+| POST | `/amplify/preview` | Yes | `preview` | Generate a pack. Charges 1 generation on success |
+| POST | `/amplify/{pack_id}/commit` | Yes | `commit` | Write kept atoms as Pending drafts |
+| GET | `/amplify/packs` | Yes | `list_packs` | Pack history for the org, newest first |
+
+Tenancy: `client_id`, `source_content_id` and `pack_id` are each resolved against the caller's `org_id` (covered in `test_tenancy_routers.py`).
+
+**`POST /amplify/preview`**
+
+Request:
+
+```json
+{
+  "client_id": "uuid",
+  "source_content_id": "uuid | null",
+  "source_text": "string | null (≤20000 chars)",
+  "platforms": ["twitter", "linkedin", "instagram", "facebook", "tiktok"],
+  "max_atoms": 8
+}
+```
+
+Exactly one of `source_content_id` / `source_text` (non-blank). `platforms` ≥1, each a key of `PLATFORM_CHAR_LIMITS`. `max_atoms` 1–8, default 8. A `source_content_id` must belong to the same org **and** the same client.
+
+Response 200:
+
+```json
+{
+  "pack_id": "uuid",
+  "atoms": [{
+    "platform": "linkedin", "angle": "how-to", "title": "...", "body": "...",
+    "hashtags": ["tag"], "char_count": 812, "char_limit": 3000,
+    "duplicate_warning": false
+  }],
+  "requested": 8,
+  "dropped": 1
+}
+```
+
+- Angles are assigned before the LLM call (`plan_atoms`): platforms rotate, and angles already used by earlier packs from the same source go last. The model's output is re-validated — off-plan, over-limit, empty or repeated-angle atoms are dropped and counted in `dropped`.
+- `char_count` is body + `"
+
+"` + all hashtags as `#tag`; atoms over `char_limit` are dropped, never returned.
+- `duplicate_warning` — token-set Jaccard ≥ 0.6 against the client's 50 most recent posts and the earlier atoms in this pack. Warns, never blocks.
+- Brand context: client fields plus the client's `BrandProfile` (voice, tone, vocabulary include/exclude, up to 3 `example_posts`, style rules, emoji policy, audience). When the source belongs to a campaign, the campaign's name, objective and channels are added.
+- On success a `repurpose_pack` row is written, `subscription.generations_used` is incremented, and the server-authored `amplify_pack_generated` event is tracked.
+
+| Error | Status | Body |
+|---|---|---|
+| Client not in org | 404 | `"Client not found"` |
+| Source not in org/client | 404 | `"Source content not found"` |
+| Source piece has no title/body | 422 | `"Source content is empty"` |
+| Validation (both/neither source, unknown platform, `max_atoms` out of range) | 422 | FastAPI validation error |
+| No subscription row, or `generations_used >= limit` | 402 | `detail = {"code": "generation_quota_exceeded", "message"}` |
+| LLM raised | 502 | `"Generation failed; no quota was used. Try again."` |
+| No atom survived validation | 502 | `"The model returned no usable drafts; no quota was used. Try again."` |
+
+Quota is checked *before* generation and incremented (atomically, `generations_used + 1`) *after* — a 502 charges nothing. The check and the increment are not one statement, so concurrent previews at the limit can each pass the check and overshoot it.
+
+**`POST /amplify/{pack_id}/commit`**
+
+Request: `{"atoms": [{"platform", "angle", "title": "", "body", "hashtags": []}]}` — 1 to 8 atoms.
+
+Response 200: `{"created": ["content_id", ...], "count": n}`.
+
+Each kept atom becomes a `content_piece` with `status="draft"` (hard-coded), `content_type="social_post"`, `ai_generated=true`, `campaign_id` inherited from the source piece if any, and `metadata = {amplify_pack_id, source_id, angle}`. Sets `repurpose_pack.committed_count`; tracks `amplify_pack_committed`. Commit does not re-run the LLM and does not charge quota.
+
+| Error | Status | Body |
+|---|---|---|
+| Pack not in org | 404 | `"Pack not found"` |
+| Pack already committed (`committed_count > 0`) | 409 | `"This pack was already added to the queue"` |
+| Atom fails re-validation (platform not in the pack's platforms, unknown/duplicate angle, empty body, over char limit) | 422 | `detail = {"code": "invalid_atoms", "errors": [...]}` |
+| 0 or >8 atoms | 422 | FastAPI validation error |
+
+**`GET /amplify/packs?client_id=&limit=20`** — `limit` 1–100. Returns `{"items": [{id, client_id, client_name, source_content_id, source_title, source_excerpt (first 140 chars of pasted text), platforms, atom_count, committed_count, created_at}]}`.
+
 ## Stats
 **Status**: [LIVE]
 **File**: `backend/src/agency/routers/stats.py`
@@ -105,7 +188,7 @@ Lifecycle (DB values; `draft` is labelled *Pending* in the UI): `draft`/`rejecte
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
 | GET | `/billing/plans` | Yes | `list_plans` | Plan catalog |
-| GET | `/billing/subscription` | Yes | `get_subscription` | Org subscription + limits |
+| GET | `/billing/subscription` | Yes | `get_subscription` | Org subscription + limits, incl. `generations_used` / `generations_limit` (Amplify quota — see [billing.md](billing.md#amplify-generation-quota)) |
 | POST | `/billing/checkout` | Yes | `create_checkout` | Stripe Checkout session |
 | POST | `/billing/webhook` | Stripe sig | `stripe_webhook` | Stripe webhook handler |
 
@@ -282,6 +365,6 @@ Authentication: `X-API-Key` header (API key), not JWT.
 | POST | `/events` | Yes | `ingest_events` | Batch browser events (≤50). Only `session_started`, `session_ended`, `page_view`, `feature_used` are accepted; others counted as rejected |
 | GET | `/beta-metrics` | Yes | `get_beta_metrics` | Beta plan §7 metrics for the caller's org (`window_days`, 1–180, default 28) |
 
-**Total: 82 endpoints across 24 routers** — every router file in `routers/` is mounted in `main.py` with prefix `/api/v1`.
+**Total: 86 endpoints across 25 routers** (counted from `@router.*` decorators, 260921) — every router file in `routers/` is mounted in `main.py` with prefix `/api/v1`.
 
 Note: `product_analytics.py` declares no router prefix, so its two routes land at `/api/v1/events` and `/api/v1/beta-metrics`. `slack.py` and `webhooks_config.py` both nest under the `/integrations` path without being part of `integrations.py`.

@@ -1,5 +1,5 @@
 # Authentication & RBAC
-<!-- verified: 260817 -->
+<!-- verified: 260921 -->
 
 ## Auth Flow
 **Status**: [LIVE]
@@ -61,7 +61,13 @@ Two rules that follow, both of which shipped code violated before 260817:
 1. **Any id arriving from the client — path param, body field, query string — must be resolved against `org_id` before it is written to or joined on.** A trusted body `client_id` in `routers/oauth.py` let one tenant attach a connected social account to another tenant's client; `routers/publishing.py` then selected that account because its own lookup was unscoped too. Neither gap did anything on its own; together they let an attacker either permanently 500 a victim's publish path or have the victim's content posted with the attacker's token.
 2. **`get_current_user` returns the JWT payload dict** — `{sub, email, role, org_id}` — in *both* the Clerk and local HS256 paths, never an ORM `User`. Use the `get_current_user_id` dependency for the caller's id. `user.id` raises `AttributeError` and surfaces as a 500; `routers/comments.py` and `routers/notifications.py` were entirely non-functional for this reason until 260817.
 
-**Tests:** `backend/tests/test_tenancy.py` (clients, campaigns, content) and `backend/tests/test_tenancy_routers.py` (oauth, publishing, comments, notifications, reports, portal). Both run against a real SQLite database so the `WHERE org_id = ...` clauses actually execute. Every test in `test_tenancy_routers.py` has been verified to **fail** when its own filter is deleted — preserve that property when adding cases, because a tenancy test that cannot fail is worse than none.
+**Tests:** `backend/tests/test_tenancy.py` (clients, campaigns, content) and `backend/tests/test_tenancy_routers.py` (oauth, publishing, comments, notifications, reports, portal, amplify — `client_id`, `source_content_id` and `pack_id`, each also asserting nothing was written and no quota charged). Both run against a real SQLite database so the `WHERE org_id = ...` clauses actually execute. Every test in `test_tenancy_routers.py` has been verified to **fail** when its own filter is deleted — preserve that property when adding cases, because a tenancy test that cannot fail is worse than none.
+
+### Unauthenticated Client Portal
+
+`/api/v1/portal/{org_slug}/*` has **no auth** — the org is resolved from the unique `organization.slug`, and the portal must be enabled for that org. Since 260921, `PATCH /portal/{org_slug}/content/{id}` with `decision: "approve"` runs the same moderated approval as the dashboard (`services/content_approval.py`) with **override always off**: a flagged post returns 409 `moderation_flagged` and stays unchanged. Only an authenticated agency user can approve over moderation issues. `reject` sets `rejected` with no status check.
+
+Replacing this with a signed-in client-reviewer role is phase 6 of `docs/cadence-port-plan-260921.md` — not built.
 
 ## Roles
 

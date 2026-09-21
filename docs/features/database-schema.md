@@ -1,7 +1,7 @@
 # Database Schema
-<!-- verified: 260818 -->
+<!-- verified: 260921 -->
 
-PostgreSQL (Neon serverless) via SQLAlchemy async. **21 tables** (20 without pgvector).
+PostgreSQL (Neon serverless) via SQLAlchemy async. **22 tables** (21 without pgvector). `repurpose_pack` added 260921.
 
 **File**: `backend/src/agency/models/tables.py`
 
@@ -73,6 +73,8 @@ Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations
 | `clients_limit` | Integer | |
 | `posts_limit` | Integer | |
 | `posts_used` | Integer | |
+| `generations_used` | Integer NOT NULL, default 0 | Amplify packs generated this billing period (1 pack = 1 generation). Reset to 0 with `posts_used` on `invoice.paid`. Added 260921 |
+| `generations_limit` | Integer, nullable | Set from `PLAN_CONFIG[tier]["generations_limit"]` on provisioning and every plan change. NULL falls back to the tier's value (`billing.generations_limit_for`). Added 260921 |
 | `period_start` | DateTime(tz) | |
 | `period_end` | DateTime(tz) | |
 | `status` | String | |
@@ -144,10 +146,10 @@ Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations
 | `platform` | String | twitter, linkedin, instagram, etc. |
 | `title` / `body` | String / Text | |
 | `hashtags` | JSONB | |
-| `metadata_` | JSONB | |
+| `metadata_` | JSONB | Keys written by the gate and Amplify: `moderation` (`status`, `issues`, `override_by`, `at`), `amplify_pack_id`, `source_id`, `angle`; by publishing: `post_url`, `publish_error` |
 | `media_urls` | JSONB | |
 | `ai_generated` | Boolean | |
-| `status` | String | draft, approved, scheduled, published |
+| `status` | String | `draft` (shown as **Pending** in the UI), `approved`, `scheduled`, `published`, `failed`, `rejected`. Transitions are gated — see [api-endpoints.md › Approval gate](api-endpoints.md#approval-gate) |
 | `performance_score` | Float | |
 | `scheduled_at` / `published_at` | DateTime(tz) | |
 | `created_at` / `updated_at` | DateTime(tz) | |
@@ -183,6 +185,31 @@ Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations
 | `total_duration_ms` | Integer | |
 | `total_cost_usd` | Numeric | |
 | `created_at` / `completed_at` | DateTime(tz) | |
+
+## RepurposePack
+**Status**: [LIVE]
+<!-- verified: 260921 -->
+
+One row per generated Amplify pack (`routers/amplify.py`). Atoms are **not** stored here: preview returns them, commit writes the kept ones to `content_piece` as drafts whose `metadata.amplify_pack_id` points back (FK by convention, not a column).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID PK | |
+| `org_id` | UUID FK → Organization, NOT NULL | `ON DELETE CASCADE` in `init.sql` |
+| `client_id` | UUID FK → Client, NOT NULL | `ON DELETE CASCADE` in `init.sql` |
+| `source_content_id` | UUID FK → ContentPiece, nullable | `ON DELETE SET NULL`. Null when the source was pasted text |
+| `source_text` | Text, nullable | Pasted source; null when `source_content_id` is set |
+| `platforms` | JSONB NOT NULL, default `[]` | Platforms requested |
+| `atom_count` | Integer NOT NULL, default 0 | Atoms returned by preview |
+| `committed_count` | Integer NOT NULL, default 0 | Atoms written by commit; `> 0` blocks a second commit |
+| `created_by` | UUID FK → users, nullable | `ON DELETE SET NULL` |
+| `created_at` | DateTime(tz) | |
+
+Index `idx_repurpose_pack_org_created` on `(org_id, created_at DESC)` — the history list.
+
+`tables.py` declares the `org_id`/`client_id` FKs without `ondelete`; the cascade exists only in SQL. Harmless for queries, but the ORM does not know about it.
+
+**Migration:** `db/migrations/260921_amplify.sql` — adds both `subscription` columns, backfills `generations_limit` by tier (`free` 10, `starter` 50, `growth` 250, `agency` 9999 — must match `PLAN_CONFIG`), and creates `repurpose_pack` + its index. Additive and re-runnable. **Run it by hand on Neon before deploying the backend that ships `routers/amplify.py`**, or `/api/v1/amplify/*` and `/billing/subscription` fail with `UndefinedColumn` / `UndefinedTable`.
 
 ## Other Tables
 
@@ -223,6 +250,7 @@ Organization ──┬── User (many)
                ├── Notification (many)
                ├── AuditLog (many)
                ├── ProductEvent (many)
+               ├── RepurposePack (many) ── Client (one), ContentPiece source (0..1)
                ├── Client (many) ──┬── BrandProfile (one)
                │                   ├── Campaign (many) ──┬── ContentPiece (many)
                │                   │                     ├── AgentRun (many)

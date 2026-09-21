@@ -1,5 +1,30 @@
 # Cadence Crew → CampaignForge port plan (260921)
 
+## Status (260921)
+
+**Phases 0–5 shipped** on `feat/cadence-integration`. **Phase 6** (authenticated client portal) is **pending scoping** — nothing built. What shipped is documented in `docs/features/` (changelog entry 260921).
+
+Where the build differs from the plan below:
+
+- **Accounts** tab is `/settings?tab=platforms`, not `/settings#accounts`; Settings tabs moved into `?tab=`.
+- **Amplify commit** is `POST /amplify/{pack_id}/commit` with `{atoms}` only — client, source and platforms come from the `repurpose_pack` row written by preview, not from the request. A third endpoint, `GET /amplify/packs`, backs the history list.
+- **Migration** is `db/migrations/260921_amplify.sql` (one file for the table and the quota columns).
+- **Queue** shipped without bulk select, delete, or undo-delete (no `DELETE` endpoint exists); sonner undo toasts were not built.
+- **Amplify deep link** is on Queue cards only — campaign detail content cards have none.
+- `drip_schedule()` is built and tested but **not wired** into the schedule picker, even as a suggestion.
+
+### Open decisions
+
+1. **Failed-publish retry path.** A `failed` post has no action in the Queue. The only API path is `PATCH status=draft` → re-approve (re-moderates) → schedule/publish. Decide: a Retry button over that path, a dedicated retry endpoint, or leave it.
+2. **Published posts can be reopened via PATCH.** `apply_content_edit` checks only the *target* status, so `PATCH /content/{id} {"status": "draft"}` on a `published` (or `failed`, `scheduled`) piece is accepted. A reopened published post can be re-approved and published again — a second live post. Decide whether `published` is terminal.
+3. **No content DELETE endpoint.** The Queue has no delete or undo; drafts can only be rejected (and `rejected` has no Queue tab, so rejected posts vanish from the UI).
+4. **Magic Brief is unlinked in the UI.** `/campaigns/new/magic-brief` works and was restyled, but nothing links to it. Link it from New Campaign / Clients, or retire it.
+5. **Landing vs in-app plan copy.** Landing Free card says "30 posts / mo"; in-app `/pricing` says "5 campaigns / mo". Both are real `PLAN_CONFIG` values, but pick one headline allowance per tier. Neither surface mentions the Amplify pack allowance.
+6. **Quota race.** Amplify checks `generations_used < limit` and increments later in a separate statement; concurrent previews at the boundary can overshoot. Options: conditional `UPDATE … WHERE generations_used < limit RETURNING`, or a row lock. Related: Cancel in the UI does not stop the server, so a finished generation is still charged; Free orgs never receive `invoice.paid`, so their counters never reset.
+7. **Amplify output quality not yet eyeballed on a live LLM.** Tests stub the model; structural guards (angles, char limits, duplicate warnings) are covered, blandness is not. Needs a review pass on real generations before it is sold.
+
+---
+
 Source: `cadence-crew-handoff.zip` — a single-file React prototype (`code.jsx`, ~8.2k lines,
 browser-side LLM calls, localStorage state) plus `CREW_AMPLIFY_SPEC.md` and `CREW_CONTEXT_PACK.md`.
 

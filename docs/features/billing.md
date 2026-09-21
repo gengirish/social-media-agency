@@ -1,5 +1,5 @@
 # Billing
-<!-- verified: 260817 -->
+<!-- verified: 260921 -->
 
 ## Stripe Integration
 **Status**: [LIVE]
@@ -9,14 +9,16 @@
 
 Source of truth is `PLAN_CONFIG` in `services/billing.py`. Price IDs come from `STRIPE_PRICE_STARTER` / `_GROWTH` / `_AGENCY` with `price_*` string fallbacks.
 
-| Tier | Monthly Price | Clients | Posts/mo | Campaigns/mo | Target |
-|------|--------------|---------|----------|--------------|--------|
-| Free | $0 | 1 | 30 | 5 | Trial users — no publishing |
-| Starter | $49 | 3 | 200 | 20 | Solo marketers |
-| Growth | $149 | 10 | 1000 | Unlimited | Growing teams |
-| Agency | $399 | Unlimited | Unlimited | Unlimited | Agencies |
+| Tier | Monthly Price | Clients | Posts/mo | Campaigns/mo | Amplify packs/period | Target |
+|------|--------------|---------|----------|--------------|----------------------|--------|
+| Free | $0 | 1 | 30 | 5 | 10 | Trial users — no publishing |
+| Starter | $49 | 3 | 200 | 20 | 50 | Solo marketers |
+| Growth | $149 | 10 | 1000 | Unlimited | 250 | Growing teams |
+| Agency | $399 | Unlimited | Unlimited | Unlimited | Unlimited | Agencies |
 
-"Unlimited" is stored as a large sentinel integer (`999` clients, `99999` posts, `9999` campaigns), not null — quota checks are plain integer comparisons.
+"Unlimited" is stored as a large sentinel integer (`999` clients, `99999` posts, `9999` campaigns, `9999` generations), not null — quota checks are plain integer comparisons.
+
+> **Plan copy is not consistent across surfaces.** The landing page (`src/app/page.tsx`) lists Free as "1 client / 30 posts / mo"; the in-app pricing page (`src/app/(dashboard)/pricing/page.tsx`) lists it as "1 client / 5 campaigns / mo / No publishing". Both numbers exist in `PLAN_CONFIG`, but a visitor sees two different headline allowances. Neither page mentions the Amplify allowance. Open decision — see `docs/cadence-port-plan-260921.md`.
 
 ### Checkout Flow
 
@@ -49,6 +51,24 @@ Only a verified event reaches `billing.handle_webhook()`. This closes the "anyon
 ### Quota Enforcement
 
 `billing.check_quota(db, org_id, resource="posts")` — Checks `posts_used < posts_limit` before publishing (immediate and scheduled). On successful publish, `billing.record_post_published()` increments `posts_used`.
+
+### Amplify Generation Quota
+<!-- verified: 260921 -->
+
+**Status**: [LIVE] — `routers/amplify.py`, `services/billing.py`
+
+1 Amplify pack (one `POST /amplify/preview` that returns at least one draft) = 1 generation, regardless of how many drafts are in it or how many are later committed.
+
+- **Columns:** `subscription.generations_used` (NOT NULL, default 0) and `subscription.generations_limit` (nullable). See [database-schema.md](database-schema.md#subscription).
+- **Limit resolution:** `generations_limit_for(sub)` — the row's `generations_limit`; if NULL, the tier's `PLAN_CONFIG["generations_limit"]`; if the tier is unknown, the free tier's. Never unlimited by default.
+- **Where the limit is written:** on signup (`routers/auth.py`), Clerk auto-provisioning (`dependencies.py`), `checkout.session.completed`, `customer.subscription.updated`, and downgrade to free on `customer.subscription.deleted` — the same places `posts_limit` is written.
+- **Enforcement:** preview checks `generations_used >= limit` → **402** `{"code": "generation_quota_exceeded", "message"}` before calling the LLM. A missing subscription row is also a 402.
+- **Charging:** only after a successful generation — `UPDATE subscription SET generations_used = generations_used + 1` in the same transaction as the `repurpose_pack` insert. An LLM error or an empty result is a 502 and charges nothing. Commit never charges.
+- **Known race:** the limit check and the increment are separate statements, so concurrent previews by the same org at the boundary can each pass the check and overshoot the limit.
+- **Cancel does not refund:** the UI's Cancel aborts the browser request; the server does not observe the abort, so a generation that completes server-side is still charged.
+- **Reset:** `invoice.paid` sets `generations_used = 0` alongside `posts_used = 0`. There is no other reset — Free orgs, which never receive `invoice.paid`, are never reset.
+- **Reporting:** `GET /billing/subscription` returns `generations_used` and `generations_limit` (the row's values, placed after the `PLAN_CONFIG` spread so a per-org override is not hidden). With no subscription row it returns the free plan and `generations_used: 0`. The Amplify screen's `QuotaHint` reads these and renders nothing if either is missing.
+- **Migration:** `db/migrations/260921_amplify.sql` backfills `generations_limit` by tier for existing rows.
 
 ### Frontend
 
