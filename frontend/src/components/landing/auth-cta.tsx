@@ -20,7 +20,7 @@ export function AuthCta({ variant }: { variant: "header" | "hero" | "final" }) {
     }
     if (isSignedIn) {
       return (
-        <Link href="/campaigns" className="cf-btn cf-btn-solid cf-btn-sm">
+        <Link href="/clients" className="cf-btn cf-btn-solid cf-btn-sm">
           Go to dashboard
         </Link>
       );
@@ -37,7 +37,7 @@ export function AuthCta({ variant }: { variant: "header" | "hero" | "final" }) {
     );
   }
 
-  const signedInHref = "/campaigns";
+  const signedInHref = "/clients";
   const signedInLabel = "Go to dashboard";
 
   if (variant === "hero") {

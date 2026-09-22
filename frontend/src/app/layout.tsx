@@ -43,8 +43,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           through /sign-in with ?redirect_url, and that should still be honored.
         */}
         <ClerkProvider
-          signInFallbackRedirectUrl="/campaigns"
-          signUpFallbackRedirectUrl="/campaigns"
+          signInFallbackRedirectUrl="/clients"
+          signUpFallbackRedirectUrl="/clients"
           appearance={{ variables: { colorPrimary: "#F2C14E", colorTextOnPrimaryBackground: "#1A1406" } }}
         >
           <ClerkTokenSync />
