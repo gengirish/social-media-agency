@@ -138,7 +138,7 @@ Asyncio-based content scheduler. Singleton: `scheduler = SchedulerEngine()`. Sta
 - `schedule_content(db, content_id, scheduled_at)` — Set publish time
 - `get_calendar(db, org_id, start, end)` — Calendar view
 - `_process_due_content()` — Minute loop, publishes content where `scheduled_at <= now`
-- `_publish_piece()` — refuses an archived client's post first (`ensure_client_active`) and marks it `failed`; only reachable if a schedule raced an archive, since archiving refuses while posts are scheduled
+- `_publish_piece()` — refuses an archived client's post first (`ensure_client_active`) and marks it `failed`; only reachable if a schedule raced an archive, since archiving refuses while posts are scheduled. Its account lookup is scoped to the post's `org_id` and takes the newest connected account (fixed 260922; previously unscoped, and `scalar_one_or_none` raised on duplicates)
 
 ## Brand Learning
 **Status**: [LIVE]

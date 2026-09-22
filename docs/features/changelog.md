@@ -11,6 +11,7 @@ Chronological record of feature changes. Newest first.
 - **Changed**: schedule, publish-now and the scheduler refuse an archived client's posts (409 `client_archived`; the scheduler marks the post `failed`). With the archive rule above, nothing can go live on an archived client's accounts.
 - **Changed**: `/clients` has Active / Archived tabs, and the whole client tile opens the detail page (previously only the name was a link). Campaigns and the Queue resolve client names from active + archived clients, so an archived client's posts keep their label.
 - Analytics: `client-edit`, `client-archive`, `client-restore`. Tests: `tests/test_client_edit.py`.
+- **Fixed**: the scheduler's connected-account lookup did not filter on `org_id` — the same gap closed in `publish_now` on 260817. An account row owned by another tenant but carrying this client's id could have been used to post. Not reachable via the API since the OAuth fix, but the scheduler posts unattended, so it now matches `publish_now`: org-scoped, newest account wins (duplicates used to raise). Tests: `tests/test_scheduler_publish.py`.
 
 ---
 

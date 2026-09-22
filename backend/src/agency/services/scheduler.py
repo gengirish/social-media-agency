@@ -198,15 +198,21 @@ class SchedulerEngine:
             await db.commit()
             return
 
-        # Get platform credentials
+        # TENANCY: filter on the post's org, as publish_now does. Without it an account
+        # row owned by another tenant but carrying this client's id would be selected and
+        # the post published with that tenant's token. ``first()`` because an org may hold
+        # more than one account per client+platform; newest connection wins, not an error.
         result = await db.execute(
-            select(PlatformAccount).where(
+            select(PlatformAccount)
+            .where(
+                PlatformAccount.org_id == piece.org_id,
                 PlatformAccount.client_id == piece.client_id,
                 PlatformAccount.platform == piece.platform,
                 PlatformAccount.status == "connected",
             )
+            .order_by(PlatformAccount.created_at.desc())
         )
-        account = result.scalar_one_or_none()
+        account = result.scalars().first()
 
         if not account:
             logger.warning(
