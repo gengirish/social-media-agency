@@ -179,6 +179,8 @@ export const api = {
   getCampaign: (id: string) => request<Campaign>(`/api/v1/campaigns/${id}`),
   createCampaign: (data: CampaignBriefRequest) =>
     request<Campaign>("/api/v1/campaigns", { method: "POST", body: JSON.stringify(data) }),
+  rerunCampaign: (id: string) =>
+    request<Campaign>(`/api/v1/campaigns/${id}/rerun`, { method: "POST" }),
 
   getCampaignContent: (campaignId: string) =>
     request<{ items: ContentPiece[]; total: number }>(`/api/v1/campaigns/${campaignId}/content`),
