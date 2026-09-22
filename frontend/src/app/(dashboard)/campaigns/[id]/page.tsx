@@ -6,7 +6,8 @@ import Link from "next/link";
 import { api, apiErrorCode, moderationIssues, type Campaign, type ContentPiece } from "@/lib/api";
 import { LiveAgentDashboard } from "@/components/agents/live-agent-dashboard";
 import { toast } from "sonner";
-import { FileText, CheckCircle2, Bot, ArrowLeft } from "lucide-react";
+import { FileText, CheckCircle2, Bot, ArrowLeft, RotateCcw } from "lucide-react";
+import { trackFeature } from "@/lib/analytics";
 import { Button } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/panel";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -21,6 +22,9 @@ export default function CampaignDetailPage() {
   const [content, setContent] = useState<ContentPiece[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"agents" | "content">("agents");
+  const [rerunning, setRerunning] = useState(false);
+  // Bumped on re-run so the dashboard remounts and opens the new run's stream.
+  const [runKey, setRunKey] = useState(0);
 
   useEffect(() => {
     if (!id) return;
@@ -35,6 +39,28 @@ export default function CampaignDetailPage() {
     api.getCampaignContent(id)
       .then((res) => setContent(res.items))
       .catch(() => {});
+  }
+
+  async function handleRerun() {
+    if (rerunning || !id) return;
+    const ok = window.confirm(
+      "Re-run the agent pipeline from the start? Any pending review is discarded. " +
+        "Existing content stays; the new run adds fresh drafts for review."
+    );
+    if (!ok) return;
+    setRerunning(true);
+    try {
+      const updated = await api.rerunCampaign(id);
+      setCampaign(updated);
+      setActiveTab("agents");
+      setRunKey((k) => k + 1);
+      trackFeature("campaign-rerun");
+      toast.success("Pipeline restarted");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not re-run campaign");
+    } finally {
+      setRerunning(false);
+    }
   }
 
   function handlePipelineComplete() {
@@ -80,7 +106,14 @@ export default function CampaignDetailPage() {
               ))}
             </div>
           </div>
-          <CampaignStatusBadge status={campaign.status} className="px-2.5 py-1 text-xs" />
+          <div className="flex items-center gap-2">
+            <CampaignStatusBadge status={campaign.status} className="px-2.5 py-1 text-xs" />
+            {campaign.status !== "autonomous" && (
+              <Button size="sm" variant="secondary" onClick={handleRerun} disabled={rerunning}>
+                <RotateCcw className="h-3.5 w-3.5" /> {rerunning ? "Restarting…" : "Re-run"}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -101,6 +134,7 @@ export default function CampaignDetailPage() {
       {/* Agent Dashboard */}
       {activeTab === "agents" && (
         <LiveAgentDashboard
+          key={runKey}
           campaignId={id}
           onComplete={handlePipelineComplete}
         />

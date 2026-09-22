@@ -141,6 +141,15 @@ export const api = {
   createClient: (data: CreateClientRequest) =>
     request<Client>("/api/v1/clients", { method: "POST", body: JSON.stringify(data) }),
 
+  updateClient: (id: string, data: UpdateClientRequest) =>
+    request<Client>(`/api/v1/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  getBrandProfile: (clientId: string) =>
+    request<SavedBrandProfile>(`/api/v1/clients/${clientId}/brand-profile`),
+  saveBrandProfile: (clientId: string, data: BrandProfileRequest) =>
+    request<SavedBrandProfile>(`/api/v1/clients/${clientId}/brand-profile`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   createBrandProfile: (clientId: string, data: BrandProfileRequest) =>
     request<BrandProfileCreatedResponse>(`/api/v1/clients/${clientId}/brand-profile`, {
       method: "POST",
@@ -155,6 +164,8 @@ export const api = {
   getCampaign: (id: string) => request<Campaign>(`/api/v1/campaigns/${id}`),
   createCampaign: (data: CampaignBriefRequest) =>
     request<Campaign>("/api/v1/campaigns", { method: "POST", body: JSON.stringify(data) }),
+  rerunCampaign: (id: string) =>
+    request<Campaign>(`/api/v1/campaigns/${id}/rerun`, { method: "POST" }),
 
   getCampaignContent: (campaignId: string) =>
     request<{ items: ContentPiece[]; total: number }>(`/api/v1/campaigns/${campaignId}/content`),
@@ -602,6 +613,22 @@ export interface CreateClientRequest {
   description?: string;
   website_url?: string;
   contact_email?: string;
+}
+
+/** Mirrors `ClientUpdate` — only the fields sent are written. */
+export type UpdateClientRequest = Partial<CreateClientRequest>;
+
+/** Mirrors `BrandProfileResponse` — a client's saved brand profile. */
+export interface SavedBrandProfile {
+  client_id: string;
+  voice_description: string | null;
+  tone_attributes: Record<string, number> | null;
+  vocabulary_include: string[] | null;
+  vocabulary_exclude: string[] | null;
+  style_rules: string[] | null;
+  emoji_policy: string | null;
+  competitor_differentiation: string | null;
+  target_audience: string | null;
 }
 
 /** Mirrors `BrandProfileCreate` — every field has a server-side default. */
