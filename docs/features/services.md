@@ -98,6 +98,7 @@ The approval gate; raises `ContentGateError(status_code, detail)` which routers 
 
 - `approve_content_piece(db, piece, *, org_id, override, user_id)` — `draft`/`rejected` only; moderates; records `metadata.moderation`; commits. Used by `/content/{id}/approve` and the portal (override always false).
 - `ensure_publishable(piece)` — `approved`/`scheduled` only; used by schedule and publish-now.
+- `ensure_client_active(db, piece)` — async; 409 `client_archived` when the piece's client is archived. Used by schedule, publish-now and the scheduler's `_publish_piece` (added 260922).
 - `apply_content_edit(piece, ...)` — PATCH logic: refuses gated statuses; body/hashtag edits reset approved/scheduled content to `draft`.
 
 ## Repurpose (Amplify helpers)
@@ -137,6 +138,7 @@ Asyncio-based content scheduler. Singleton: `scheduler = SchedulerEngine()`. Sta
 - `schedule_content(db, content_id, scheduled_at)` — Set publish time
 - `get_calendar(db, org_id, start, end)` — Calendar view
 - `_process_due_content()` — Minute loop, publishes content where `scheduled_at <= now`
+- `_publish_piece()` — refuses an archived client's post first (`ensure_client_active`) and marks it `failed`; only reachable if a schedule raced an archive, since archiving refuses while posts are scheduled
 
 ## Brand Learning
 **Status**: [LIVE]

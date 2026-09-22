@@ -4,6 +4,16 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260922 — Edit, archive and restore clients
+
+- **Added**: client editing: `PATCH /clients/{id}` (partial) and `GET`/`PUT /clients/{id}/brand-profile` (upsert, partial on update). Until now a client's details and brand voice could be set only at creation, and `POST .../brand-profile` failed on a second call. The client page has an **Edit client** form covering both, plus an **About** card (description, website, email) it did not show before.
+- **Added**: archive / restore: `POST /clients/{id}/archive[?unschedule=true]`, `POST /clients/{id}/restore`, `GET /clients?archived=true`. Soft delete on the existing `client.is_active`; nothing is removed. Archive refuses with 409 `has_scheduled_posts` while posts are scheduled, unless `unschedule=true`, which returns them to `approved`.
+- **Changed**: schedule, publish-now and the scheduler refuse an archived client's posts (409 `client_archived`; the scheduler marks the post `failed`). With the archive rule above, nothing can go live on an archived client's accounts.
+- **Changed**: `/clients` has Active / Archived tabs, and the whole client tile opens the detail page (previously only the name was a link). Campaigns and the Queue resolve client names from active + archived clients, so an archived client's posts keep their label.
+- Analytics: `client-edit`, `client-archive`, `client-restore`. Tests: `tests/test_client_edit.py`.
+
+---
+
 ## 260921 — Magic Brief refuses internal URLs (SSRF)
 
 `POST /api/v1/magic-brief` fetched whatever URL a signed-in user gave it, from inside Fly, following redirects — so `localhost`, the `fdaa::/16` private network or `169.254.169.254` were all reachable, directly or via a public page that redirects there. The fetch now goes through the new `services/url_safety.py`: http/https on ports 80/443 only, every resolved address must be public, redirects are followed by hand and each hop re-checked, bodies are capped at 2 MB. A refused URL returns 400 with a readable reason and never reaches the LLM. Tests: `tests/test_url_safety.py`.

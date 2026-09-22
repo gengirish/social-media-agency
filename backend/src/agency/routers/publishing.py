@@ -12,6 +12,7 @@ from agency.models.tables import ContentPiece, PlatformAccount
 from agency.services.billing import billing
 from agency.services.content_approval import (
     ContentGateError,
+    ensure_client_active,
     ensure_publishable,
     ensure_schedulable,
 )
@@ -69,6 +70,7 @@ async def publish_now(
     # already-published piece, so a double click cannot double-post) is a 409.
     try:
         ensure_publishable(piece)
+        await ensure_client_active(db, piece)
     except ContentGateError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None
 
@@ -168,6 +170,7 @@ async def schedule_content(
     # due, so scheduling is the last point a human-approval check can happen.
     try:
         ensure_schedulable(piece)
+        await ensure_client_active(db, piece)
     except ContentGateError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None
 

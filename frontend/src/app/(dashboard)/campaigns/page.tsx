@@ -17,10 +17,10 @@ export default function CampaignsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([api.getCampaigns(), api.getClients()])
+    Promise.all([api.getCampaigns(), api.getClientsForLookup()])
       .then(([c, cl]) => {
         setCampaigns(c.items);
-        setClients(cl.items);
+        setClients(cl);
       })
       .catch((err) => toast.error(err.message))
       .finally(() => setLoading(false));

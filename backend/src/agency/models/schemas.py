@@ -74,6 +74,16 @@ class ClientCreate(BaseModel):
     contact_email: str | None = None
 
 
+class ClientUpdate(BaseModel):
+    """Partial update — only the fields the caller sends are written."""
+
+    brand_name: str | None = Field(None, min_length=2, max_length=255)
+    industry: str | None = Field(None, min_length=2, max_length=100)
+    description: str | None = None
+    website_url: str | None = Field(None, max_length=500)
+    contact_email: str | None = Field(None, max_length=255)
+
+
 class BrandProfileCreate(BaseModel):
     voice_description: str = ""
     tone_attributes: dict = Field(default_factory=dict)
@@ -84,6 +94,20 @@ class BrandProfileCreate(BaseModel):
     emoji_policy: str = "moderate"
     competitor_differentiation: str = ""
     target_audience: str = ""
+
+
+class BrandProfileResponse(BaseModel):
+    client_id: UUID
+    voice_description: str | None
+    tone_attributes: dict | None
+    vocabulary_include: list[str] | None
+    vocabulary_exclude: list[str] | None
+    style_rules: list[str] | None
+    emoji_policy: str | None
+    competitor_differentiation: str | None
+    target_audience: str | None
+
+    model_config = {"from_attributes": True}
 
 
 class ClientResponse(BaseModel):

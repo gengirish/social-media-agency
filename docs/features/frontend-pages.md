@@ -73,10 +73,17 @@ Campaign list with `CampaignStatusBadge`. Links to detail and `/campaigns/new`. 
 ### Clients `/clients` — Setup › Clients
 **File**: `src/app/(dashboard)/clients/page.tsx` | **Client**
 Client list + "New Client" `SectionCard` form. `api.getClients()` / `api.createClient()`. **Read website** calls `api.extractBrand()` (`POST /magic-brief`) to draft brand name, industry and description — only into empty or previously-read fields unless "Replace details I've already typed" is ticked — and previews voice + audience. On create, that profile is saved via `api.createBrandProfile()`; a profile failure warns but keeps the client.
+- **Active / Archived** `SegmentedTabs` switch `api.getClients(1, archived)`.
+- The **whole tile** opens `/clients/[id]`: the brand-name `Link` is stretched over the card (`after:absolute after:inset-0`), so it is still a single link for keyboard and screen readers.
 
 ### Client Detail `/clients/[id]`
 **File**: `src/app/(dashboard)/clients/[id]/page.tsx` | **Client**
-Brand intelligence dashboard: KPIs (`StatCard`), platform breakdown, brand voice, top content.
+<!-- verified: 260922 -->
+Brand intelligence dashboard: KPIs (`StatCard`), platform breakdown, brand voice, top content. Loads `getClientIntelligence`, `getClient` and `getBrandProfile` (404 → no profile) in parallel.
+- **About** card: description, website (external link), contact email (`mailto:`).
+- **Edit client** swaps the About card for `EditClientForm` (details + brand voice). Saves with `api.updateClient()`, then `api.saveBrandProfile()` only when a profile exists or a brand field changed, so editing details never creates an empty profile. Analytics: `client-edit`.
+- **Archive** (`window.confirm`) → `api.archiveClient()`. On 409 `has_scheduled_posts` a second confirm offers to unschedule them (kept approved) and retries with `unschedule=true`; then redirects to `/clients`. Analytics: `client-archive` (with `unscheduled` count).
+- Archived clients show a banner with **Restore** (`api.restoreClient()`, analytics `client-restore`).
 
 ### Queue `/content` — Posts › Queue
 **File**: `src/app/(dashboard)/content/page.tsx` | **Client** | components in `src/components/posts/*`

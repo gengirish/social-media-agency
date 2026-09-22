@@ -85,8 +85,8 @@ export default function QueuePage() {
 
   useEffect(() => {
     api
-      .getClients()
-      .then((res) => setClients(res.items))
+      .getClientsForLookup()
+      .then(setClients)
       .catch(() => setClients([]));
   }, []);
 
@@ -204,6 +204,8 @@ export default function QueuePage() {
     if (apiErrorCode(err) === "not_approved") {
       toast.error("Approve this post first");
       void load();
+    } else if (apiErrorCode(err) === "client_archived") {
+      toast.error("This client is archived. Restore it from Setup › Clients to post for it.");
     } else {
       toast.error(err instanceof Error ? err.message : fallback);
     }

@@ -1,15 +1,15 @@
 # Feature Documentation
-<!-- verified: 260921 -->
+<!-- verified: 260922 -->
 
 Living documentation of all platform features. Updated whenever the codebase changes.
 
 ## Quick Stats
-- **API Endpoints**: 86 across 25 routers (all mounted under `/api/v1`)
+- **API Endpoints**: 92 across 25 routers (all mounted under `/api/v1`)
 - **Database Tables**: 22
 - **Services**: 27 modules in `services/`
 - **Background Workers**: 3 asyncio tasks (no Celery; there is no `workers/` package)
 - **Frontend Pages**: 17 `page.tsx` files
-- **Frontend Components**: 11 `ui/` primitive files + feature folders (`layout/`, `posts/`, `amplify/`, `agents/`, `landing/`) + app-level components; 8 lib modules
+- **Frontend Components**: 11 `ui/` primitive files + feature folders (`layout/`, `posts/`, `amplify/`, `clients/`, `agents/`, `landing/`) + app-level components; 8 lib modules
 - **Platform Integrations**: 7 (Clerk, Stripe, AgentMail, Social publishing, LLM, fal.ai, Slack)
 - **LangGraph Nodes**: 9 (7 LLM agents + `human_review` + `compile_output`)
 - **Agent Modules**: 11 (7 graph agents + 4 standalone: `autonomous_operator`, `competitive_intel`, `video_script`, `amplify`)
@@ -18,14 +18,14 @@ Living documentation of all platform features. Updated whenever the codebase cha
 
 | Document | Description | Last Updated |
 |----------|-------------|-------------|
-| [api-endpoints.md](api-endpoints.md) | All 86 REST API endpoints, approval gate, Amplify | 260921 |
+| [api-endpoints.md](api-endpoints.md) | All 92 REST API endpoints, approval gate, Amplify, client edit/archive | 260922 |
 | [database-schema.md](database-schema.md) | 22 tables, columns, relationships, migrations | 260921 |
-| [services.md](services.md) | Business logic services, moderation, repurpose, Amplify agent | 260921 |
+| [services.md](services.md) | Business logic services, moderation, repurpose, Amplify agent | 260922 |
 | [workers.md](workers.md) | Asyncio background tasks | 260817 |
 | [integrations.md](integrations.md) | Social, Stripe, Clerk, AgentMail, LLM, fal.ai, Slack | 260817 |
 | [websocket.md](websocket.md) | SSE real-time agent streaming (no WebSocket) | 260921 |
-| [frontend-pages.md](frontend-pages.md) | 17 UI pages, top-nav IA, Queue, Amplify | 260921 |
-| [frontend-components.md](frontend-components.md) | Design system, `ui/` primitives, posts/amplify components, lib modules | 260921 |
+| [frontend-pages.md](frontend-pages.md) | 17 UI pages, top-nav IA, Queue, Amplify, client edit/archive | 260922 |
+| [frontend-components.md](frontend-components.md) | Design system, `ui/` primitives, posts/amplify/clients components, lib modules | 260922 |
 | [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, roles, multi-tenancy, portal | 260921 |
 | [billing.md](billing.md) | Stripe billing, 4 plan tiers, Amplify generation quota | 260921 |
 | [changelog.md](changelog.md) | Chronological change log | 260921 |

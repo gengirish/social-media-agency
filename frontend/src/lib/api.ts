@@ -136,11 +136,35 @@ export const api = {
     }),
 
   // --- Clients ---
-  getClients: (page = 1) => request<ClientListResponse>(`/api/v1/clients?page=${page}`),
+  getClients: (page = 1, archived = false) =>
+    request<ClientListResponse>(`/api/v1/clients?page=${page}${archived ? "&archived=true" : ""}`),
   getClient: (id: string) => request<Client>(`/api/v1/clients/${id}`),
   createClient: (data: CreateClientRequest) =>
     request<Client>("/api/v1/clients", { method: "POST", body: JSON.stringify(data) }),
 
+  /** Active and archived clients, for resolving names on campaigns and posts that
+   * outlive an archive. Not for pickers — archived clients cannot take new work. */
+  getClientsForLookup: async (): Promise<Client[]> => {
+    const [active, archived] = await Promise.all([
+      request<ClientListResponse>("/api/v1/clients?per_page=100"),
+      request<ClientListResponse>("/api/v1/clients?per_page=100&archived=true"),
+    ]);
+    return [...active.items, ...archived.items];
+  },
+  /** 409 `has_scheduled_posts` while any of its posts are scheduled, unless `unschedule`,
+   * which returns them to approved first. */
+  archiveClient: (id: string, unschedule = false) =>
+    request<Client>(`/api/v1/clients/${id}/archive${unschedule ? "?unschedule=true" : ""}`, { method: "POST" }),
+  restoreClient: (id: string) => request<Client>(`/api/v1/clients/${id}/restore`, { method: "POST" }),
+  updateClient: (id: string, data: UpdateClientRequest) =>
+    request<Client>(`/api/v1/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  getBrandProfile: (clientId: string) =>
+    request<SavedBrandProfile>(`/api/v1/clients/${clientId}/brand-profile`),
+  saveBrandProfile: (clientId: string, data: BrandProfileRequest) =>
+    request<SavedBrandProfile>(`/api/v1/clients/${clientId}/brand-profile`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   createBrandProfile: (clientId: string, data: BrandProfileRequest) =>
     request<BrandProfileCreatedResponse>(`/api/v1/clients/${clientId}/brand-profile`, {
       method: "POST",
@@ -602,6 +626,22 @@ export interface CreateClientRequest {
   description?: string;
   website_url?: string;
   contact_email?: string;
+}
+
+/** Mirrors `ClientUpdate` — only the fields sent are written. */
+export type UpdateClientRequest = Partial<CreateClientRequest>;
+
+/** Mirrors `BrandProfileResponse` — a client's saved brand profile. */
+export interface SavedBrandProfile {
+  client_id: string;
+  voice_description: string | null;
+  tone_attributes: Record<string, number> | null;
+  vocabulary_include: string[] | null;
+  vocabulary_exclude: string[] | null;
+  style_rules: string[] | null;
+  emoji_policy: string | null;
+  competitor_differentiation: string | null;
+  target_audience: string | null;
 }
 
 /** Mirrors `BrandProfileCreate` — every field has a server-side default. */

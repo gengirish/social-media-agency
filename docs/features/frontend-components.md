@@ -73,6 +73,14 @@ Sticky top bar replacing the old sidebar. Props `{pathname, queryTab}` (supplied
 | `PostDialog` | `dialog.tsx` | Radix dialog shell (focus trap, Esc); closing is blocked while `busy` |
 | `QUEUE_PLATFORMS`, `platformLabel`, `platformTone` | `platform.ts` | Platform names/colours shared with the Calendar; only dark-mode-remapped hues |
 
+## Clients — `components/clients/`
+**Status**: [LIVE] — used by `/clients/[id]`
+<!-- verified: 260922 -->
+
+| Component | File | Notes |
+|---|---|---|
+| `EditClientForm` | `edit-client-form.tsx` | Props `{client, profile, onCancel, onSaved(client, profile)}`. Two `SectionCard`s: client details (name, industry, website, email, description) and brand voice (voice, target audience, competitor differentiation, words to use / avoid as comma-separated lists, emoji policy `none`/`minimal`/`moderate`/`heavy`, style rules one per line). "Words to avoid" is the `vocabulary_exclude` list moderation flags on. |
+
 ## Amplify — `components/amplify/`
 **Status**: [LIVE] — used by `/amplify`
 
@@ -157,6 +165,11 @@ API client singleton. Uses `NEXT_PUBLIC_API_URL` (default `http://localhost:8001
 - `apiErrorCode(err)` / `moderationIssues(err)` — read structured `detail.code` / `issues` from an `ApiError`.
 - `amplifyApi` — `preview(data, signal)`, `commit(packId, atoms)`, `packs(clientId?)`; `AMPLIFY_ANGLES`, `AMPLIFY_MAX_ATOMS`, `AMPLIFY_PLATFORMS`; `isGenerationQuotaError(err)` (402).
 - `SubscriptionInfo` gains optional `generations_used` / `generations_limit` (declaration merge).
+
+Added 260922:
+- `getClients(page, archived = false)`; `getClientsForLookup()` returns active + archived (100 each) for name lookups on Campaigns and the Queue, so an archived client's posts keep their client name. Not for pickers.
+- `updateClient(id, data)` (`UpdateClientRequest`), `archiveClient(id, unschedule?)`, `restoreClient(id)`.
+- `getBrandProfile(clientId)` / `saveBrandProfile(clientId, data)` → `SavedBrandProfile`.
 
 ### `lib/navigation.ts`
 `NAV_GROUPS` (the IA as data) and `resolveNav(pathname, queryTab)`. Pure, no React.

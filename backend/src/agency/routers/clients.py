@@ -1,16 +1,20 @@
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.schemas import (
     BrandProfileCreate,
+    BrandProfileResponse,
     ClientCreate,
     ClientListResponse,
     ClientResponse,
+    ClientUpdate,
 )
-from agency.models.tables import BrandProfile, Client
+from agency.models.tables import BrandProfile, Client, ContentPiece
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
@@ -40,18 +44,19 @@ async def create_client(
 async def list_clients(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    archived: bool = Query(False, description="List archived clients instead of active ones"),
     user=Depends(get_current_user),
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
     count_q = select(func.count(Client.id)).where(
-        Client.org_id == org_id, Client.is_active.is_(True)
+        Client.org_id == org_id, Client.is_active.is_(not archived)
     )
     total = (await db.execute(count_q)).scalar() or 0
 
     q = (
         select(Client)
-        .where(Client.org_id == org_id, Client.is_active.is_(True))
+        .where(Client.org_id == org_id, Client.is_active.is_(not archived))
         .order_by(Client.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
@@ -76,6 +81,141 @@ async def get_client(
     if not client:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
     return client
+
+
+async def _get_org_client(db: AsyncSession, client_id: UUID, org_id: UUID) -> Client:
+    result = await db.execute(
+        select(Client).where(Client.id == client_id, Client.org_id == org_id)
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
+    return client
+
+
+@router.patch("/{client_id}", response_model=ClientResponse)
+async def update_client(
+    client_id: UUID,
+    request: ClientUpdate,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+) -> Client:
+    client = await _get_org_client(db, client_id, org_id)
+    updates = request.model_dump(exclude_unset=True)
+    for required in ("brand_name", "industry"):
+        if required in updates and updates[required] is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{required} cannot be empty")
+    for field, value in updates.items():
+        setattr(client, field, value)
+    await db.commit()
+    await db.refresh(client)
+    return client
+
+
+@router.post("/{client_id}/archive", response_model=ClientResponse)
+async def archive_client(
+    client_id: UUID,
+    unschedule: bool = Query(
+        False, description="Move this client's scheduled posts back to approved first"
+    ),
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+) -> Client:
+    """Hide a client from lists and block new schedules/publishes for it.
+
+    Soft delete: campaigns, posts and history are kept, and ``/restore`` undoes it.
+    Scheduled posts would otherwise go live after the client was archived, so while any
+    exist this is refused with 409 ``{"code": "has_scheduled_posts", "count": n}``
+    unless ``unschedule=true``, which returns them to ``approved`` (still reviewed, but
+    no longer queued) in the same transaction.
+    """
+    client = await _get_org_client(db, client_id, org_id)
+    scheduled = (
+        (
+            await db.execute(
+                select(ContentPiece).where(
+                    ContentPiece.client_id == client_id,
+                    ContentPiece.org_id == org_id,
+                    ContentPiece.status == "scheduled",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if scheduled and not unschedule:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, {"code": "has_scheduled_posts", "count": len(scheduled)}
+        )
+    for piece in scheduled:
+        piece.status = "approved"  # type: ignore[assignment]
+        piece.scheduled_at = None  # type: ignore[assignment]
+    client.is_active = False  # type: ignore[assignment]
+    await db.commit()
+    await db.refresh(client)
+    return client
+
+
+@router.post("/{client_id}/restore", response_model=ClientResponse)
+async def restore_client(
+    client_id: UUID,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+) -> Client:
+    client = await _get_org_client(db, client_id, org_id)
+    client.is_active = True  # type: ignore[assignment]
+    await db.commit()
+    await db.refresh(client)
+    return client
+
+
+@router.get("/{client_id}/brand-profile", response_model=BrandProfileResponse)
+async def get_brand_profile(
+    client_id: UUID,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+) -> BrandProfile:
+    await _get_org_client(db, client_id, org_id)
+    result = await db.execute(
+        select(BrandProfile).where(
+            BrandProfile.client_id == client_id, BrandProfile.org_id == org_id
+        )
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Brand profile not found")
+    return profile
+
+
+@router.put("/{client_id}/brand-profile", response_model=BrandProfileResponse)
+async def upsert_brand_profile(
+    client_id: UUID,
+    request: BrandProfileCreate,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+) -> BrandProfile:
+    """Create the brand profile, or update only the fields sent if one exists."""
+    await _get_org_client(db, client_id, org_id)
+    result = await db.execute(
+        select(BrandProfile).where(
+            BrandProfile.client_id == client_id, BrandProfile.org_id == org_id
+        )
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        profile = BrandProfile(client_id=client_id, org_id=org_id, **request.model_dump())
+        db.add(profile)
+    else:
+        for field, value in request.model_dump(exclude_unset=True).items():
+            setattr(profile, field, value)
+    await db.commit()
+    await db.refresh(profile)
+    return profile
 
 
 @router.post("/{client_id}/brand-profile", status_code=status.HTTP_201_CREATED)

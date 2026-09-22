@@ -5,21 +5,24 @@ import Link from "next/link";
 import { api, type BrandProfile, type Client } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
-import { Plus, Users, Globe, Mail, Sparkles, Loader2, X } from "lucide-react";
+import { Plus, Users, Globe, Mail, Sparkles, Loader2, X, Archive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/panel";
 import { SectionCard } from "@/components/ui/section-card";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { EmptyState, LoadingState } from "@/components/ui/empty-state";
+import { SegmentedTabs } from "@/components/ui/tabs";
 
 const EMPTY_FORM = { brand_name: "", industry: "", description: "", website_url: "", contact_email: "" };
 type ClientForm = typeof EMPTY_FORM;
+type ClientView = "active" | "archived";
 // The fields a website read may fill. Website and email stay the user's.
 const READ_FIELDS = ["brand_name", "industry", "description"] as const;
 
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<ClientView>("active");
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<ClientForm>(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
@@ -31,11 +34,22 @@ export default function ClientsPage() {
   const lastRead = useRef<Partial<ClientForm>>({});
 
   useEffect(() => {
-    loadClients();
-  }, []);
+    let cancelled = false;
+    api
+      .getClients(1, view === "archived")
+      .then((res) => !cancelled && setClients(res.items))
+      .catch((err) => !cancelled && toast.error(err.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [view]);
 
   function loadClients() {
-    api.getClients().then((res) => setClients(res.items)).catch((err) => toast.error(err.message)).finally(() => setLoading(false));
+    api
+      .getClients(1, view === "archived")
+      .then((res) => setClients(res.items))
+      .catch((err) => toast.error(err.message));
   }
 
   function resetForm() {
@@ -109,7 +123,8 @@ export default function ClientsPage() {
       }
       setShowForm(false);
       resetForm();
-      loadClients();
+      if (view === "active") loadClients();
+      else setView("active");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
@@ -209,15 +224,29 @@ export default function ClientsPage() {
         </form>
       )}
 
+      <SegmentedTabs
+        label="Client status"
+        items={[
+          { id: "active", label: "Active", icon: Users },
+          { id: "archived", label: "Archived", icon: Archive },
+        ]}
+        value={view}
+        onChange={setView}
+      />
+
       {clients.length === 0 ? (
-        <EmptyState icon={Users} title="No clients yet" description="Add your first brand to get started" />
+        view === "archived" ? (
+          <EmptyState icon={Archive} title="No archived clients" description="Clients you archive are kept here and can be restored" />
+        ) : (
+          <EmptyState icon={Users} title="No clients yet" description="Add your first brand to get started" />
+        )
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {clients.map((client, i) => (
             <div
               key={client.id}
               style={{ animationDelay: `${Math.min(i, 8) * 0.05}s` }}
-              className="flex flex-col rounded-xl border border-line bg-panel/70 p-5 shadow-soft backdrop-blur-xl transition-colors duration-200 focus-within:border-accent/50 hover:border-accent/40 motion-safe:animate-screen-in"
+              className="group relative flex cursor-pointer flex-col rounded-xl border border-line bg-panel/70 p-5 shadow-soft backdrop-blur-xl transition-colors duration-200 focus-within:border-accent/50 hover:border-accent/40 motion-safe:animate-screen-in"
             >
               <div className="flex items-center gap-3">
                 <div
@@ -229,11 +258,15 @@ export default function ClientsPage() {
                 <div className="min-w-0 flex-1">
                   <Link
                     href={`/clients/${client.id}`}
-                    className="font-display font-semibold text-ink transition-colors hover:text-accent-text"
+                    // after:inset-0 stretches the link's hit area over the whole tile.
+                    className="font-display font-semibold text-ink transition-colors after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none group-hover:text-accent-text"
                   >
                     {client.brand_name}
                   </Link>
-                  <p className="truncate font-mono text-[11px] text-muted">{client.industry}</p>
+                  <p className="truncate font-mono text-[11px] text-muted">
+                    {client.industry}
+                    {!client.is_active && " · Archived"}
+                  </p>
                 </div>
               </div>
               {client.description && (

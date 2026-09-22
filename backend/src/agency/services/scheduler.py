@@ -13,6 +13,7 @@ from agency.models.database import get_session_factory
 from agency.models.tables import ContentPiece, PlatformAccount
 from agency.services.analytics_fetcher import refresh_published_metrics
 from agency.services.billing import billing
+from agency.services.content_approval import ContentGateError, ensure_client_active
 from agency.services.publishing import publisher
 
 logger = structlog.get_logger()
@@ -186,6 +187,17 @@ class SchedulerEngine:
                 await self._publish_piece(db, piece)
 
     async def _publish_piece(self, db: AsyncSession, piece: ContentPiece):
+        try:
+            await ensure_client_active(db, piece)
+        except ContentGateError:
+            # Only reachable if the post was scheduled in the same moment the client
+            # was archived — archiving refuses while anything is scheduled.
+            logger.warning("scheduled_post_client_archived", content_id=str(piece.id))
+            piece.status = "failed"  # type: ignore[assignment]
+            _merge_metadata(piece, {"publish_error": "Client is archived"})
+            await db.commit()
+            return
+
         # Get platform credentials
         result = await db.execute(
             select(PlatformAccount).where(

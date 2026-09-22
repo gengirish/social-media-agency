@@ -8,6 +8,7 @@ Status lifecycle enforced here (DB values; the UI labels ``draft`` as *Pending*)
 - :func:`approve_content_piece` is the single approval path (dashboard and portal).
   It runs :func:`~agency.services.moderation.moderate_content` first.
 - :func:`ensure_publishable` guards schedule and publish-now.
+- :func:`ensure_client_active` refuses both for an archived client.
 - :func:`apply_content_edit` is the PATCH logic: it refuses status moves that belong to
   the dedicated endpoints, and sends edited approved/scheduled content back to ``draft``
   so it is re-moderated.
@@ -23,8 +24,10 @@ from typing import Any, Final
 from uuid import UUID
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agency.models.tables import Client
 from agency.services.moderation import load_brand_context, moderate_content
 from agency.services.publishing import UNAVAILABLE_PUBLISH_PLATFORMS
 
@@ -130,6 +133,23 @@ def ensure_publishable(piece: ContentRow) -> None:
     """Schedule / publish-now gate: only ``approved`` or ``scheduled`` content."""
     if piece.status not in PUBLISHABLE_STATUSES:
         raise ContentGateError(409, {"code": "not_approved", "status": piece.status})
+
+
+async def ensure_client_active(db: AsyncSession, piece: ContentRow) -> None:
+    """Schedule / publish-now gate: nothing goes live on an archived client's accounts.
+
+    Archiving already refuses while posts are scheduled, so together these mean an
+    archived client has nothing queued and nothing new can be queued.
+    """
+    is_active = (
+        await db.execute(
+            select(Client.is_active).where(
+                Client.id == piece.client_id, Client.org_id == piece.org_id
+            )
+        )
+    ).scalar_one_or_none()
+    if not is_active:
+        raise ContentGateError(409, {"code": "client_archived"})
 
 
 def ensure_schedulable(piece: ContentRow) -> None:

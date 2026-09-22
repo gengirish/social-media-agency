@@ -27,9 +27,19 @@ All routes are prefixed with `/api/v1`. Authentication uses `Authorization: Bear
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
 | POST | `/clients` | Yes | `create_client` | Create client for org |
-| GET | `/clients` | Yes | `list_clients` | Paginated active clients |
-| GET | `/clients/{client_id}` | Yes | `get_client` | Single client (org-scoped) |
-| POST | `/clients/{client_id}/brand-profile` | Yes | `create_brand_profile` | Create BrandProfile for client |
+| GET | `/clients[?archived=true]` | Yes | `list_clients` | Paginated active clients, or archived ones with `archived=true` |
+| GET | `/clients/{client_id}` | Yes | `get_client` | Single client (org-scoped); returns archived clients too, with `is_active: false` |
+| PATCH | `/clients/{client_id}` | Yes | `update_client` | Partial update of `brand_name`, `industry`, `description`, `website_url`, `contact_email`; only fields sent are written; explicit `null` for `brand_name`/`industry` → 422 |
+| POST | `/clients/{client_id}/archive[?unschedule=true]` | Yes | `archive_client` | Soft delete (`is_active = false`), see below |
+| POST | `/clients/{client_id}/restore` | Yes | `restore_client` | Undo archive |
+| POST | `/clients/{client_id}/brand-profile` | Yes | `create_brand_profile` | Create BrandProfile for client (fails if one exists; use PUT) |
+| GET | `/clients/{client_id}/brand-profile` | Yes | `get_brand_profile` | Saved BrandProfile (`BrandProfileResponse`); 404 when the client has none |
+| PUT | `/clients/{client_id}/brand-profile` | Yes | `upsert_brand_profile` | Create if missing, otherwise update only the fields sent |
+
+<!-- verified: 260922 -->
+**Archive** keeps campaigns, posts and history, and hides the client from `GET /clients`. Scheduled posts would otherwise go live after the archive, so while any exist it returns 409 `{"code": "has_scheduled_posts", "count": n}`; `?unschedule=true` moves them back to `approved` (clearing `scheduled_at`) in the same transaction. After an archive, schedule and publish-now for that client's posts return 409 `{"code": "client_archived"}` (see [Approval gate](#approval-gate)).
+
+Tenancy: every handler resolves `client_id` against the caller's `org_id` first (404 otherwise). Tests: `tests/test_client_edit.py`.
 
 ## Campaigns
 **Status**: [LIVE]
@@ -86,7 +96,7 @@ Lifecycle (DB values; `draft` is labelled *Pending* in the UI): `draft`/`rejecte
 
 **`PATCH /content/{id}`** — `status` may be set to `draft` or `rejected` only. `approved`/`scheduled`/`published` → 400 `{"code": "status_via_dedicated_endpoint"}`; any other value → 400 `{"code": "unsupported_status"}`. A `published` piece cannot change status at all → 409 `{"code": "published_locked"}` (reopening it would allow a second live post). Changing `body` or `hashtags` of an `approved`/`scheduled` piece **resets it to `draft`** (clears `scheduled_at` and `metadata.moderation`) — edited content must be re-approved.
 
-**`POST /publishing/{id}/schedule`, `POST /publishing/{id}/publish`** — only `approved` or `scheduled` pieces; otherwise 409 `{"code": "not_approved", "status": <current>}` (including `published`, so a repeated publish cannot double-post). Schedule additionally refuses platforms with no working publisher (Instagram, TikTok) → 409 `{"code": "platform_unavailable", "platform", "reason"}`, since a scheduled post there would only fail when due. The scheduler loop only ever publishes `scheduled` rows.
+**`POST /publishing/{id}/schedule`, `POST /publishing/{id}/publish`** — only `approved` or `scheduled` pieces; otherwise 409 `{"code": "not_approved", "status": <current>}` (including `published`, so a repeated publish cannot double-post). Schedule additionally refuses platforms with no working publisher (Instagram, TikTok) → 409 `{"code": "platform_unavailable", "platform", "reason"}`, since a scheduled post there would only fail when due. The scheduler loop only ever publishes `scheduled` rows. Both endpoints, and the scheduler when a post comes due, also refuse posts whose client is archived → 409 `{"code": "client_archived"}` (the scheduler marks the post `failed` with `publish_error: "Client is archived"`).
 
 **Portal** `PATCH /portal/{org_slug}/content/{id}` with `decision: "approve"` runs the same moderation with **no override**; a flag returns the same 409 `moderation_flagged` shape.
 
