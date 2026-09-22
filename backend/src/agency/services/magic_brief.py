@@ -9,8 +9,8 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agency.services.llm_provider import get_worker_llm
-from agency.services.url_safety import UnsafeURLError, fetch_public_page
 from agency.services.tracing import trace_config
+from agency.services.url_safety import UnsafeURLError, fetch_public_page
 
 logger = structlog.get_logger()
 
