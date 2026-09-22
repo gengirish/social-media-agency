@@ -66,6 +66,7 @@ import structlog
 
 from agency.services import exa_client
 from agency.services.llm_provider import get_worker_llm
+from agency.services.tracing import trace_config
 
 logger = structlog.get_logger()
 
@@ -484,7 +485,7 @@ async def run_competitive_scan(
     llm = get_worker_llm()
     prompt = build_prompt(brand_context, sources)
     try:
-        response = await llm.ainvoke(prompt)
+        response = await llm.ainvoke(prompt, config=trace_config("competitive-scan"))
     except Exception as e:  # noqa: BLE001 — an LLM failure must not become fake intel
         logger.error("competitive_llm_error", error=str(e))
         return _unavailable(
