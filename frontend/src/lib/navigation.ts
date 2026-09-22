@@ -31,20 +31,20 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    id: "posts",
-    label: "Posts",
-    tabs: [
-      { label: "Queue", href: "/content" },
-      { label: "Calendar", href: "/calendar" },
-    ],
-  },
-  {
     id: "create",
     label: "Create",
     tabs: [
       { label: "Campaigns", href: "/campaigns" },
       { label: "Templates", href: "/templates" },
       { label: "Amplify", href: "/amplify" },
+    ],
+  },
+  {
+    id: "posts",
+    label: "Posts",
+    tabs: [
+      { label: "Queue", href: "/content" },
+      { label: "Calendar", href: "/calendar" },
     ],
   },
   {
