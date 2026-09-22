@@ -65,13 +65,27 @@ async def init_campaign_graph_runtime() -> None:
             from psycopg.rows import dict_row
             from psycopg_pool import AsyncConnectionPool
 
+            # Neon drops idle SSL connections (and suspends compute), and a single
+            # LLM step can leave a pooled connection idle for minutes. Without a
+            # checkout check the next checkpoint write gets a dead socket and the
+            # campaign fails with "SSL connection has been closed unexpectedly".
             _pool = AsyncConnectionPool(
                 conninfo=conninfo,
-                kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+                kwargs={
+                    "autocommit": True,
+                    "prepare_threshold": 0,
+                    "row_factory": dict_row,
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 3,
+                },
                 min_size=1,
                 max_size=10,
                 open=False,
                 timeout=60.0,
+                check=AsyncConnectionPool.check_connection,
+                max_idle=120.0,
             )
             await _pool.open()
             checkpointer = AsyncPostgresSaver(_pool)
