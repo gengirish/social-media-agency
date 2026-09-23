@@ -23,6 +23,17 @@ class BrandContext(TypedDict, total=False):
     competitor_differentiation: str
 
 
+def _latest(_old: str, new: str) -> str:
+    """Reducer for progress labels written by parallel nodes.
+
+    Strategy/SEO and Content/Ad Copy run in the same superstep and both report
+    ``current_agent``; without a reducer LangGraph rejects the second write
+    (INVALID_CONCURRENT_GRAPH_UPDATE) and fails the campaign. The value is a
+    display label only, so any one of the concurrent writes is fine.
+    """
+    return new
+
+
 class CampaignState(TypedDict, total=False):
     # --- Input (set at campaign creation) ---
     client_brief: str
@@ -55,7 +66,7 @@ class CampaignState(TypedDict, total=False):
     # --- Control flow ---
     status: str
     errors: list[str]
-    current_agent: str
+    current_agent: Annotated[str, _latest]
     retry_count: int
 
     # --- Messages for streaming ---

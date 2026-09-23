@@ -129,3 +129,34 @@ def test_seo_prompt_example_has_no_comments():
     from agency.agents.seo import SYSTEM_PROMPT
 
     assert not any(line.lstrip().startswith("//") for line in SYSTEM_PROMPT.splitlines())
+
+
+async def test_parallel_nodes_can_both_report_current_agent():
+    """Strategy and SEO run in the same superstep; both write current_agent.
+
+    Production 260923 re-run failed with INVALID_CONCURRENT_GRAPH_UPDATE.
+    """
+    from langgraph.graph import END, START, StateGraph
+
+    from agency.agents.state import CampaignState
+
+    async def a(_s: Any) -> dict[str, Any]:
+        return {"current_agent": "strategy"}
+
+    async def b(_s: Any) -> dict[str, Any]:
+        return {"current_agent": "seo"}
+
+    async def join(_s: Any) -> dict[str, Any]:
+        return {"current_agent": "content"}
+
+    g = StateGraph(CampaignState)
+    g.add_node("a", a)
+    g.add_node("b", b)
+    g.add_node("join", join)
+    g.add_edge(START, "a")
+    g.add_edge(START, "b")
+    g.add_edge("a", "join")
+    g.add_edge("b", "join")
+    g.add_edge("join", END)
+    out = await g.compile().ainvoke({"client_brief": "x"})
+    assert out["current_agent"] == "content"

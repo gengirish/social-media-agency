@@ -133,5 +133,22 @@ async def parse_agent_json(
     if value is not None:
         log.info("agent_json_repaired", agent=agent, original_error=error)
         return value
-    log.warning("agent_json_unparseable", agent=agent, error=error, repair_error=repair_error)
+    log.warning(
+        "agent_json_unparseable",
+        agent=agent,
+        error=error,
+        repair_error=repair_error,
+        near=_error_context(text),
+        length=len(text),
+    )
     return None
+
+
+def _error_context(text: str, width: int = 160) -> str:
+    """The characters around the first parse error, for diagnosing model output."""
+    try:
+        json.loads(text[text.find("{"):] if "{" in text else text)
+    except json.JSONDecodeError as exc:
+        start = max(0, exc.pos - width)
+        return text[start : exc.pos + width // 2]
+    return ""
