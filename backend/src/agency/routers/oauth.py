@@ -75,7 +75,7 @@ def oauth_platform_status() -> dict[str, dict[str, Any]]:
     """Per supported platform: whether its app credentials are set, and the scopes requested."""
     settings = get_settings()
     out: dict[str, dict[str, Any]] = {}
-    for platform, config in OAUTH_CONFIGS.items():
+    for platform in OAUTH_CONFIGS:
         key_attr, _ = PLATFORM_CLIENT_KEYS[platform]
         scopes = _requested_scopes(platform, settings).replace(",", " ").split()
         out[platform] = {"configured": bool(getattr(settings, key_attr, "")), "scopes": scopes}

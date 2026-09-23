@@ -567,7 +567,7 @@ def test_oauth_state_key_is_not_the_login_secret():
     from uuid import uuid4
 
     import pytest
-    from jose import jwt
+    from jose import JWTError, jwt
 
     from agency.config import get_settings
     from agency.services.oauth_state import InvalidOAuthStateError, sign_state, verify_state
@@ -583,5 +583,5 @@ def test_oauth_state_key_is_not_the_login_secret():
         verify_state(forged, org_id=org, platform="twitter")
     # And a real state does not decode with the login secret.
     real = sign_state(org_id=org, client_id=None, platform="twitter")
-    with pytest.raises(Exception):
+    with pytest.raises(JWTError):
         jwt.decode(real, get_settings().jwt_secret, algorithms=["HS256"])
