@@ -116,6 +116,10 @@ async def parse_agent_json(
     value, error = _try_parse(text, expect)
     if value is not None:
         return value
+    value = _deterministic_repair(text, expect)
+    if value is not None:
+        log.info("agent_json_repaired", agent=agent, original_error=error, method="json_repair")
+        return value
     if not text.strip():
         log.warning("agent_json_unparseable", agent=agent, error="empty output")
         return None
@@ -141,6 +145,34 @@ async def parse_agent_json(
         near=_error_context(text),
         length=len(text),
     )
+    return None
+
+
+def _deterministic_repair(text: str, expect: type) -> object | None:
+    """json_repair on the outermost bracketed slice; accept only a non-empty expected shape.
+
+    Handles what a syntax-only LLM repair kept reproducing in production: an
+    unescaped quote inside a long string value, plus missing commas, comments
+    and truncation. Returns ``None`` rather than guessing at an empty result.
+    """
+    from json_repair import repair_json
+
+    open_ch, close_ch = ("[", "]") if expect is list else ("{", "}")
+    start = text.find(open_ch)
+    if start == -1 and expect is list:
+        start = text.find("{")
+    if start == -1:
+        return None
+    end = text.rfind(close_ch) + 1
+    candidate = text[start:end] if end > start else text[start:]
+    try:
+        value = repair_json(candidate, return_objects=True)
+    except Exception:
+        return None
+    if isinstance(value, expect) and value:
+        return value
+    if expect is list and isinstance(value, dict) and value:
+        return value
     return None
 
 

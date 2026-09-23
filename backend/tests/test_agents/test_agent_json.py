@@ -53,21 +53,51 @@ async def test_valid_json_needs_no_repair_call(lite):
     assert stub.calls == []
 
 
-async def test_broken_json_is_repaired_once(lite):
+async def test_missing_comma_is_repaired_without_an_llm_call(lite):
+    stub = lite(RuntimeError("must not be called"))
+    assert await parse_agent_json(BROKEN, agent="strategy") == GOOD
+    assert stub.calls == []
+
+
+async def test_unescaped_quote_in_long_value_is_repaired(lite):
+    """Production 260923 re-run: SEO briefs with a quote inside a string value."""
+    stub = lite(RuntimeError("must not be called"))
+    raw = (
+        '{"content_briefs": [{"title_suggestion": "Why "Indian" freelancers get rejected", '
+        '"word_count_target": 850}]}'
+    )
+    out = await parse_agent_json(raw, agent="seo")
+    assert out == {
+        "content_briefs": [
+            {"title_suggestion": 'Why "Indian" freelancers get rejected', "word_count_target": 850}
+        ]
+    }
+    assert stub.calls == []
+
+
+async def test_llm_repair_is_last_resort(lite, monkeypatch):
+    monkeypatch.setattr(utils, "_deterministic_repair", lambda *_a, **_k: None)
     stub = lite(json.dumps(GOOD))
     assert await parse_agent_json(BROKEN, agent="strategy") == GOOD
     assert len(stub.calls) == 1
     assert "delimiter" in str(stub.calls[0])  # the parse error is passed to the repairer
 
 
-async def test_unrepairable_returns_none_not_raise(lite):
+async def test_unrepairable_returns_none_not_raise(lite, monkeypatch):
+    monkeypatch.setattr(utils, "_deterministic_repair", lambda *_a, **_k: None)
     lite("still {not json")
     assert await parse_agent_json(BROKEN, agent="strategy") is None
 
 
-async def test_repair_call_failure_returns_none(lite):
+async def test_repair_call_failure_returns_none(lite, monkeypatch):
+    monkeypatch.setattr(utils, "_deterministic_repair", lambda *_a, **_k: None)
     lite(RuntimeError("provider down"))
     assert await parse_agent_json(BROKEN, agent="strategy") is None
+
+
+async def test_prose_without_json_is_not_invented(lite):
+    lite("no json here either")
+    assert await parse_agent_json("Sorry, I cannot help with that.", agent="seo") is None
 
 
 async def test_list_expectation_accepts_array_or_single_object(lite):
@@ -95,9 +125,10 @@ async def test_strategy_node_survives_the_production_failure(monkeypatch, lite):
     out = await strategy.strategy_node(STATE)
     assert out["strategy"] == GOOD
 
-    lite("nope")  # repair fails too → node's own fallback, still no exception
+    monkeypatch.setattr(strategy, "get_worker_llm", lambda *_a, **_k: _Stub("no json at all"))
+    lite("nope")  # nothing to repair either → node's own fallback, still no exception
     out = await strategy.strategy_node(STATE)
-    assert out["strategy"] == {"raw_output": BROKEN}
+    assert out["strategy"] == {"raw_output": "no json at all"}
 
 
 def test_utils_module_keeps_legacy_parser():
