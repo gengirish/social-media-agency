@@ -26,6 +26,7 @@ from agency.routers import (
     create_email,
     create_launch,
     health,
+    inbox,
     integrations,
     magic_brief,
     notifications,
@@ -122,6 +123,7 @@ def create_app() -> FastAPI:
         post_studio,
         create_content,
         create_email, create_launch,
+        inbox,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

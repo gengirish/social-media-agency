@@ -419,6 +419,27 @@ ALTER TABLE repurpose_pack
     ADD COLUMN IF NOT EXISTS source_asset_id UUID REFERENCES creative_asset(id) ON DELETE SET NULL;
 
 -- ---------------------------------------------------------------------------
+-- inbox_item_state — per-item triage state for the Inbox (/inbox). The items
+-- themselves are NOT stored: they are read live from X / LinkedIn on every
+-- load. This row only remembers what the human did with one: opened it (read),
+-- closed it out (handled), or replied from CampaignForge (reply_*).
+-- ``item_key`` is "<platform>:<platform item id>".
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inbox_item_state (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    client_id UUID NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    item_key VARCHAR(255) NOT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    handled BOOLEAN NOT NULL DEFAULT FALSE,
+    reply_id VARCHAR(255),
+    reply_url TEXT,
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (org_id, client_id, item_key)
+);
+
+-- ---------------------------------------------------------------------------
 -- RAG knowledge base (backend/src/agency/services/knowledge_base.py).
 --
 -- pgvector is an OPTIONAL prerequisite, created defensively on purpose:
