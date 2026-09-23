@@ -14,7 +14,7 @@ from agency.models.schemas import (
     ClientResponse,
     ClientUpdate,
 )
-from agency.models.tables import BrandProfile, Client, ContentPiece
+from agency.models.tables import BrandProfile, Client, ContentPiece, PlatformAccount
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
@@ -65,6 +65,77 @@ async def list_clients(
     clients = result.scalars().all()
 
     return ClientListResponse(items=clients, total=total, page=page, per_page=per_page)
+
+
+@router.get("/overview")
+async def clients_overview(
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+) -> dict[str, Any]:
+    """Per active client: setup progress and queue counts, for the client switcher and Welcome.
+
+    Real counts only — a client with nothing yet reports zeros, never a guess.
+    Declared before ``/{client_id}`` so "overview" is not parsed as an id.
+    """
+    clients = list(
+        (
+            await db.execute(
+                select(Client)
+                .where(Client.org_id == org_id, Client.is_active.is_(True))
+                .order_by(Client.created_at.desc())
+            )
+        ).scalars()
+    )
+    ids = [c.id for c in clients]
+    profiled: set[Any] = set()
+    accounts: dict[Any, int] = {}
+    counts: dict[Any, dict[str, int]] = {}
+    if ids:
+        profiled = set(
+            (
+                await db.execute(
+                    select(BrandProfile.client_id).where(
+                        BrandProfile.org_id == org_id, BrandProfile.client_id.in_(ids)
+                    )
+                )
+            ).scalars()
+        )
+        for cid, n in await db.execute(
+            select(PlatformAccount.client_id, func.count(PlatformAccount.id))
+            .where(
+                PlatformAccount.org_id == org_id,
+                PlatformAccount.client_id.in_(ids),
+                PlatformAccount.status == "connected",
+            )
+            .group_by(PlatformAccount.client_id)
+        ):
+            accounts[cid] = int(n)
+        for cid, st, n in await db.execute(
+            select(ContentPiece.client_id, ContentPiece.status, func.count(ContentPiece.id))
+            .where(ContentPiece.org_id == org_id, ContentPiece.client_id.in_(ids))
+            .group_by(ContentPiece.client_id, ContentPiece.status)
+        ):
+            counts.setdefault(cid, {})[str(st)] = int(n)
+    items = []
+    for c in clients:
+        by_status = counts.get(c.id, {})
+        items.append(
+            {
+                "id": str(c.id),
+                "brand_name": c.brand_name,
+                "website_url": c.website_url,
+                "has_brand_profile": c.id in profiled,
+                "connected_accounts": accounts.get(c.id, 0),
+                "total_posts": sum(by_status.values()),
+                "pending": by_status.get("draft", 0),
+                "approved": by_status.get("approved", 0),
+                "scheduled": by_status.get("scheduled", 0),
+                "published": by_status.get("published", 0),
+                "failed": by_status.get("failed", 0),
+            }
+        )
+    return {"items": items}
 
 
 @router.get("/{client_id}", response_model=ClientResponse)

@@ -161,6 +161,22 @@ const config: Config = {
         "pulse-dot": "pulse-dot 1.5s ease-in-out infinite",
         "logo-spin": "logo-spin 8s linear infinite",
         "screen-in": "screen-in 0.35s cubic-bezier(0.16,1,0.3,1) both",
+        // The rest of Cadence's motion vocabulary (KEYFRAMES in the prototype).
+        breathe: "breathe 3s ease-in-out infinite",
+        "pop-in": "pop-in 0.35s cubic-bezier(.34,1.56,.64,1) both",
+        "chip-in": "chip-in 0.25s cubic-bezier(.22,1,.36,1) both",
+        "popup-in": "popup-in 0.25s cubic-bezier(.22,1,.36,1) both",
+        "slide-out": "slide-out 0.3s ease forwards",
+        "dot-pulse": "dot-pulse 1.6s ease-out infinite",
+        "ring-pulse": "ring-pulse 1.8s ease-out infinite",
+        "draw-in": "draw-in 0.6s ease-out forwards",
+        "bar-load": "bar-load 1.2s ease-out forwards",
+        "count-up": "count-up 0.4s ease both",
+        shimmer: "shimmer 1.6s linear infinite",
+        scanline: "scanline 2.2s linear infinite",
+        "blob-1": "blob-drift-1 22s ease-in-out infinite",
+        "blob-2": "blob-drift-2 26s ease-in-out infinite",
+        "grid-drift": "grid-drift 8s linear infinite",
       },
       keyframes: {
         "pulse-dot": {
@@ -174,6 +190,57 @@ const config: Config = {
         "screen-in": {
           from: { opacity: "0", transform: "translateY(10px)" },
           to: { opacity: "1", transform: "translateY(0)" },
+        },
+        breathe: {
+          "0%, 100%": { boxShadow: "0 0 0px rgb(var(--c-accent) / 0)" },
+          "50%": { boxShadow: "0 0 20px rgb(var(--c-accent) / 0.4)" },
+        },
+        "pop-in": {
+          "0%": { opacity: "0", transform: "scale(0.6)" },
+          "60%": { opacity: "1", transform: "scale(1.15)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
+        "chip-in": {
+          from: { opacity: "0", transform: "scale(0.85) translateY(4px)" },
+          to: { opacity: "1", transform: "scale(1) translateY(0)" },
+        },
+        "popup-in": {
+          from: { opacity: "0", transform: "scale(0.92) translateY(10px)" },
+          to: { opacity: "1", transform: "scale(1) translateY(0)" },
+        },
+        "slide-out": {
+          from: { opacity: "1", transform: "translateX(0)", maxHeight: "200px" },
+          to: { opacity: "0", transform: "translateX(30px)", maxHeight: "0" },
+        },
+        "dot-pulse": {
+          "0%": { boxShadow: "0 0 0 0 rgb(var(--c-accent) / 0.5)" },
+          "70%": { boxShadow: "0 0 0 6px rgb(var(--c-accent) / 0)" },
+          "100%": { boxShadow: "0 0 0 0 rgb(var(--c-accent) / 0)" },
+        },
+        "ring-pulse": {
+          "0%": { boxShadow: "0 0 0 0 rgb(92 214 166 / 0.45)" },
+          "70%": { boxShadow: "0 0 0 8px rgb(92 214 166 / 0)" },
+          "100%": { boxShadow: "0 0 0 0 rgb(92 214 166 / 0)" },
+        },
+        "draw-in": { from: { width: "0" }, to: { width: "14px" } },
+        "bar-load": { from: { width: "0%" }, to: { width: "100%" } },
+        "count-up": {
+          from: { opacity: "0", transform: "translateY(6px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+        shimmer: { "0%": { backgroundPosition: "-200% 0" }, "100%": { backgroundPosition: "200% 0" } },
+        scanline: { "0%": { top: "-20%" }, "100%": { top: "100%" } },
+        "blob-drift-1": {
+          "0%, 100%": { transform: "translate(-5%, -8%) scale(1)" },
+          "50%": { transform: "translate(4%, 6%) scale(1.08)" },
+        },
+        "blob-drift-2": {
+          "0%, 100%": { transform: "translate(6%, 4%) scale(1)" },
+          "50%": { transform: "translate(-4%, -6%) scale(1.1)" },
+        },
+        "grid-drift": {
+          "0%": { backgroundPosition: "0px 0px, 0px 0px" },
+          "100%": { backgroundPosition: "32px 32px, 32px 32px" },
         },
       },
     },

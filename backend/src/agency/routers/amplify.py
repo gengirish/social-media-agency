@@ -17,21 +17,20 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.agents.amplify import generate_amplify_atoms
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import (
-    BrandProfile,
     Campaign,
     Client,
     ContentPiece,
     RepurposePack,
-    Subscription,
 )
 from agency.services import product_analytics as pa
-from agency.services.billing import generations_limit_for
+from agency.services.brand_context import get_org_client, load_brand_context
+from agency.services.generation_quota import charge_generation, require_generation_quota
 from agency.services.repurpose import (
     MAX_ATOMS,
     PLATFORM_CHAR_LIMITS,
@@ -94,53 +93,6 @@ def _meta(piece: ContentPiece) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
-def _quota_exceeded(detail: str) -> HTTPException:
-    return HTTPException(
-        status.HTTP_402_PAYMENT_REQUIRED,
-        detail={"code": "generation_quota_exceeded", "message": detail},
-    )
-
-
-async def _require_generation_quota(db: AsyncSession, org_id: UUID) -> Subscription:
-    sub = (
-        await db.execute(select(Subscription).where(Subscription.org_id == org_id))
-    ).scalar_one_or_none()
-    if sub is None:
-        raise _quota_exceeded("No subscription on file for this workspace.")
-    if (sub.generations_used or 0) >= generations_limit_for(sub):
-        raise _quota_exceeded("Amplify generation limit reached for this billing period.")
-    return sub
-
-
-async def _brand_for(db: AsyncSession, client: Client, org_id: UUID) -> dict[str, Any]:
-    brand: dict[str, Any] = {
-        "brand_name": client.brand_name,
-        "industry": client.industry or "",
-        "description": client.description or "",
-    }
-    bp = (
-        await db.execute(
-            select(BrandProfile).where(
-                BrandProfile.client_id == client.id, BrandProfile.org_id == org_id
-            )
-        )
-    ).scalar_one_or_none()
-    if bp is not None:
-        brand.update(
-            {
-                "voice_description": bp.voice_description or "",
-                "tone_attributes": bp.tone_attributes or {},
-                "vocabulary_include": bp.vocabulary_include or [],
-                "vocabulary_exclude": bp.vocabulary_exclude or [],
-                "example_posts": bp.example_posts or [],
-                "style_rules": bp.style_rules or [],
-                "emoji_policy": bp.emoji_policy or "",
-                "target_audience": bp.target_audience or "",
-            }
-        )
-    return brand
-
-
 async def _campaign_brief(db: AsyncSession, campaign_id: Any, org_id: UUID) -> str | None:
     if not campaign_id:
         return None
@@ -167,11 +119,7 @@ async def preview(
     org_id: UUID = Depends(get_org_id),
 ) -> dict[str, Any]:
     """Generate a pack. Charges one generation; writes nothing to ``content_piece``."""
-    client = (
-        await db.execute(select(Client).where(Client.id == body.client_id, Client.org_id == org_id))
-    ).scalar_one_or_none()
-    if client is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
+    client = await get_org_client(db, body.client_id, org_id)
 
     source: ContentPiece | None = None
     if body.source_content_id is not None:
@@ -194,7 +142,7 @@ async def preview(
     else:
         source_text = (body.source_text or "").strip()
 
-    await _require_generation_quota(db, org_id)
+    await require_generation_quota(db, org_id)
 
     # The client's recent posts: duplicate-check corpus, and — for posts that
     # came from this same source — the angles already used, which plan_atoms
@@ -222,7 +170,7 @@ async def preview(
         result = await generate_amplify_atoms(
             source_text=source_text,
             requests=requests,
-            brand=await _brand_for(db, client, org_id),
+            brand=await load_brand_context(db, client, org_id),
             campaign_brief=await _campaign_brief(
                 db, source.campaign_id if source is not None else None, org_id
             ),
@@ -252,12 +200,7 @@ async def preview(
         created_by=_as_uuid(user.get("sub")),
     )
     db.add(pack)
-    # Atomic increment: two concurrent previews must not both read N and write N+1.
-    await db.execute(
-        update(Subscription)
-        .where(Subscription.org_id == org_id)
-        .values(generations_used=Subscription.generations_used + 1)
-    )
+    await charge_generation(db, org_id)
     await db.flush()
     await pa.track(
         db,

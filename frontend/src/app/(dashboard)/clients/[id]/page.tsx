@@ -1,5 +1,6 @@
 "use client";
 
+import { useActiveClient } from "@/lib/active-client";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -38,6 +39,7 @@ interface ClientIntelligence {
 }
 
 export default function ClientDetailPage() {
+  const { refresh: refreshActiveClient } = useActiveClient();
   const params = useParams();
   const clientId = params.id as string;
   const [data, setData] = useState<ClientIntelligence | null>(null);
@@ -87,6 +89,7 @@ export default function ClientDetailPage() {
       let unscheduled = 0;
       try {
         await api.archiveClient(client.id);
+        void refreshActiveClient();
       } catch (err) {
         if (apiErrorCode(err) !== "has_scheduled_posts") throw err;
         const count = ((err as ApiError).detail as { count?: number }).count ?? 0;
@@ -100,6 +103,7 @@ export default function ClientDetailPage() {
           return;
         }
         await api.archiveClient(client.id, true);
+        void refreshActiveClient();
         unscheduled = count;
       }
       trackFeature("client-archive", { unscheduled });
@@ -120,6 +124,7 @@ export default function ClientDetailPage() {
     setArchiving(true);
     try {
       setClient(await api.restoreClient(client.id));
+      void refreshActiveClient();
       trackFeature("client-restore");
       toast.success(`${client.brand_name} restored`);
     } catch (err) {

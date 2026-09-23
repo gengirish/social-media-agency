@@ -19,7 +19,7 @@ export function Panel({ className, dashed, ...props }: HTMLAttributes<HTMLDivEle
 export function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div className={cn("flex items-center gap-2 text-xs font-medium tracking-wide text-muted", className)}>
-      <span aria-hidden className="h-px w-3.5 bg-accent" />
+      <span aria-hidden className="h-px w-3.5 animate-draw-in bg-accent" />
       {children}
     </div>
   );

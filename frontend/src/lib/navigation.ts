@@ -4,7 +4,7 @@
  * only the grouping is new. Pure data + a pure resolver, no React.
  */
 
-export type NavIconName = "setup" | "posts" | "create" | "insights" | "settings";
+export type NavIconName = "setup" | "posts" | "create" | "inbox" | "insights" | "settings";
 
 export interface NavTab {
   label: string;
@@ -21,11 +21,17 @@ export interface NavGroup {
   tabs: NavTab[];
 }
 
+/*
+ * Group order is also the keyboard-shortcut order (1–6). Cadence's order is
+ * Setup, Posts, Create; this app deliberately puts Create before Posts
+ * (commit 70a67a9) because a Queue is empty until something has been created.
+ */
 export const NAV_GROUPS: NavGroup[] = [
   {
     id: "setup",
     label: "Setup",
     tabs: [
+      { label: "Profile", href: "/setup/profile" },
       { label: "Clients", href: "/clients" },
       { label: "Accounts", href: "/settings?tab=platforms", path: "/settings", queryTab: "platforms" },
     ],
@@ -35,8 +41,12 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Create",
     tabs: [
       { label: "Campaigns", href: "/campaigns" },
-      { label: "Templates", href: "/templates" },
+      { label: "Content", href: "/create/content" },
+      { label: "Email", href: "/create/email" },
+      { label: "Launch", href: "/create/launch" },
       { label: "Amplify", href: "/amplify" },
+      { label: "Ads", href: "/create/ads" },
+      { label: "Templates", href: "/templates" },
     ],
   },
   {
@@ -46,6 +56,11 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Queue", href: "/content" },
       { label: "Calendar", href: "/calendar" },
     ],
+  },
+  {
+    id: "inbox",
+    label: "Inbox",
+    tabs: [{ label: "Inbox", href: "/inbox" }],
   },
   {
     id: "insights",
@@ -62,6 +77,12 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
 ];
+
+/** Routes outside the groups that still get a breadcrumb title. */
+export const STANDALONE_TITLES: Record<string, string> = {
+  "/welcome": "Welcome",
+  "/legal": "Legal",
+};
 
 function tabPath(tab: NavTab): string {
   return tab.path ?? tab.href.split("?")[0];

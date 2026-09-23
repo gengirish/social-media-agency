@@ -11,6 +11,7 @@ from agency.middleware.tenant import TenantMiddleware
 from agency.routers import (
     acquisition,
     amplify,
+    assets,
     audit,
     auth,
     billing,
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
         competitive,
         product_analytics,
         amplify,
+        assets,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

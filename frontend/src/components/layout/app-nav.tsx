@@ -3,17 +3,20 @@
 import Link from "next/link";
 import { useEffect, useState, type ComponentType } from "react";
 import { UserButton } from "@clerk/nextjs";
-import { ListChecks, Menu, Settings, Sparkles, TrendingUp, Wand2, X } from "lucide-react";
+import { Inbox, ListChecks, Menu, Settings, Sparkles, TrendingUp, Wand2, X } from "lucide-react";
 import { NotificationsBell } from "@/components/notifications-bell";
 import { ThemeToggle, useTheme } from "@/components/theme";
 import { clerkVariables } from "@/lib/clerk-appearance";
-import { NAV_GROUPS, resolveNav, type NavIconName } from "@/lib/navigation";
+import { NAV_GROUPS, STANDALONE_TITLES, resolveNav, type NavIconName } from "@/lib/navigation";
+import { ClientSwitcher } from "@/components/layout/client-switcher";
+import { groupHref } from "@/components/layout/shell-extras";
 import { cn } from "@/lib/utils";
 
 const ICONS: Record<NavIconName, ComponentType<{ className?: string }>> = {
   setup: Sparkles,
   posts: ListChecks,
   create: Wand2,
+  inbox: Inbox,
   insights: TrendingUp,
   settings: Settings,
 };
@@ -23,30 +26,47 @@ const ICONS: Record<NavIconName, ComponentType<{ className?: string }>> = {
  * group. Presentational — the caller supplies the location, so the layout can
  * render it both inside and outside a Suspense boundary for useSearchParams.
  */
-export function AppNav({ pathname, queryTab }: { pathname: string; queryTab: string | null }) {
+export function AppNav({
+  pathname,
+  queryTab,
+  lastVisited = {},
+}: {
+  pathname: string;
+  queryTab: string | null;
+  lastVisited?: Record<string, string>;
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
   const active = resolveNav(pathname, queryTab);
   const theme = useTheme();
+  // Cadence breadcrumb: "Group / Tab", or just the group when it has one tab.
+  const crumb = active
+    ? active.group.tabs.length > 1
+      ? `${active.group.label} / ${active.tab.label}`
+      : active.group.label
+    : STANDALONE_TITLES[pathname] ?? null;
 
   useEffect(() => setMenuOpen(false), [pathname, queryTab]);
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-canvas/75 shadow-[0_1px_0_rgb(var(--c-accent)/0.08)] backdrop-blur-xl">
       <div className="flex h-16 items-center gap-4 px-4 sm:px-6">
-        <Link href="/campaigns" className="flex min-w-0 items-center gap-2.5" aria-label="CampaignForge home">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-accent bg-accent/10 text-accent-text">
-            <Sparkles className="h-3.5 w-3.5 motion-safe:animate-logo-spin" />
-          </span>
-          <span className="truncate font-mono text-sm tracking-[0.15em] text-ink">
-            CAMPAIGNFORGE
-            {active && (
-              <>
-                <span className="text-accent-text">/</span>
-                <span className="text-muted">{active.tab.label.toUpperCase()}</span>
-              </>
-            )}
-          </span>
-        </Link>
+        <div className="flex min-w-0 items-center gap-3">
+          <Link href="/welcome" className="flex min-w-0 items-center gap-2.5" aria-label="Go to home">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-accent bg-accent/10 text-accent-text">
+              <Sparkles className="h-3.5 w-3.5 motion-safe:animate-logo-spin" />
+            </span>
+            <span className="hidden truncate font-mono text-sm tracking-[0.15em] text-ink sm:inline">
+              CAMPAIGNFORGE
+              {crumb && (
+                <>
+                  <span className="text-accent-text">/</span>
+                  <span className="text-muted">{crumb.toUpperCase()}</span>
+                </>
+              )}
+            </span>
+          </Link>
+          <ClientSwitcher />
+        </div>
 
         <nav aria-label="Primary" className="ml-auto hidden items-center gap-1 lg:flex">
           {NAV_GROUPS.map((group) => {
@@ -55,7 +75,7 @@ export function AppNav({ pathname, queryTab }: { pathname: string; queryTab: str
             return (
               <Link
                 key={group.id}
-                href={group.tabs[0].href}
+                href={groupHref(group, lastVisited)}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[13px] font-medium transition-all duration-200",

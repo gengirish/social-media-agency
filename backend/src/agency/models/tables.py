@@ -328,6 +328,46 @@ class RepurposePack(Base):
     )
 
 
+class CreativeAsset(Base):
+    """Kept output of a Create-screen generator (blog post, email campaign, ad set, ...).
+
+    ``kind`` is validated against ``services.creative_assets.ASSET_KINDS``.
+    Social posts never live here — they go to ``content_piece`` as drafts so
+    moderation and approval apply.
+    """
+
+    __tablename__ = "creative_asset"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id = Column(
+        UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    kind = Column(String(40), nullable=False)
+    title = Column(String(500), nullable=False, default="")
+    payload = Column(JSONB, nullable=False, default={})
+    source_asset_id = Column(
+        UUID(as_uuid=True), ForeignKey("creative_asset.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index(
+            "idx_creative_asset_org_client_kind",
+            "org_id",
+            "client_id",
+            "kind",
+            text("created_at DESC"),
+        ),
+    )
+
+
 class AnalyticsSnapshot(Base):
     __tablename__ = "analytics_snapshot"
 
