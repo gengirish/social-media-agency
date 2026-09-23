@@ -1,7 +1,7 @@
 """Signed OAuth ``state`` — carries the org and client through the provider redirect.
 
 The provider echoes ``state`` back to our callback page unchanged. Signing it
-(HS256 with ``JWT_SECRET``, 15-minute expiry) means the callback can trust
+(HS256 with a key derived from ``JWT_SECRET``, 15-minute expiry) means the callback can trust
 which client the connection was started for, and that the flow was started by
 this org — the previous ``state`` was the bare org id, which neither
 identified the client nor protected against a forged callback.

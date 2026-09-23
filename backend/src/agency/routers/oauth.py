@@ -173,16 +173,18 @@ async def oauth_callback(
 
     # The signed state (sent by the in-app callback page) must have been issued to
     # this org, for this platform, and — when it names a client — for this client.
+    # Required: without it a callback cannot prove this org started the flow.
     state = body.get("state")
-    if state:
-        try:
-            state_client = verify_state(str(state), org_id=org_id, platform=platform)
-        except InvalidOAuthStateError as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
-        if state_client is not None and state_client != client_uuid:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "OAuth state was issued for another client"
-            )
+    if not state:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state required")
+    try:
+        state_client = verify_state(str(state), org_id=org_id, platform=platform)
+    except InvalidOAuthStateError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    if state_client is not None and state_client != client_uuid:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "OAuth state was issued for another client"
+        )
 
     code_verifier = body.get("code_verifier")
     if platform in PKCE_PLATFORMS and not code_verifier:

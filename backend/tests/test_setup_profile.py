@@ -553,12 +553,26 @@ async def test_callback_rejects_state_for_another_client_or_org(
 
 
 async def test_callback_twitter_requires_verifier(client, orgs):
+    from agency.services.oauth_state import sign_state
+
+    state = sign_state(org_id=orgs.org_a, client_id=orgs.client_a, platform="twitter")
     resp = await client.post(
         f"{API}/oauth/twitter/callback",
+        json={"code": "abc", "client_id": str(orgs.client_a), "state": state},
+        headers=orgs.headers_a,
+    )
+    assert resp.status_code == 400
+    assert "code_verifier" in resp.text
+
+
+async def test_callback_requires_state(client, orgs):
+    resp = await client.post(
+        f"{API}/oauth/linkedin/callback",
         json={"code": "abc", "client_id": str(orgs.client_a)},
         headers=orgs.headers_a,
     )
     assert resp.status_code == 400
+    assert "state" in resp.text
 
 
 def test_oauth_state_key_is_not_the_login_secret():

@@ -102,6 +102,7 @@ async def export_client(db: AsyncSession, org_id: UUID, client: Client) -> dict[
         {
             "id": str(k.id),
             "source_content_id": str(k.source_content_id) if k.source_content_id else None,
+            "source_asset_id": str(k.source_asset_id) if k.source_asset_id else None,
             "source_text": k.source_text,
             "platforms": k.platforms or [],
             "atom_count": k.atom_count,

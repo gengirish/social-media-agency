@@ -192,7 +192,7 @@ Content, Email, Launch, Ads, Setup's Brand Voice / Strategy Lens, Insights' advo
 2. Prompt with `brand_prompt_block(load_brand_context(...))` — voice, vocab, differentiator, tone register, posting prefs and the client's **campaign focus** (`PUT/DELETE /clients/{id}/campaign-focus`, shown by `CampaignIndicator`). The PRFAQ stress-test deliberately strips the campaign focus.
 3. Validate the model's JSON in code; malformed → `502` "no quota was used", nothing saved.
 4. Long-form output → `services/creative_assets.py::save_asset` (`creative_asset` table, closed `ASSET_KINDS`, generic `/assets` CRUD). Social posts never go there — they are `content_piece` drafts so the approval gate applies.
-5. `charge_generation` only after success, then commit. Cancel in the UI only stops the browser waiting; a server that finishes still saves and charges, and the UI says so.
+5. `charge_generation` only after success, then commit. Cancel: Post Studio (generate / regenerate / creative brief) checks `request.is_disconnected()` after the model returns and then saves and charges nothing; the other generators only stop the browser waiting — a server that finishes still saves and charges, and the UI says so. Content, Email and Launch also refuse with `409 brand_profile_required` when the client has no brand profile; the other generators gate only in the UI.
 
 Ad copy runs through `services/ad_guardrails.py` (hard Google limits, Meta visible thresholds, trademark and personal-attribute heuristics) plus advisory brain-tier moderation that fails open *visibly*. Nothing creates ad campaigns or predicts CTR/CPC/ROAS.
 
