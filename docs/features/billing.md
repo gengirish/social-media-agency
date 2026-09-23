@@ -1,5 +1,5 @@
 # Billing
-<!-- verified: 260921 -->
+<!-- verified: 260923 -->
 
 ## Stripe Integration
 **Status**: [LIVE]
@@ -58,6 +58,9 @@ Only a verified event reaches `billing.handle_webhook()`. This closes the "anyon
 **Status**: [LIVE] — `routers/amplify.py`, `services/billing.py`
 
 1 Amplify pack (one `POST /amplify/preview` that returns at least one draft) = 1 generation, regardless of how many drafts are in it or how many are later committed.
+
+<!-- verified: 260923 -->
+**Since 260923 the same allowance covers every generator**, through `services/generation_quota.py` (`require_generation_quota` before the model, `charge_generation` after a usable result). 1 generation each: Amplify pack; Queue generate / regenerate / creative brief (`/content/generate`, `/content/{id}/regenerate`, `/content/{id}/creative-brief`); Setup brand-voice draft and strategy lens; Create › Content blog / comparison / niche scan / video script / blog-from-gap / AI-SEO pack; Create › Email campaign; Create › Launch kit and PRFAQ stress-test; Create › Ads set; Insights advocacy; Inbox reply suggestion. **Free:** intake answer coaching, manual posts, approvals, asset list/rename/delete. The new screens' `QuotaHint` / `UsageMeter` say "generations left"; Amplify's still says "packs left this period", which now overstates it — the same pool is spent by every other screen. Post Studio is the one path that refunds on cancel: it checks `request.is_disconnected()` after the model returns and charges nothing if the caller has gone.
 
 - **Columns:** `subscription.generations_used` (NOT NULL, default 0) and `subscription.generations_limit` (nullable). See [database-schema.md](database-schema.md#subscription).
 - **Limit resolution:** `generations_limit_for(sub)` — the row's `generations_limit`; if NULL, the tier's `PLAN_CONFIG["generations_limit"]`; if the tier is unknown, the free tier's. Never unlimited by default.

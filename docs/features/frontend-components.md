@@ -1,7 +1,7 @@
 # Frontend Components
-<!-- verified: 260921 -->
+<!-- verified: 260923 -->
 
-Components in `frontend/src/components/` — app-level components, the `ui/` design-system primitives, and feature folders (`layout/`, `posts/`, `amplify/`, `agents/`, `landing/`) — plus modules in `frontend/src/lib/`.
+Components in `frontend/src/components/` — app-level components, the `ui/` design-system primitives, and feature folders (`layout/`, `posts/`, `amplify/`, `clients/`, `setup/`, `create-content/`, `create-kits/`, `ads/`, `inbox/`, `insights/`, `settings/`, `agents/`, `landing/`) — plus modules in `frontend/src/lib/`.
 
 ## Design System
 **Status**: [LIVE] — ported from Cadence Crew 260921 (`docs/cadence-port-plan-260921.md`)
@@ -14,7 +14,7 @@ Every colour is a CSS variable holding bare `R G B` channels (`--c-<name>-<shade
 - **Status hues** (`emerald`, `green`, `red`, `rose`, `amber`, `yellow`, `orange`, `blue`, `sky`, `purple`, `violet`, `teal`) keep Tailwind defaults in light and get tinted-panel variants in dark. Hues outside this list (e.g. `pink`) are **not** remapped and will not adapt to dark mode.
 - **Semantic names — prefer these in new code:** `canvas` (page background), `panel` (surface), `ink` (text), `muted` (secondary text), `line` (borders), `accent` / `accent-text` (amber; text-safe variant), `on-accent` (text on amber).
 - **Fonts:** `font-sans` Inter (`--font-sans`), `font-display` Space Grotesk (`--font-display`), `font-mono` IBM Plex Mono (`--font-mono`), loaded with `next/font/google` in `app/layout.tsx`.
-- **Extras:** `shadow-soft`, `shadow-glow`; animations `pulse-dot`, `logo-spin`, `screen-in`.
+- **Extras:** `shadow-soft`, `shadow-glow`; animations `pulse-dot`, `logo-spin`, `screen-in`. <!-- verified: 260923 --> Cadence motion keyframes added 260923: `breathe`, `pop-in`, `chip-in`, `popup-in`, `slide-out`, `dot-pulse`, `ring-pulse`, `draw-in` (the `Eyebrow` rule now draws in), `bar-load`, `count-up`, `shimmer`, `scanline`, `blob-1` / `blob-2` (the dashboard's ambient glows), `grid-drift`. All collapse under `prefers-reduced-motion`.
 
 ### Global styles — `app/globals.css`
 
@@ -53,12 +53,29 @@ Every colour is a CSS variable holding bare `R G B` channels (`--c-<name>-<shade
 | `CampaignStatusBadge` | `campaign-status.tsx` | `campaign.status` (planning, running — pulsing dot, completed, paused, failed) |
 | `QuotaHint` | `quota-hint.tsx` | "N left …" beside a generate button; renders nothing when `used`/`limit` are unknown; amber when ≤10% left, red at 0 |
 | `AuthCanvas` | `auth-canvas.tsx` | Sign-in/up screen: brand bar, theme toggle, themed Clerk `<SignIn />`/`<SignUp />` |
+| `ErrorBanner` | `feedback.tsx` | [LIVE] 260923. Inline error with an optional retry button (`onRetry`, `retryLabel`) |
+| `ConfirmDialog` | `feedback.tsx` | [LIVE] 260923. Destructive confirm on `PostDialog`; for actions that cannot be undone |
+| `undoToast(message, onUndo, onExpire?)` | `feedback.tsx` | [LIVE] 260923. Sonner toast with Cadence's 8-second undo window. The caller runs the real action in `onExpire` — Cadence prefers undo over confirm-everywhere for reversible actions |
+| `SearchInput` | `search-input.tsx` | [LIVE] 260923. Compact mono search box with a clear button |
+| `PlatformFilterRow` | `platform-filter.tsx` | [LIVE] 260923. Cadence's "Channel" filter chips. Pass only platforms with data behind them (e.g. connected accounts) |
+| `CampaignIndicator` | `campaign-indicator.tsx` | [LIVE] 260923. "Campaign active: …" line above generate controls, from the active client's `campaign_focus`, with an Edit link to `/setup/profile#campaign`. Renders nothing when no focus is set. Props `{editable?}` |
 
 ## AppNav
 **Status**: [LIVE]
 **File**: `components/layout/app-nav.tsx` · data in `lib/navigation.ts`
 
-Sticky top bar replacing the old sidebar. Props `{pathname, queryTab}` (supplied by the dashboard layout so it can render inside and outside a `Suspense` boundary). Brand + `CAMPAIGNFORGE/<TAB>` breadcrumb, five group pills (`lg+`), sub-tabs for the active group, `ThemeToggle`, `NotificationsBell`, Clerk `UserButton`; below `lg`, a "Menu" button opens a drawer with every group and tab. Groups and resolution rules: [frontend-pages.md › Navigation](frontend-pages.md#navigation-ia).
+Sticky top bar replacing the old sidebar. Props `{pathname, queryTab, lastVisited?}` (supplied by the dashboard layout so it can render inside and outside a `Suspense` boundary). Logo (→ `/welcome`) + `CAMPAIGNFORGE/<TAB>` breadcrumb, `ClientSwitcher`, six group pills (`lg+`) that return to the group's last-visited tab, sub-tabs for the active group, `ThemeToggle`, `NotificationsBell`, Clerk `UserButton`; below `lg`, a "Menu" button opens a drawer with every group and tab. Groups and resolution rules: [frontend-pages.md › Navigation](frontend-pages.md#navigation-ia).
+
+## Shell — `components/layout/`
+**Status**: [LIVE]
+<!-- verified: 260923 -->
+
+| Component | File | Notes |
+|---|---|---|
+| `ClientSwitcher` | `client-switcher.tsx` | Cadence's product switcher, mapped onto clients. Lists active clients with real status lines from `/clients/overview` (profile, accounts, pending/scheduled counts); switch, add a client, archive (via `ConfirmDialog`). Esc / outside-click close |
+| `KeyboardShortcuts` | `shell-extras.tsx` | `1`–`6` → nav group (last-visited tab), `?` → shortcut dialog. Ignored while typing, with Ctrl/Cmd/Alt, or with any `[role=dialog]` open |
+| `useLastVisited(pathname, queryTab)` | `shell-extras.tsx` | Records the current tab per group in `sessionStorage` (`cf-last-visited`); storage errors fall back to first tabs |
+| `AppFooter` | `shell-extras.tsx` | Legal links (`/legal?tab=…`) and "Keyboard shortcuts (?)" |
 
 ## Posts — `components/posts/`
 **Status**: [LIVE] — used by the Queue (`/content`) and, for `platform.ts`, the Calendar
@@ -72,6 +89,12 @@ Sticky top bar replacing the old sidebar. Props `{pathname, queryTab}` (supplied
 | `PublishConfirm` | `publish-confirm.tsx` | One confirmation before posting to a live account |
 | `PostDialog` | `dialog.tsx` | Radix dialog shell (focus trap, Esc); closing is blocked while `busy` |
 | `QUEUE_PLATFORMS`, `platformLabel`, `platformTone` | `platform.ts` | Platform names/colours shared with the Calendar; only dark-mode-remapped hues |
+| `GeneratePostsModal` | `generate-posts-modal.tsx` | [LIVE] 260923. Platforms + context note → one Pending draft per platform; Cancel |
+| `AddPostModal` | `add-post-modal.tsx` | [LIVE] 260923. Calendar "Add your own post" → Pending draft with a planned day |
+| `EventModal` | `event-modal.tsx` | [LIVE] 260923. Calendar post details: read, edit, keyboard-accessible Reschedule |
+| `UsageMeter`, `MiniStat`, `AccountChip`, `ClientProfileCard` | `queue-sidebar.tsx` | [LIVE] 260923. Queue sidebar: generations meter, real stat cards, channel chips, client card |
+
+<!-- verified: 260923 --> `PostCard` (260923) adds `PostAction` values `regenerate` and `brief`, a creative-brief panel, selection for bulk actions, and the edit split: Pending edits autosave to the server; Approved/Scheduled edits are held in `localStorage` (`readLocalEdit`) until "Save & send back to Pending".
 
 ## Clients — `components/clients/`
 **Status**: [LIVE] — used by `/clients/[id]`
@@ -86,11 +109,65 @@ Sticky top bar replacing the old sidebar. Props `{pathname, queryTab}` (supplied
 
 | Component | File | Notes |
 |---|---|---|
-| `AmplifyForm`, `SourceMode` | `amplify-form.tsx` | Client, source (content piece or pasted text), platforms, draft count, Generate/Cancel, `QuotaHint` |
+| `AmplifyForm`, `SourceMode` | `amplify-form.tsx` | Client, source (`SourceMode` `content` \| `asset` \| `text` — a queue post, a saved Create-screen asset "From Create", or pasted text), platforms, draft count, Generate/Cancel, `QuotaHint` |
 | `AtomReview` | `atom-review.tsx` | Review grid; drop/restore atoms; "Add N to queue" commits the rest as Pending |
 | `AtomCard`, `AngleChip` | `atom-card.tsx` | One draft: angle, platform, `char_count / char_limit`, duplicate warning, drop toggle |
 | `PackHistory` | `pack-history.tsx` | Recent packs: source, client, platforms, generated vs queued |
 | `ANGLE_LABELS`, `angleLabel`, `platformLabel` | `labels.ts` | Display names |
+
+## Setup — `components/setup/`
+**Status**: [LIVE] — used by `/setup/profile`, `/setup/accounts`, Settings, the OAuth callback page
+<!-- verified: 260923 -->
+
+| Component | File | Notes |
+|---|---|---|
+| `Intake`, `isLikelyUrl` | `intake.tsx` | URL scan (real `POST /magic-brief`), audience + differentiator questions with coaching, fixed tone register, Approve |
+| `CampaignSection` | `campaign-section.tsx` | Set / clear the campaign focus (`#campaign` anchor) |
+| `BrandVoiceSection` | `brand-voice-section.tsx` | Generate a draft guide (1 generation, not saved), edit, approve |
+| `StrategyLensPanel` | `strategy-lens-panel.tsx` | Run the strategy lens panel; shows the latest `strategy_lens` asset |
+| `ConnectedAccounts`, `platformName`, `useConnectedToast` | `connected-accounts.tsx` | Per-platform connect (consent dialog listing requested scopes, PKCE for X, full-page redirect) and disconnect (confirm) |
+| `ActiveClientGate` | `client-state.tsx` | Loading / no-client / error states before a client-scoped screen renders |
+| `useGenerationQuota` | `use-generation-quota.ts` | Reads `generations_used` / `generations_limit` from `/billing/subscription` |
+
+## Create — `components/create-content/`, `create-kits/`, `ads/`
+**Status**: [LIVE]
+<!-- verified: 260923 -->
+
+| Component | File | Notes |
+|---|---|---|
+| `BlogCard`, `ComparisonCard`, `NicheScanCard`, `VideoScriptCard` | `create-content/cards.tsx` | Saved Content assets: copy, Markdown export, delete with undo; blog AI-search optimisation; scan → blog from gap; web-research status |
+| `useGenerationQuota`, `useKitAssets`, `useGenerator`, `useCopied`, `matchesSearch` | `create-kits/kit-shared.tsx` | Shared hooks for the Email / Launch screens (asset list per kind, generate with Cancel, copy feedback) |
+| `ClientGate`, `GenerateButton`, `CancelLink`, `QuotaFor`, `GenerateBanner`, `Block`, `CopyButton`, `KitCard`, `AccentBadge`, `ListEmpty` | `create-kits/kit-shared.tsx` | Shared UI for kit screens; `GenerateBanner` distinguishes quota / brand-profile-required / error failures |
+| `EmailCampaignCard`, `emailCopyText`, `senderName`, `campaignTypeLabel` | `create-kits/email-card.tsx` | Inbox preview / raw toggle, A/B subjects, segment + timing |
+| `LaunchKitCard`, `CommunityKitCard`, `OutreachPitchCard` (+ `*CopyText`) | `create-kits/launch-cards.tsx` | Expandable kit cards; `PH_TAGLINE_LIMIT = 60` |
+| `PrfaqPanel` | `create-kits/prfaq-panel.tsx` | Run / re-run the PRFAQ stress-test; shows the stored critique |
+| `AdSetCard` | `ads/ad-set-card.tsx` | Google / Meta asset rows with char counts vs limits, trademark / personal-attribute / moderation blocks, copy all, delete with undo |
+
+## Inbox — `components/inbox/`
+**Status**: [LIVE] — used by `/inbox`
+<!-- verified: 260923 -->
+
+| Component | File | Notes |
+|---|---|---|
+| `AccountBanners` | `account-banners.tsx` | One banner per account whose status is not `ok`, with the platform's reason and a Setup › Accounts link |
+| `InboxListItem`, `PlatformGlyph`, `TYPE_META`, `shortAgo` | `inbox-list-item.tsx` | List row: type, platform, author, excerpt, unread / handled state |
+| `InboxDetail` | `inbox-detail.tsx` | Message, suggest-a-reply (Cancel, Regenerate, escalation flag), editable reply, confirm-before-send, moderation issues with Send anyway, Copy reply where sending is unavailable |
+
+## Insights — `components/insights/`
+**Status**: [LIVE] — used by `/analytics`
+<!-- verified: 260923 -->
+
+| Component | File | Notes |
+|---|---|---|
+| `CadenceInsights`, `RealDataBadge` | `cadence-insights.tsx` | `GET /insights/summary` rendered: funnel, platforms, publish / moderation rates, quality signal, engagement, recommendations, "How this works" thresholds. Insufficient data shown as such |
+| `AdvocacyPanel` | `advocacy-panel.tsx` | Generate customer-advocacy material from real counts; saved `advocacy` assets |
+| `InsightBar`, `UsageMeter` | `bars.tsx` | Bars and usage meters (no invented values) |
+
+## Settings — `components/settings/`
+**Status**: [LIVE] — used by `/settings`
+<!-- verified: 260923 -->
+
+`ProfileTab`, `AccountsTab`, `PostingTab`, `PlanTab`, `ActivityTab`, `ExportTab` in `cadence-settings.tsx` — the per-client Cadence tabs (see [frontend-pages.md › Settings](frontend-pages.md#settings-settings--settings--workspace)).
 
 ## DashboardContent
 **Status**: [DEPRECATED] — not imported anywhere
@@ -172,7 +249,26 @@ Added 260922:
 - `getBrandProfile(clientId)` / `saveBrandProfile(clientId, data)` → `SavedBrandProfile`.
 
 ### `lib/navigation.ts`
-`NAV_GROUPS` (the IA as data) and `resolveNav(pathname, queryTab)`. Pure, no React.
+`NAV_GROUPS` (the IA as data; group order = shortcut order), `STANDALONE_TITLES` (`/welcome`, `/legal`) and `resolveNav(pathname, queryTab)`. Pure, no React. `NavIconName` gains `inbox` (260923).
+
+### `lib/active-client.tsx`
+<!-- verified: 260923 -->
+`ActiveClientProvider` + `useActiveClient()` → `{clients, active, activeId, setActiveId, loading, error, refresh}`; `clientLabel(client)`. Backed by `GET /clients/overview`. The id persists in `localStorage` (`cf-active-client`) and is re-validated against the org's clients on each load.
+
+### Parity API modules (260923)
+<!-- verified: 260923 -->
+Thin typed wrappers over `lib/api.ts`'s `request`, one per feature:
+
+| Module | Wraps |
+|---|---|
+| `lib/api-foundation.ts` | `foundationApi` — `/clients/overview`, campaign focus, `/assets` list/get/rename/delete; `ClientOverview`, `AssetKind`, `CreativeAsset<P>` |
+| `lib/api-setup.ts` | `setupApi` — `/setup/{id}/*`, `/magic-brief`, OAuth authorize/callback/disconnect; `createPkce(platform)` (S256, verifier in `sessionStorage`), `takePkceVerifier`, `clientIdFromState` (reads the `cid` claim without verifying — the server verifies) |
+| `lib/api-posts.ts` | `postStudioApi` — generate, manual post, regenerate, creative brief, delete, channels, client-scoped calendar (`include_pending=true`); `PLATFORM_LIMITS`, `renderedLength`, `isOverdue`, `randomPostTime` |
+| `lib/api-create-content.ts` | `createContentApi` — `/create/content/*`; payload types; `draftMarkdown`, `exportFilename`, `collectRepurposeSources` (Amplify "From Create"), `findSimilarScan` |
+| `lib/api-create-kits.ts` | `createKitsApi` — `/create/email/generate`, `/create/launch/*`; `EMAIL_CAMPAIGN_TYPES`, `isBrandProfileRequired`, `copyText` |
+| `lib/api-ads.ts` | `adsApi` — `/create/ads/spec`, `/create/ads/generate`; `AD_ROW_LIMITS`, `adSetText` |
+| `lib/api-inbox.ts` | `inboxApi` — `/inbox`, item state, suggest-reply, reply |
+| `lib/api-insights.ts` | `insightsApi` — `/insights/*`, `/workspace/*`; `VOICE_OPTIONS`, `CADENCE_OPTIONS`, `timeAgo` |
 
 ### `lib/platforms.ts`
 `UNAVAILABLE_PUBLISH_PLATFORMS` (Instagram, TikTok), `publishUnavailableReason(platform)`, `canPublish(platform)`. Since 260921 the Queue disables **Schedule and Publish now** for these platforms (a scheduled post would only fail later) and shows the reason; Amplify atom cards flag them as manual-publish. The backend schedule endpoint does not block them — this is UI-only.
@@ -184,7 +280,7 @@ See [Design System](#design-system).
 `connectAgentStream(campaignId, token, onEvent, onError?)` — Opens EventSource to SSE endpoint with JWT in query param. Returns teardown function.
 
 ### `lib/analytics.ts`
-Product-analytics client. Batches events to `POST /api/v1/events` (max 50 per request). `trackFeature("kebab-name")` is the call to add at the point of success for any new flow that should appear in the adoption table. Currently fired for: `campaign-create`, `client-create` (with `from_website_read`), `client-website-read`, `content-publish`, `post-approve`, `post-schedule`, `post-reschedule`, `amplify`.
+Product-analytics client. Batches events to `POST /api/v1/events` (max 50 per request). `trackFeature("kebab-name")` is the call to add at the point of success for any new flow that should appear in the adoption table. Currently fired for: `campaign-create`, `client-create` (with `from_website_read`), `client-website-read`, `content-publish`, `post-approve`, `post-schedule`, `post-reschedule`, `amplify`; <!-- verified: 260923 --> added 260923: `post-generate`, `post-regenerate`, `creative-brief`, `post-delete`, `post-bulk-approve`, `post-bulk-publish`, `run-report-download`, `calendar-add-post`, `calendar-fill`, `brand-profile-approved`, `brand-voice`, `strategy-lens`, `campaign-focus`, `connect-account`, `create-content`, `ai-seo`, `create-email`, `prfaq-stress-test`, `ads`, `inbox-suggest-reply`, `inbox-reply`, `customer-advocacy`, `settings-export`.
 
 ### `lib/utils.ts`
 `cn(...inputs)` — `clsx` + `tailwind-merge` for class name composition.

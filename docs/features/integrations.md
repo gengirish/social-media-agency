@@ -1,5 +1,5 @@
 # Platform Integrations
-<!-- verified: 260817 -->
+<!-- verified: 260923 -->
 
 ## Social Publishing
 **Status**: [LIVE]
@@ -13,6 +13,18 @@
 | Instagram | [STUB] returns "not available yet" | [STUB] returns `unavailable` |
 
 Publishing is triggered via `POST /api/v1/publishing/{content_id}/publish` or automatically by the scheduler when `scheduled_at` arrives. OAuth tokens are stored encrypted on `PlatformAccount` and decrypted at publish time.
+
+<!-- verified: 260923 -->
+**Connecting** (260923): real provider redirects from Setup › Accounts — signed `state`, PKCE for X, return page at `/api/oauth/{platform}/callback`. See [api-endpoints.md › OAuth](api-endpoints.md#oauth).
+
+**Reading (Inbox, 260923)** — `services/inbox.py`, live, nothing stored except triage state:
+
+| Platform | Reads | Replies | Needs |
+|----------|-------|---------|-------|
+| X / Twitter | [LIVE] mentions timeline `GET /2/users/:id/mentions` | [LIVE] `POST /2/tweets` reply | `tweet.read users.read` (held) **and** an X API plan that allows reads (402/403 surface as `api_access_denied`). Access tokens auto-refreshed |
+| LinkedIn | [LIVE, gated] comments on posts CampaignForge published | [LIVE, gated] comment | `LINKEDIN_INBOX_SCOPE` (`r_member_social` or `r_organization_social`, granted only to approved apps); `LINKEDIN_API_VERSION` header. Commenter names are not resolvable with these scopes |
+| Facebook / others | — (`unsupported`) | — | — |
+| DMs (any) | not read | — | X `dm.read` not requested; LinkedIn has no messaging API for this app |
 
 **Metrics caveat:** the live analytics path still runs through `services/analytics_fetcher.py`, which persists all-zero snapshots. `services/platform_metrics.py` holds the real fetchers but has no callers yet — "Meta (Facebook & Instagram)" as a headline capability claim currently overstates Instagram on both publish and metrics.
 
@@ -83,6 +95,7 @@ Slack bot with event and slash-command handlers at `POST /api/v1/integrations/sl
 HTTP fetch of target URL + LLM-powered brand profile extraction. No external API key beyond LLM provider. The fetch is restricted to public addresses by `services/url_safety.py`.
 
 ## Exa — Search
-**Status**: [PLANNED]
+**Status**: [LIVE] <!-- verified: 260923 -->
+**File**: `backend/src/agency/services/exa_client.py`
 
-`EXA_API_KEY` is defined in `config.py` and `.env.example`, but no service reads it. `services/trends.py` returns hardcoded topics instead of querying Exa.
+Shared Exa client, keyed by `EXA_API_KEY`. Callers: `services/trends.py`, `agents/competitive_intel.py`, and (260923) `services/competitor_research.py` for Create › Content comparison pages and niche scans. With no key or a failed search, callers return an explicit `unavailable` record with the reason — output is never presented as web-researched when it was not. (This section previously said `[PLANNED]`; that was stale since Phase 1.)
