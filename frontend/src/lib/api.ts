@@ -1780,6 +1780,8 @@ export interface AmplifyAtom {
 export interface AmplifyPreviewRequest {
   client_id: string;
   source_content_id?: string;
+  /** A saved Create-screen asset (blog post, comparison page, niche scan, video script, launch kit). */
+  source_asset_id?: string;
   source_text?: string;
   platforms: string[];
   max_atoms?: number;
@@ -1805,6 +1807,7 @@ export interface AmplifyPack {
   client_id: string;
   client_name: string | null;
   source_content_id: string | null;
+  source_asset_id?: string | null;
   source_title: string | null;
   source_excerpt: string | null;
   platforms: string[];

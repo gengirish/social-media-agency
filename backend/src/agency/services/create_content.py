@@ -83,7 +83,7 @@ def normalize_keyword(value: str) -> str:
 # ---------------------------------------------------------------------------
 def validate_blog(parsed: Any, used_keywords: list[str] | None = None) -> dict[str, Any]:
     obj = _obj(parsed)
-    blog = {
+    blog: dict[str, Any] = {
         "keyword": _text(obj, "keyword"),
         "searchIntent": _text(obj, "searchIntent"),
         "title": _text(obj, "title"),
@@ -137,8 +137,9 @@ def validate_niche_scan(parsed: Any, competitor_names: list[str]) -> dict[str, A
         saturation = str(a.get("saturation") or "").strip().lower()
         if not isinstance(name, str) or not name.strip() or saturation not in SATURATIONS:
             continue
-        used_by = []
-        for u in a.get("usedBy") if isinstance(a.get("usedBy"), list) else []:
+        used_by: list[str] = []
+        raw_used = a.get("usedBy")
+        for u in raw_used if isinstance(raw_used, list) else []:
             match = by_key.get(str(u).strip().lower())
             if match and match not in used_by:
                 used_by.append(match)
