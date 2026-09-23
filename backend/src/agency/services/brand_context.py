@@ -86,6 +86,12 @@ def brand_prompt_block(brand: dict[str, Any]) -> str:
         lines.append("Never use: " + ", ".join(map(str, brand["vocabulary_exclude"])))
     if brand.get("style_rules"):
         lines.append("Style rules: " + "; ".join(map(str, brand["style_rules"])))
+    prefs = (brand.get("setup") or {}).get("posting_prefs")
+    if isinstance(prefs, dict):
+        if prefs.get("voice_register"):
+            lines.append(f"Voice register: {prefs['voice_register']}")
+        if prefs.get("cadence_per_week"):
+            lines.append(f"Posting cadence: {prefs['cadence_per_week']} posts a week")
     campaign = (brand.get("setup") or {}).get("campaign_focus")
     if isinstance(campaign, dict) and campaign.get("description"):
         lines.append(f"Active campaign right now: {campaign['description']}")

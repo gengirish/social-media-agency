@@ -22,6 +22,7 @@ from agency.routers import (
     competitive,
     content,
     health,
+    insights,
     integrations,
     magic_brief,
     notifications,
@@ -35,6 +36,7 @@ from agency.routers import (
     stats,
     team,
     webhooks_config,
+    workspace,
 )
 
 logger = structlog.get_logger()
@@ -113,6 +115,8 @@ def create_app() -> FastAPI:
         product_analytics,
         amplify,
         assets,
+        insights,
+        workspace,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

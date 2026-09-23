@@ -9,6 +9,11 @@ import { StatCard } from "@/components/ui/stat-card";
 import { Field, Input, Select } from "@/components/ui/field";
 import { EmptyState, LoadingState, Notice } from "@/components/ui/empty-state";
 import { SegmentedTabs } from "@/components/ui/tabs";
+import { Eyebrow } from "@/components/ui/panel";
+import { CadenceInsights, RealDataBadge } from "@/components/insights/cadence-insights";
+import { useActiveClient } from "@/lib/active-client";
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
 import {
   BarChart3,
   Users,
@@ -67,6 +72,7 @@ const TREND_PLATFORMS = [
 ];
 
 export default function AnalyticsPage() {
+  const { active, loading: clientsLoading } = useActiveClient();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -146,41 +152,34 @@ export default function AnalyticsPage() {
     <PageHeader
       eyebrow="Insights"
       title="Analytics"
-      description="Campaign performance and platform insights"
+      description={
+        active
+          ? `Real, computed insights for ${active.brand_name} — then workspace-wide totals, trends and benchmarks.`
+          : "Campaign performance and platform insights"
+      }
+      actions={<RealDataBadge />}
     />
   );
 
-  if (loading) {
-    return (
-      <div className="space-y-8">
-        {header}
-        <LoadingState label="Loading stats" />
-      </div>
-    );
-  }
+  const statsBlock = loading ? (
+    <LoadingState label="Loading stats" className="h-40" />
+  ) : error || !stats ? (
+    <Notice tone="danger">{error || "No data available"}</Notice>
+  ) : null;
 
-  if (error || !stats) {
-    return (
-      <div className="space-y-8">
-        {header}
-        <Notice tone="danger">{error || "No data available"}</Notice>
-      </div>
-    );
-  }
-
-  const kpis = [
+  const kpis = stats ? [
     { label: "Total Clients", value: stats.total_clients, icon: Users },
     { label: "Campaigns", value: stats.total_campaigns, icon: Layers },
     { label: "Content Pieces", value: stats.total_content_pieces, icon: FileText },
     { label: "Agent Runs", value: stats.total_agent_runs, icon: Bot },
-  ];
+  ] : [];
 
-  const nonDraft = Math.max(0, stats.total_content_pieces - stats.content_drafts);
-  const contentBreakdown = [
+  const nonDraft = stats ? Math.max(0, stats.total_content_pieces - stats.content_drafts) : 0;
+  const contentBreakdown = stats ? [
     { label: "Draft", value: stats.content_drafts, color: "bg-accent" },
     { label: "Approved / scheduled / published", value: nonDraft, color: "bg-emerald-500" },
-  ];
-  const totalContent = stats.total_content_pieces || 1;
+  ] : [];
+  const totalContent = stats?.total_content_pieces || 1;
 
   const tabs: { id: AnalyticsTab; label: string }[] = [
     { id: "overview", label: "Overview" },
@@ -197,6 +196,28 @@ export default function AnalyticsPage() {
 
       {tab === "overview" && (
         <div className="space-y-4">
+          {clientsLoading ? (
+            <LoadingState label="Loading clients" className="h-40" />
+          ) : active ? (
+            <CadenceInsights key={active.id} client={active} />
+          ) : (
+            <EmptyState
+              icon={Users}
+              title="No client yet"
+              description="Insights are computed per client. Add one to start seeing real numbers here."
+              action={
+                <Link href="/clients?new=1" className={buttonVariants()}>
+                  Add a client
+                </Link>
+              }
+            />
+          )}
+
+          <div className="space-y-1.5 pt-6">
+            <Eyebrow>Workspace totals — all clients</Eyebrow>
+          </div>
+          {statsBlock}
+          {stats && (<>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {kpis.map((kpi, i) => (
               <StatCard
@@ -334,9 +355,10 @@ export default function AnalyticsPage() {
               </span>
             </div>
             <p className="max-w-3xl text-sm text-muted">
-              Per-platform engagement, ROI, and optimal-posting-time breakdowns are not built yet.
-              Live metrics for individual posts are fetched from connected accounts and shown on
-              each content piece; there is no roll-up view here.
+              ROI and optimal-posting-time breakdowns are not built yet. Live metrics for
+              individual posts are fetched from connected accounts and shown on each content piece;
+              the active client&apos;s per-platform engagement average appears above once a platform
+              has reported metrics.
             </p>
             <div className="mt-4 flex flex-wrap gap-4 font-mono text-[11px] text-muted">
               <div className="flex items-center gap-1">
@@ -350,6 +372,7 @@ export default function AnalyticsPage() {
               </div>
             </div>
           </div>
+          </>)}
         </div>
       )}
 
