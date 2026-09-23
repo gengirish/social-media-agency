@@ -42,9 +42,9 @@ npx vercel --prod --archive=tgz   # from the repo ROOT, not frontend/
 
 ## Product rules
 
-Adopted from the Cadence Crew prototype (see [docs/cadence-port-plan-260921.md](docs/cadence-port-plan-260921.md)). They apply to every agent and every code path that creates or moves content, not just the AI ones.
+Adopted from the Cadence Crew prototype (see [docs/cadence-port-plan-260921.md](docs/cadence-port-plan-260921.md) and the full-parity pass in [docs/cadence-parity-plan-260923.md](docs/cadence-parity-plan-260923.md)). They apply to every agent and every code path that creates or moves content, not just the AI ones.
 
-1. **Never imply a capability that isn't real.** Publishing *is* real here (X, LinkedIn, Facebook post to live client accounts), which raises the stakes — Instagram/TikTok publishing, image posting, and any inbox/listening feature are not, and the UI must say so where it matters (`lib/platforms.ts::publishUnavailableReason`).
+1. **Never imply a capability that isn't real.** Publishing *is* real here (X, LinkedIn, Facebook post to live client accounts), which raises the stakes — Instagram/TikTok publishing, image posting, DMs, ad-account actions and email sending are not, and the UI must say so where it matters (`lib/platforms.ts::publishUnavailableReason`). The Inbox reads X mentions live and LinkedIn comments only when `LINKEDIN_INBOX_SCOPE` is set; everything else reports a per-account status, never seed data.
 2. **A human has final say.** No path auto-approves or auto-publishes. `autonomous_operator.py` plans; it must never schedule.
 3. **Moderation runs before approval, on every path that creates a post** — pipeline, manual, portal, Amplify, repurpose. Schedule and publish accept only approved content (enforced — see [Approval gate](#approval-gate-moderation-before-approval)).
 4. **No invented numbers.** Real data or an explicit empty state — never a placeholder metric, predicted CTR, or fabricated score. Same discipline as the marketing layer's data-reliability rules.
@@ -149,7 +149,7 @@ Two rules that follow from having no RLS, both of which were violated in shipped
 
 `backend/tests/test_tenancy_routers.py` covers these per router, and every test in it is verified to fail when its filter is deleted — keep that property when adding more.
 
-Frontend auth: [middleware.ts](frontend/middleware.ts) marks only `/`, `/sign-in`, `/sign-up`, and `/api/webhooks/*` public. `ClerkTokenSync` calls `setClerkTokenGetter()` once so [lib/api.ts](frontend/src/lib/api.ts) can attach `Authorization` headers — the API client has no direct Clerk dependency.
+Frontend auth: [middleware.ts](frontend/middleware.ts) marks only `/`, `/sign-in`, `/sign-up`, `/legal`, and `/api/webhooks/*` public. `ClerkTokenSync` calls `setClerkTokenGetter()` once so [lib/api.ts](frontend/src/lib/api.ts) can attach `Authorization` headers — the API client has no direct Clerk dependency.
 
 ### Real-time streaming
 
@@ -180,8 +180,25 @@ One source (a `content_piece` or pasted text) → up to 8 drafts, one per angle 
 The look is the **Cadence** palette (navy + amber, glass panels, Space Grotesk / Inter / IBM Plex Mono) in light and dark. Tokens are CSS variables emitted from [tailwind.config.ts](frontend/tailwind.config.ts); `slate`, `white`, `indigo` and the status hues are **remapped** onto them, so a legacy `bg-white text-slate-900` class already themes. Prefer the semantic names (`canvas`, `panel`, `ink`, `muted`, `line`, `accent`, `accent-text`, `on-accent`) and the primitives in [components/ui/](frontend/src/components/ui/) for new work. Never hardcode a hex color in a page — it will be wrong in one of the two themes.
 
 - Theme: `.dark` on `<html>`, set before paint by `THEME_INIT_SCRIPT` ([lib/theme.ts](frontend/src/lib/theme.ts)); OS preference by default, the toggle persists to `localStorage`. Clerk widgets resolve colors in JS, so they get literal per-theme values from [lib/clerk-appearance.ts](frontend/src/lib/clerk-appearance.ts).
-- Navigation is a top bar with grouped sub-tabs defined in [lib/navigation.ts](frontend/src/lib/navigation.ts): **Setup** (Clients, Accounts) · **Create** (Campaigns, Templates, Amplify) · **Posts** (Queue `/content`, Calendar) · **Insights** · **Settings** (Workspace, Team, Billing). Routes did not move when the sidebar went away — add a page by adding a tab there. Settings' active tab lives in `?tab=` so Setup › Accounts can deep-link to it.
-- `e2e/navigation.spec.ts` asserts each route's H1; `/content`'s is now "Queue".
+- Navigation is a top bar with grouped sub-tabs defined in [lib/navigation.ts](frontend/src/lib/navigation.ts): **Setup** (Profile `/setup/profile`, Clients, Accounts `/setup/accounts`) · **Create** (Campaigns, Content `/create/content`, Email, Launch, Amplify, Ads, Templates) · **Posts** (Queue `/content`, Calendar) · **Inbox** · **Insights** (`/analytics`) · **Settings** (Workspace, Team, Billing). Group order is deliberate (Create before Posts, unlike Cadence) and is also the `1`–`6` keyboard-shortcut order; `?` opens the shortcut list. Add a page by adding a tab there. The logo goes to `/welcome`.
+- **The active client scopes the app.** The top-nav client switcher ([lib/active-client.tsx](frontend/src/lib/active-client.tsx), Cadence's product switcher) is backed by `GET /clients/overview`; Create / Posts / Insights screens read `useActiveClient()` and must call `refresh()` after anything that changes a client's counts. The chosen id lives in `localStorage` as a convenience only and is re-validated against the org's clients on load.
+- `e2e/navigation.spec.ts` asserts each route's H1; `/content`'s is "Queue".
+
+### Create screens and the shared generator pattern
+
+Content, Email, Launch, Ads, Setup's Brand Voice / Strategy Lens, Insights' advocacy and Inbox reply suggestions all follow Amplify's shape — copy it for any new generator:
+
+1. `services/brand_context.py::get_org_client` (404 across orgs), then `require_generation_quota`.
+2. Prompt with `brand_prompt_block(load_brand_context(...))` — voice, vocab, differentiator, tone register, posting prefs and the client's **campaign focus** (`PUT/DELETE /clients/{id}/campaign-focus`, shown by `CampaignIndicator`). The PRFAQ stress-test deliberately strips the campaign focus.
+3. Validate the model's JSON in code; malformed → `502` "no quota was used", nothing saved.
+4. Long-form output → `services/creative_assets.py::save_asset` (`creative_asset` table, closed `ASSET_KINDS`, generic `/assets` CRUD). Social posts never go there — they are `content_piece` drafts so the approval gate applies.
+5. `charge_generation` only after success, then commit. Cancel in the UI only stops the browser waiting; a server that finishes still saves and charges, and the UI says so.
+
+Ad copy runs through `services/ad_guardrails.py` (hard Google limits, Meta visible thresholds, trademark and personal-attribute heuristics) plus advisory brain-tier moderation that fails open *visibly*. Nothing creates ad campaigns or predicts CTR/CPC/ROAS.
+
+### OAuth connect flow
+
+`GET /oauth/{platform}/authorize?client_id=&code_challenge=` returns a URL whose `state` is a signed token (`services/oauth_state.py`, key derived from `JWT_SECRET`, 15 min, bound to org + platform + client). X requires PKCE: the browser keeps the verifier in `sessionStorage` and the in-app page `app/(dashboard)/api/oauth/[platform]/callback` posts code + state + verifier to `POST /oauth/{platform}/callback`. That route has to live at exactly `{first CORS origin}/api/oauth/{platform}/callback` — it is a page in a route group, not an API route. Account handles are still placeholders (`{platform}_user`).
 
 ### Product analytics
 
@@ -205,6 +222,8 @@ To make a new flow show up in the adoption table, call `trackFeature("kebab-name
 Schema is raw SQL in [db/init.sql](db/init.sql) (+ `db/seed.sql`), **not** Alembic migrations, even though `alembic` is a dependency. Schema changes must be applied to both `db/init.sql` and `models/tables.py`.
 
 `init.sql` only runs on a **fresh** database, so a schema change is invisible to any already-provisioned environment (Neon prod, a local volume that was not reset). Alongside the two edits above, add a dated forward-only script to [db/migrations/](db/migrations/) — e.g. [260817_org_slug.sql](db/migrations/260817_org_slug.sql) — and run it by hand on Neon. Nothing applies these automatically.
+
+The Cadence-parity release needs, in order: `260923_creative_asset.sql`, `260923_amplify_asset_source.sql` (adds a column that references `creative_asset`), `260923_inbox.sql`.
 
 `organization.slug` is the portal's identity column and is `UNIQUE` deliberately: `/api/v1/portal/{org_slug}` is unauthenticated, and the previous `domain`-then-`name` resolution used non-unique columns. A null slug means that org has no portal.
 
