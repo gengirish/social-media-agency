@@ -5,6 +5,7 @@ import { platformLabel } from "./labels";
 
 function sourceLabel(pack: AmplifyPack): string {
   if (pack.source_content_id) return pack.source_title?.trim() || "Content piece (untitled)";
+  if (pack.source_asset_id) return pack.source_title?.trim() || "Saved content (untitled)";
   if (pack.source_excerpt) return `“${pack.source_excerpt}${pack.source_excerpt.length >= 140 ? "…" : ""}”`;
   // A content-sourced pack stores no text, so once its source piece is deleted
   // (FK is ON DELETE SET NULL) there is nothing left to show.

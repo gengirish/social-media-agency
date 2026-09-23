@@ -16,6 +16,8 @@ import {
   type SubscriptionInfo,
 } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
+import { foundationApi } from "@/lib/api-foundation";
+import { REPURPOSABLE_KINDS, collectRepurposeSources, type RepurposeSource } from "@/lib/api-create-content";
 import { PageHeader } from "@/components/ui/panel";
 import { AmplifyForm, type SourceMode } from "@/components/amplify/amplify-form";
 import { AtomReview } from "@/components/amplify/atom-review";
@@ -44,6 +46,9 @@ function AmplifyWorkspace() {
   const [contentLoading, setContentLoading] = useState(false);
   const [sourceId, setSourceId] = useState("");
   const [sourceText, setSourceText] = useState("");
+  const [assetSources, setAssetSources] = useState<RepurposeSource[]>([]);
+  const [assetLoading, setAssetLoading] = useState(false);
+  const [sourceAssetId, setSourceAssetId] = useState("");
   const [platforms, setPlatforms] = useState<string[]>(DEFAULT_PLATFORMS);
   const [maxAtoms, setMaxAtoms] = useState<number>(AMPLIFY_MAX_ATOMS);
 
@@ -128,6 +133,25 @@ function AmplifyWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
+  // Saved Create-screen output for this client — Cadence's collectRepurposeSources.
+  useEffect(() => {
+    setSourceAssetId("");
+    if (!clientId) {
+      setAssetSources([]);
+      return;
+    }
+    let cancelled = false;
+    setAssetLoading(true);
+    foundationApi
+      .listAssets({ clientId, kinds: REPURPOSABLE_KINDS, limit: 100 })
+      .then((r) => !cancelled && setAssetSources(collectRepurposeSources(r.items)))
+      .catch(() => !cancelled && setAssetSources([]))
+      .finally(() => !cancelled && setAssetLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
   const generationsUsed = subscription?.generations_used ?? null;
   const generationsLimit = subscription?.generations_limit ?? null;
   const quotaExhausted =
@@ -149,7 +173,11 @@ function AmplifyWorkspace() {
       const result = await amplifyApi.preview(
         {
           client_id: clientId,
-          ...(sourceMode === "content" ? { source_content_id: sourceId } : { source_text: sourceText.trim() }),
+          ...(sourceMode === "content"
+            ? { source_content_id: sourceId }
+            : sourceMode === "asset"
+              ? { source_asset_id: sourceAssetId }
+              : { source_text: sourceText.trim() }),
           platforms,
           max_atoms: maxAtoms,
         },
@@ -230,6 +258,10 @@ function AmplifyWorkspace() {
         contentLoading={contentLoading}
         sourceId={sourceId}
         onSourceChange={setSourceId}
+        assetSources={assetSources}
+        assetLoading={assetLoading}
+        sourceAssetId={sourceAssetId}
+        onSourceAssetChange={setSourceAssetId}
         sourceText={sourceText}
         onSourceTextChange={setSourceText}
         platforms={platforms}

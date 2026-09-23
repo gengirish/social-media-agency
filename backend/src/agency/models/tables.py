@@ -314,6 +314,10 @@ class RepurposePack(Base):
         UUID(as_uuid=True), ForeignKey("content_piece.id", ondelete="SET NULL"), nullable=True
     )
     source_text = Column(Text, nullable=True)
+    # A saved Create-screen asset (blog post, comparison page, ...) as the source.
+    source_asset_id = Column(
+        UUID(as_uuid=True), ForeignKey("creative_asset.id", ondelete="SET NULL"), nullable=True
+    )
     platforms = Column(JSONB, nullable=False, default=[])
     atom_count = Column(Integer, nullable=False, default=0)
     committed_count = Column(Integer, nullable=False, default=0)
