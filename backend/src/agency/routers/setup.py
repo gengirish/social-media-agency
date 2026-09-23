@@ -229,7 +229,7 @@ async def run_strategy_lens(
     asset = await save_asset(
         db,
         org_id=org_id,
-        client_id=client.id,
+        client_id=client_id,  # path id, already org-resolved above
         kind="strategy_lens",
         title=f"Strategy lens panel — {datetime.now(UTC):%Y-%m-%d}",
         payload={**panel, "answers": answers},

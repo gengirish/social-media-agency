@@ -8,6 +8,7 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.config import get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
@@ -70,10 +71,10 @@ async def get_oauth_url(
     platform: str,
     for_client: UUID | None = Query(default=None, alias="client_id"),
     code_challenge: str | None = Query(default=None, max_length=128),
-    user=Depends(get_current_user),
-    db=Depends(get_db),
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     org_id: UUID = Depends(get_org_id),
-):
+) -> dict[str, str]:
     """Return the OAuth authorization URL for a given platform.
 
     ``client_id`` (optional, resolved against the caller's org) is carried
@@ -123,11 +124,11 @@ async def get_oauth_url(
 @router.post("/{platform}/callback")
 async def oauth_callback(
     platform: str,
-    body: dict,
-    user=Depends(get_current_user),
-    db=Depends(get_db),
+    body: dict[str, Any],
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     org_id: UUID = Depends(get_org_id),
-):
+) -> dict[str, Any]:
     """Exchange OAuth code for tokens and store platform account."""
     if platform not in OAUTH_CONFIGS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported platform: {platform}")
