@@ -28,6 +28,7 @@ from agency.routers import (
     notifications,
     oauth,
     portal,
+    post_studio,
     product_analytics,
     public_api,
     publishing,
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
         amplify,
         assets,
         create_ads,
+        post_studio,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 
