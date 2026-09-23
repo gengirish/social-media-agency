@@ -2,22 +2,78 @@
 
 import { Suspense, useCallback, useEffect, useState, type ElementType } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Settings, Key, Bell, Globe, Save, Plus, Trash2, Loader2, AlertTriangle } from "lucide-react";
+import {
+  Settings,
+  Key,
+  Bell,
+  Save,
+  Plus,
+  Trash2,
+  Loader2,
+  AlertTriangle,
+  UserRound,
+  Link2,
+  CalendarClock,
+  Gauge,
+  ListChecks,
+  Download,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { canPublish, publishUnavailableReason } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Eyebrow, PageHeader } from "@/components/ui/panel";
 import { Field, Input, Select } from "@/components/ui/field";
-import { Notice } from "@/components/ui/empty-state";
+import { EmptyState, LoadingState, Notice } from "@/components/ui/empty-state";
+import { buttonVariants } from "@/components/ui/button";
+import { useActiveClient } from "@/lib/active-client";
+import Link from "next/link";
+import {
+  AccountsTab,
+  ActivityTab,
+  ExportTab,
+  PlanTab,
+  PostingTab,
+  ProfileTab,
+} from "@/components/settings/cadence-settings";
 
-type Tab = "general" | "platforms" | "api-keys" | "notifications";
+/*
+ * Cadence's tabs (per active client) first, then the workspace-wide tabs that
+ * predate the port. `?tab=platforms` is the old deep link for connected
+ * accounts; it now resolves to the Accounts tab, which links to Setup › Accounts
+ * (the real OAuth screen) rather than duplicating it.
+ */
+type Tab =
+  | "profile"
+  | "accounts"
+  | "posting"
+  | "plan"
+  | "activity"
+  | "export"
+  | "general"
+  | "api-keys"
+  | "notifications";
 
-const TABS: readonly Tab[] = ["general", "platforms", "api-keys", "notifications"];
+const TABS: readonly Tab[] = [
+  "profile",
+  "accounts",
+  "posting",
+  "plan",
+  "activity",
+  "export",
+  "general",
+  "api-keys",
+  "notifications",
+];
 
-function isTab(value: string | null): value is Tab {
-  return TABS.includes(value as Tab);
+const CLIENT_TABS: ReadonlySet<Tab> = new Set<Tab>(["profile", "accounts", "posting", "activity", "export"]);
+
+const TAB_ALIASES: Record<string, Tab> = { platforms: "accounts" };
+
+function resolveTab(value: string | null): Tab {
+  if (value && TAB_ALIASES[value]) return TAB_ALIASES[value];
+  return TABS.includes(value as Tab) ? (value as Tab) : "profile";
 }
 
 interface ApiKeyRow {
@@ -26,13 +82,6 @@ interface ApiKeyRow {
   prefix: string;
   created: string;
 }
-
-const OAUTH_PLATFORMS: { slug: string; label: string }[] = [
-  { slug: "twitter", label: "X (Twitter)" },
-  { slug: "linkedin", label: "LinkedIn" },
-  { slug: "instagram", label: "Instagram" },
-  { slug: "facebook", label: "Facebook" },
-];
 
 function apiKeyRowFromApi(row: unknown): ApiKeyRow | null {
   const r = row as Record<string, unknown>;
@@ -49,23 +98,6 @@ function apiKeyRowFromApi(row: unknown): ApiKeyRow | null {
     prefix: String(r.key_prefix ?? r.prefix ?? "cf_"),
     created,
   };
-}
-
-function connectedSlugsFromAccounts(items: unknown[]): Set<string> {
-  const s = new Set<string>();
-  for (const it of items) {
-    const r = it as Record<string, unknown>;
-    if (r.connected === false) continue;
-    const p = r.platform ?? r.provider ?? r.slug;
-    if (typeof p === "string") s.add(p.toLowerCase());
-  }
-  return s;
-}
-
-function isPlatformConnected(slug: string, connected: Set<string>): boolean {
-  if (connected.has(slug)) return true;
-  if (slug === "twitter" && (connected.has("x") || connected.has("twitter"))) return true;
-  return false;
 }
 
 // Planned notification types. There is no delivery mechanism and no persistence
@@ -110,9 +142,10 @@ function SettingsContent() {
   // Setup › Accounts here and highlight the right group.
   const router = useRouter();
   const tabParam = useSearchParams().get("tab");
-  const activeTab: Tab = isTab(tabParam) ? tabParam : "general";
+  const activeTab: Tab = resolveTab(tabParam);
   const setActiveTab = (tab: Tab) =>
-    router.replace(tab === "general" ? "/settings" : `/settings?tab=${tab}`, { scroll: false });
+    router.replace(tab === "profile" ? "/settings" : `/settings?tab=${tab}`, { scroll: false });
+  const { active, loading: clientsLoading } = useActiveClient();
   const [orgName, setOrgName] = useState("");
   const [domain, setDomain] = useState("");
   const [timezone, setTimezone] = useState("UTC");
@@ -123,9 +156,6 @@ function SettingsContent() {
   const [apiKeys, setApiKeys] = useState<ApiKeyRow[]>([]);
   const [keysLoading, setKeysLoading] = useState(false);
   const [keysBusy, setKeysBusy] = useState(false);
-  const [platformAccounts, setPlatformAccounts] = useState<unknown[]>([]);
-  const [platformsLoading, setPlatformsLoading] = useState(false);
-  const [oauthBusySlug, setOauthBusySlug] = useState<string | null>(null);
 
   const loadGeneral = useCallback(async () => {
     setGeneralLoading(true);
@@ -157,19 +187,6 @@ function SettingsContent() {
     }
   }, []);
 
-  const loadPlatforms = useCallback(async () => {
-    setPlatformsLoading(true);
-    try {
-      const res = await api.getPlatformAccounts();
-      setPlatformAccounts(res.items ?? []);
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Failed to load platforms");
-      setPlatformAccounts([]);
-    } finally {
-      setPlatformsLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void loadGeneral();
   }, [loadGeneral]);
@@ -178,13 +195,15 @@ function SettingsContent() {
     if (activeTab === "api-keys") void loadApiKeys();
   }, [activeTab, loadApiKeys]);
 
-  useEffect(() => {
-    if (activeTab === "platforms") void loadPlatforms();
-  }, [activeTab, loadPlatforms]);
 
   const tabs: { id: Tab; label: string; icon: ElementType }[] = [
-    { id: "general", label: "General", icon: Settings },
-    { id: "platforms", label: "Platforms", icon: Globe },
+    { id: "profile", label: "Client profile", icon: UserRound },
+    { id: "accounts", label: "Connected accounts", icon: Link2 },
+    { id: "posting", label: "Posting preferences", icon: CalendarClock },
+    { id: "plan", label: "Plan & usage", icon: Gauge },
+    { id: "activity", label: "Activity log", icon: ListChecks },
+    { id: "export", label: "Export", icon: Download },
+    { id: "general", label: "Workspace", icon: Settings },
     { id: "api-keys", label: "API Keys", icon: Key },
     { id: "notifications", label: "Notifications", icon: Bell },
   ];
@@ -204,19 +223,6 @@ function SettingsContent() {
       toast.error(e instanceof Error ? e.message : "Save failed");
     } finally {
       setGeneralSaving(false);
-    }
-  };
-
-  const handleConnectPlatform = async (slug: string) => {
-    setOauthBusySlug(slug);
-    try {
-      const { authorize_url } = await api.getOAuthUrl(slug);
-      if (authorize_url) window.open(authorize_url, "_blank", "noopener,noreferrer");
-      else toast.error("No authorize URL returned");
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Could not start OAuth");
-    } finally {
-      setOauthBusySlug(null);
     }
   };
 
@@ -252,9 +258,9 @@ function SettingsContent() {
 
   return (
     <div className="space-y-8">
-      <PageHeader eyebrow="Settings" title="Settings" description="Manage your agency configuration" />
+      <PageHeader eyebrow="Settings" title="Settings" description="The active client's profile, posting preferences, activity and export — plus plan, workspace and integration settings." />
 
-      <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="grid gap-6 lg:grid-cols-[230px_minmax(0,1fr)]">
         {/* Left tab list on desktop (Cadence settings layout); a scrollable row on mobile. */}
         <div
           role="group"
@@ -283,6 +289,39 @@ function SettingsContent() {
           })}
         </div>
 
+        {CLIENT_TABS.has(activeTab) || activeTab === "plan" ? (
+          <div key={`${activeTab}-${active?.id ?? "none"}`} className="min-w-0 space-y-5">
+            {activeTab === "plan" ? (
+              <PlanTab />
+            ) : clientsLoading ? (
+              <LoadingState label="Loading clients" className="h-40" />
+            ) : !active ? (
+              <EmptyState
+                icon={Users}
+                title="No client yet"
+                description="These settings belong to a client. Add one first."
+                action={
+                  <Link href="/clients?new=1" className={buttonVariants()}>
+                    Add a client
+                  </Link>
+                }
+              />
+            ) : activeTab === "profile" ? (
+              <ProfileTab client={active} />
+            ) : activeTab === "accounts" ? (
+              <AccountsTab client={active} />
+            ) : activeTab === "posting" ? (
+              <PostingTab client={active} />
+            ) : activeTab === "activity" ? (
+              <ActivityTab client={active} />
+            ) : (
+              <ExportTab client={active} />
+            )}
+            <p className="px-1 font-mono text-[11px] text-muted">
+              Your data is saved to your workspace automatically.
+            </p>
+          </div>
+        ) : (
         <div key={activeTab} className="min-w-0 rounded-xl border border-line bg-panel/70 p-5 shadow-soft backdrop-blur-xl motion-safe:animate-screen-in sm:p-6">
           {activeTab === "general" && (
             <div className="space-y-6">
@@ -348,81 +387,6 @@ function SettingsContent() {
                       {saved ? "Saved!" : "Save Changes"}
                     </Button>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === "platforms" && (
-            <div className="space-y-6">
-              <div className="space-y-1.5">
-                <Eyebrow>Accounts</Eyebrow>
-                <h3 className="font-display text-lg font-semibold text-ink">Connected Platforms</h3>
-                <p className="max-w-2xl text-sm text-muted">
-                  Connect social platforms to enable direct publishing. Accounts marked
-                  &ldquo;publishing unavailable&rdquo; can be connected for analytics, but posts to
-                  them must still be published manually.
-                </p>
-              </div>
-              {platformsLoading ? (
-                <InlineLoading>Loading accounts…</InlineLoading>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {OAUTH_PLATFORMS.map((platform, i) => {
-                    const connectedSet = connectedSlugsFromAccounts(platformAccounts);
-                    const connected = isPlatformConnected(platform.slug, connectedSet);
-                    return (
-                      <div
-                        key={platform.slug}
-                        style={{ animationDelay: `${i * 0.06}s` }}
-                        className={cn(
-                          "flex flex-col gap-4 rounded-xl border p-4 motion-safe:animate-screen-in",
-                          connected ? "border-emerald-200 bg-emerald-50/60" : "border-line bg-canvas/40"
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 space-y-1.5">
-                            <span className="block font-medium text-ink">{platform.label}</span>
-                            <span
-                              className={cn(
-                                "flex items-center gap-1.5 font-mono text-[11px]",
-                                connected ? "text-emerald-700" : "text-muted"
-                              )}
-                            >
-                              <span
-                                aria-hidden
-                                className={cn(
-                                  "h-1.5 w-1.5 rounded-full",
-                                  connected ? "bg-emerald-500 shadow-[0_0_6px_rgb(16_185_129/0.8)]" : "bg-slate-400"
-                                )}
-                              />
-                              {connected ? "Connected" : "Not connected"}
-                            </span>
-                          </div>
-                          {!canPublish(platform.slug) && (
-                            <span
-                              title={publishUnavailableReason(platform.slug) ?? undefined}
-                              className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-mono text-[10px] font-medium text-amber-800"
-                            >
-                              publishing unavailable
-                            </span>
-                          )}
-                        </div>
-                        <Button
-                          size="sm"
-                          variant={connected ? "secondary" : "primary"}
-                          disabled={oauthBusySlug === platform.slug}
-                          onClick={() => void handleConnectPlatform(platform.slug)}
-                          className="w-full"
-                        >
-                          {oauthBusySlug === platform.slug ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : null}
-                          {connected ? "Reconnect" : "Connect"}
-                        </Button>
-                      </div>
-                    );
-                  })}
                 </div>
               )}
             </div>
@@ -502,6 +466,7 @@ function SettingsContent() {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );
