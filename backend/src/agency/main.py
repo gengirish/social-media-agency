@@ -38,6 +38,7 @@ from agency.routers import (
     public_api,
     publishing,
     reports,
+    setup,
     slack,
     stats,
     team,
@@ -129,6 +130,7 @@ def create_app() -> FastAPI:
         inbox,
         insights,
         workspace,
+        setup,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

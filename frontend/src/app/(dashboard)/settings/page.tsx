@@ -195,7 +195,6 @@ function SettingsContent() {
     if (activeTab === "api-keys") void loadApiKeys();
   }, [activeTab, loadApiKeys]);
 
-
   const tabs: { id: Tab; label: string; icon: ElementType }[] = [
     { id: "profile", label: "Client profile", icon: UserRound },
     { id: "accounts", label: "Connected accounts", icon: Link2 },

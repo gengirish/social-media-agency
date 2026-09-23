@@ -61,6 +61,7 @@ async def load_brand_context(db: AsyncSession, client: Client, org_id: UUID) -> 
                 "style_rules": bp.style_rules or [],
                 "emoji_policy": bp.emoji_policy or "",
                 "target_audience": bp.target_audience or "",
+                "competitor_differentiation": bp.competitor_differentiation or "",
             }
         )
     return brand
@@ -74,12 +75,18 @@ def brand_prompt_block(brand: dict[str, Any]) -> str:
         ("description", "What it is"),
         ("website_url", "Website"),
         ("target_audience", "Audience"),
+        ("competitor_differentiation", "Differentiator"),
         ("voice_description", "Voice"),
         ("emoji_policy", "Emoji policy"),
     ):
         value = brand.get(key)
         if value:
             lines.append(f"{label}: {value}")
+    # Setup › Profile's human-picked register (Cadence's fallback when no voice guide exists).
+    tone = brand.get("tone_attributes")
+    register = tone.get("register") if isinstance(tone, dict) else None
+    if isinstance(register, str) and register:
+        lines.append(f"Tone register: {register}")
     if brand.get("vocabulary_include"):
         lines.append("Use words like: " + ", ".join(map(str, brand["vocabulary_include"])))
     if brand.get("vocabulary_exclude"):
