@@ -188,7 +188,7 @@ async def send_reply(
         )
 
     # MODERATION BEFORE PUBLISH (product rule 3): same judgement every post gets.
-    brand_context = await moderation.load_brand_context(db, client.id, org_id)
+    brand_context = await moderation.load_brand_context(db, client.id, org_id)  # type: ignore[arg-type]
     mod = await moderation.moderate_content(body.text, platform, brand_context)
     if mod.issues and not body.override:
         raise HTTPException(
