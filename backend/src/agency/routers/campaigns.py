@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -49,6 +50,10 @@ router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
 
 # In-memory stream store for SSE events (production: use Redis pub/sub)
 _campaign_streams: dict[str, asyncio.Queue] = {}
+
+# Campaigns whose graph is executing in this process right now. Per-process only:
+# on a multi-machine deploy a run on another machine is not visible here.
+_active_pipelines: set[str] = set()
 
 
 @router.post("", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
@@ -129,24 +134,7 @@ async def create_campaign(
     await db.commit()
     await db.refresh(campaign)
 
-    # Build brand context
-    brand_ctx = BrandContext(
-        brand_name=client.brand_name,
-        industry=client.industry or "",
-        description=client.description or "",
-    )
-    if client.brand_profile:
-        bp = client.brand_profile
-        brand_ctx.update({
-            "voice_description": bp.voice_description or "",
-            "tone_attributes": bp.tone_attributes or {},
-            "target_audience": bp.target_audience or "",
-            "style_rules": bp.style_rules or [],
-            "vocabulary_include": bp.vocabulary_include or [],
-            "vocabulary_exclude": bp.vocabulary_exclude or [],
-            "emoji_policy": bp.emoji_policy or "moderate",
-            "competitor_differentiation": bp.competitor_differentiation or "",
-        })
+    brand_ctx = _build_brand_context(client)
 
     # Compose the client brief text
     brief_text = f"""Campaign: {brief.campaign_name}
@@ -174,6 +162,146 @@ Languages: {', '.join(brief.languages) if brief.languages else 'Default (brief l
             channels=brief.channels,
             budget_usd=brief.budget_usd,
             target_languages=brief.languages,
+        )
+    )
+
+    return campaign
+
+
+def _build_brand_context(client: Client) -> BrandContext:
+    """Brand context for a pipeline run, read fresh from the client's profile."""
+    brand_ctx = BrandContext(
+        brand_name=client.brand_name,
+        industry=client.industry or "",
+        description=client.description or "",
+    )
+    if client.brand_profile:
+        bp = client.brand_profile
+        brand_ctx.update({
+            "voice_description": bp.voice_description or "",
+            "tone_attributes": bp.tone_attributes or {},
+            "target_audience": bp.target_audience or "",
+            "style_rules": bp.style_rules or [],
+            "vocabulary_include": bp.vocabulary_include or [],
+            "vocabulary_exclude": bp.vocabulary_exclude or [],
+            "emoji_policy": bp.emoji_policy or "moderate",
+            "competitor_differentiation": bp.competitor_differentiation or "",
+        })
+    return brand_ctx
+
+
+def _brief_from_campaign(campaign: Campaign) -> str:
+    """Rebuild a brief from the campaign row when the checkpoint is gone.
+
+    Target audience, key messages and additional context are not stored on the
+    campaign, so this is strictly less than the original brief — used only when
+    the checkpointer lost the thread (memory fallback, restart).
+    """
+    budget = (campaign.budget or {}).get("total_usd", 0)
+    return f"""Campaign: {campaign.name}
+Objective: {campaign.objective}
+Channels: {', '.join(campaign.channels or [])}
+Budget: ${budget}
+Duration: {campaign.start_date} to {campaign.end_date}"""
+
+
+@router.post("/{campaign_id}/rerun", response_model=CampaignResponse)
+async def rerun_campaign(
+    campaign_id: UUID,
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """Run the agent pipeline again on an existing campaign, from the start.
+
+    Discards the campaign's LangGraph checkpoint (including any pending human
+    review) and starts a fresh thread under the same id, so review and streaming
+    keep working unchanged. Content from earlier runs is left alone; the new run
+    adds its own drafts, which go through the approval gate like any other.
+    """
+    result = await db.execute(
+        select(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
+    )
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Campaign not found")
+    if campaign.status == "autonomous":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {"code": "not_rerunnable", "message": "Autonomous campaigns do not use the pipeline."},
+        )
+
+    campaign_id_str = str(campaign_id)
+    if campaign_id_str in _active_pipelines:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "pipeline_active", "message": "This campaign's pipeline is still running."},
+        )
+
+    result = await db.execute(
+        select(Client)
+        .where(Client.id == campaign.client_id, Client.org_id == org_id)
+        .options(selectinload(Client.brand_profile))
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
+
+    # The original brief (audience, key messages, languages) lives only in the
+    # checkpoint — recover it before the thread is deleted.
+    graph = get_runtime_compiled_graph()
+    config = {"configurable": {"thread_id": campaign_id_str}}
+    prior: dict[str, Any] = {}
+    try:
+        snapshot = await graph.aget_state(config)
+        if snapshot and snapshot.values:
+            prior = dict(snapshot.values)
+    except Exception as e:  # noqa: BLE001 — fall back to the campaign row
+        logger.warning(
+            "campaign_rerun_state_unavailable", campaign_id=campaign_id_str, error=str(e)
+        )
+
+    brief_text = prior.get("client_brief") or _brief_from_campaign(campaign)
+    target_languages = list(prior.get("target_languages") or [])
+    if not prior.get("client_brief"):
+        logger.warning("campaign_rerun_brief_reconstructed", campaign_id=campaign_id_str)
+
+    # A fresh thread: re-running on top of a finished checkpoint would merge the
+    # new input into old state (appended messages/errors, spent retry_count).
+    await graph.checkpointer.adelete_thread(campaign_id_str)
+
+    campaign.status = "running"
+    result = await db.execute(select(Workflow).where(Workflow.campaign_id == campaign_id))
+    workflow = result.scalar_one_or_none()
+    if workflow:
+        workflow.status = "running"
+        workflow.current_node = ""
+        workflow.completed_at = None
+    else:
+        db.add(Workflow(campaign_id=campaign_id, org_id=org_id, status="running"))
+
+    await db.commit()
+    await db.refresh(campaign)
+
+    logger.info(
+        "campaign_rerun_started",
+        campaign_id=campaign_id_str,
+        org_id=str(org_id),
+        user_id=user.get("sub"),
+        brief_source="checkpoint" if prior.get("client_brief") else "campaign_row",
+    )
+
+    _campaign_streams[campaign_id_str] = asyncio.Queue()
+    asyncio.create_task(
+        _run_campaign_pipeline(
+            campaign_id=campaign_id_str,
+            org_id=str(org_id),
+            client_id=str(campaign.client_id),
+            brief_text=brief_text,
+            brand_ctx=_build_brand_context(client),
+            channels=list(campaign.channels or []),
+            budget_usd=float((campaign.budget or {}).get("total_usd", 0) or 0),
+            target_languages=target_languages,
         )
     )
 
@@ -287,6 +415,7 @@ async def _run_campaign_pipeline(
         "qa_check", "compile_output", "analytics",
     ]
 
+    _active_pipelines.add(campaign_id)
     try:
         async for event in graph.astream(initial_state, config=config, stream_mode="updates"):
             for node_name, node_output in event.items():
@@ -342,6 +471,8 @@ async def _run_campaign_pipeline(
             content=f"Pipeline error: {str(e)}",
         ).model_dump_json())
         await _mark_campaign_failed(campaign_id, org_id, str(e))
+    finally:
+        _active_pipelines.discard(campaign_id)
 
 
 async def _persist_campaign_results(
@@ -737,6 +868,7 @@ async def _resume_pipeline(
         "qa_check", "compile_output", "analytics",
     ]
 
+    _active_pipelines.add(campaign_id)
     try:
         async for event in graph.astream(None, config=config, stream_mode="updates"):
             for node_name, node_output in event.items():
@@ -789,3 +921,5 @@ async def _resume_pipeline(
             content=f"Error after review: {str(e)}",
         ).model_dump_json())
         await _mark_campaign_failed(campaign_id, org_id, str(e))
+    finally:
+        _active_pipelines.discard(campaign_id)

@@ -1,5 +1,5 @@
 # Authentication & RBAC
-<!-- verified: 260921 -->
+<!-- verified: 260923 -->
 
 ## Auth Flow
 **Status**: [LIVE]
@@ -29,11 +29,16 @@ If Clerk verification fails or is not configured:
 
 `GET /campaigns/{id}/stream` uses `?token=` query param (EventSource limitation). Same Clerk-then-legacy verification order. Additionally verifies campaign belongs to user's org.
 
+### OAuth `state` (platform connections)
+<!-- verified: 260923 -->
+
+Connecting a social account passes a signed `state` through the provider (`services/oauth_state.py`): HS256, 15-minute expiry, bound to org + platform (+ client when given), signed with a key **derived** from `JWT_SECRET` (`"{JWT_SECRET}:oauth_state"`) so an OAuth state can never be replayed as a login token, nor a login token as a state. X additionally uses PKCE (verifier kept in the browser's `sessionStorage`). The callback page lives at `/api/oauth/{platform}/callback` in the Next.js app, behind Clerk. Details: [api-endpoints.md › OAuth](api-endpoints.md#oauth).
+
 ### Frontend Auth
 
 - **Clerk Provider** wraps the app (`ClerkProvider` in root layout)
 - **ClerkTokenSync** component registers `getToken()` with the API client
-- **Middleware** (`frontend/middleware.ts`): `clerkMiddleware` protects all routes except `/`, `/sign-in`, `/sign-up`, `/api/webhooks`
+- **Middleware** (`frontend/middleware.ts`): `clerkMiddleware` protects all routes except `/`, `/sign-in`, `/sign-up`, `/legal` (260923), `/api/webhooks`
 
 ## Org Context (Multi-tenancy)
 
@@ -61,7 +66,7 @@ Two rules that follow, both of which shipped code violated before 260817:
 1. **Any id arriving from the client — path param, body field, query string — must be resolved against `org_id` before it is written to or joined on.** A trusted body `client_id` in `routers/oauth.py` let one tenant attach a connected social account to another tenant's client; `routers/publishing.py` then selected that account because its own lookup was unscoped too. Neither gap did anything on its own; together they let an attacker either permanently 500 a victim's publish path or have the victim's content posted with the attacker's token.
 2. **`get_current_user` returns the JWT payload dict** — `{sub, email, role, org_id}` — in *both* the Clerk and local HS256 paths, never an ORM `User`. Use the `get_current_user_id` dependency for the caller's id. `user.id` raises `AttributeError` and surfaces as a 500; `routers/comments.py` and `routers/notifications.py` were entirely non-functional for this reason until 260817.
 
-**Tests:** `backend/tests/test_tenancy.py` (clients, campaigns, content) and `backend/tests/test_tenancy_routers.py` (oauth, publishing, comments, notifications, reports, portal, amplify — `client_id`, `source_content_id` and `pack_id`, each also asserting nothing was written and no quota charged). Both run against a real SQLite database so the `WHERE org_id = ...` clauses actually execute. Every test in `test_tenancy_routers.py` has been verified to **fail** when its own filter is deleted — preserve that property when adding cases, because a tenancy test that cannot fail is worse than none.
+**Tests:** `backend/tests/test_tenancy.py` (clients, campaigns, content) and `backend/tests/test_tenancy_routers.py` (oauth, publishing, comments, notifications, reports, portal, amplify — `client_id`, `source_content_id` and `pack_id`, each also asserting nothing was written and no quota charged). <!-- verified: 260923 --> The 260923 parity routers carry their own cross-tenant tests in the same style: `test_foundation.py` (overview, campaign focus, `/assets`), `test_setup_profile.py`, `test_post_studio.py`, `test_create_content.py` (incl. Amplify `source_asset_id`), `test_create_email_launch.py`, `test_create_ads.py`, `test_inbox.py` (account lookup scoped by org **and** client; reply targets must come from the fetched inbox), `test_insights_settings.py`. Both run against a real SQLite database so the `WHERE org_id = ...` clauses actually execute. Every test in `test_tenancy_routers.py` has been verified to **fail** when its own filter is deleted — preserve that property when adding cases, because a tenancy test that cannot fail is worse than none.
 
 ### Unauthenticated Client Portal
 

@@ -9,6 +9,7 @@ import json
 from langchain_core.messages import SystemMessage
 
 from agency.agents.state import CampaignState
+from agency.agents.utils import parse_agent_json, text_of
 from agency.services.llm_provider import get_ad_copy_llm
 
 SYSTEM_PROMPT = """You are the Ad Copy Agent of CampaignForge, a digital marketing agency AI.
@@ -82,16 +83,12 @@ async def ad_copy_node(state: CampaignState) -> dict:
 
     response = await llm.ainvoke(messages)
 
-    try:
-        variants = json.loads(response.content)
-    except json.JSONDecodeError:
-        content = response.content
-        start = content.find("[")
-        end = content.rfind("]") + 1
-        if start != -1 and end > start:
-            variants = json.loads(content[start:end])
-        else:
-            variants = [{"platform": "google", "variant": 1, "headlines": [response.content[:30]], "descriptions": [response.content[:90]]}]
+    parsed = await parse_agent_json(response.content, agent="ad_copy", expect=list)
+    if parsed is None:
+        raw = text_of(response.content)
+        variants = [{"platform": "google", "variant": 1, "headlines": [raw[:30]], "descriptions": [raw[:90]]}]
+    else:
+        variants = parsed
 
     if isinstance(variants, dict):
         variants = [variants]

@@ -46,12 +46,12 @@ export function ModerationWarning({
       title={
         <span className="flex items-center gap-2">
           <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
-          Moderation flagged this post
+          Worth a second look before this goes out
         </span>
       }
       description={
         <>
-          The check found {issues.length === 1 ? "an issue" : `${issues.length} issues`} in &ldquo;
+          Moderation found {issues.length === 1 ? "an issue" : `${issues.length} issues`} in &ldquo;
           {postTitle || "Untitled post"}&rdquo;. It stays Pending until you edit it or approve it anyway.
         </>
       }
@@ -88,7 +88,10 @@ export function ModerationWarning({
           The check did not return details for its objection.
         </p>
       )}
-      <p className="mt-3 text-xs text-muted">Approving anyway is logged against your account.</p>
+      <p className="mt-3 text-xs text-muted">
+        This is advisory — you decide. Nothing gets blocked without your say; approving anyway is logged against your
+        account.
+      </p>
     </PostDialog>
   );
 }

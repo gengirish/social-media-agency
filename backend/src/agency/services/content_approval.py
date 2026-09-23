@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.models.tables import Client
+from agency.services import product_analytics as pa
 from agency.services.moderation import load_brand_context, moderate_content
 from agency.services.publishing import UNAVAILABLE_PUBLISH_PLATFORMS
 
@@ -96,6 +97,22 @@ async def approve_content_piece(
             content_id=str(piece.id),
             issue_count=len(result.issues),
         )
+        # The piece stays untouched; the refusal itself is recorded so Insights'
+        # clean-approval rate and the activity log count real moderation runs.
+        await pa.track(
+            db,
+            name=pa.MODERATION_FLAGGED,
+            org_id=org_id,
+            user_id=user_id,
+            campaign_id=piece.campaign_id,
+            properties={
+                "content_id": str(piece.id),
+                "client_id": str(piece.client_id),
+                "platform": piece.platform,
+                "issue_count": len(result.issues),
+            },
+        )
+        await db.commit()
         raise ContentGateError(
             409, {"code": "moderation_flagged", "issues": result.issues}
         )
@@ -209,6 +226,12 @@ def apply_content_edit(
         piece.body = body
     if hashtags is not None:
         piece.hashtags = hashtags
+
+    if content_changed and piece.status in APPROVABLE_STATUSES:
+        # Insights' quality signal: an edit while still pending means the draft
+        # needed a fix before approval ("edited", not "kept"). Later corrections
+        # to approved content are not counted, as in Cadence.
+        _merge_metadata(piece, {"edited_before_approval": True})
 
     if content_changed and piece.status in PUBLISHABLE_STATUSES:
         logger.info(

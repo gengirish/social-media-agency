@@ -1,34 +1,36 @@
 # Feature Documentation
-<!-- verified: 260922 -->
+<!-- verified: 260923 -->
 
 Living documentation of all platform features. Updated whenever the codebase changes.
 
 ## Quick Stats
-- **API Endpoints**: 92 across 25 routers (all mounted under `/api/v1`)
-- **Database Tables**: 22
-- **Services**: 27 modules in `services/`
+- **API Endpoints**: 133 across 35 routers (all mounted under `/api/v1`) — 260923 added 10 routers / 42 endpoints
+- **Database Tables**: 24 (`creative_asset`, `inbox_item_state` added 260923)
+- **Services**: 44 modules in `services/`
 - **Background Workers**: 3 asyncio tasks (no Celery; there is no `workers/` package)
-- **Frontend Pages**: 17 `page.tsx` files
-- **Frontend Components**: 11 `ui/` primitive files + feature folders (`layout/`, `posts/`, `amplify/`, `clients/`, `agents/`, `landing/`) + app-level components; 8 lib modules
-- **Platform Integrations**: 7 (Clerk, Stripe, AgentMail, Social publishing, LLM, fal.ai, Slack)
+- **Frontend Pages**: 26 `page.tsx` files
+- **Frontend Components**: 15 `ui/` primitive files + feature folders (`layout/`, `posts/`, `amplify/`, `clients/`, `setup/`, `create-content/`, `create-kits/`, `ads/`, `inbox/`, `insights/`, `settings/`, `agents/`, `landing/`) + app-level components; lib modules incl. 8 per-feature `api-*.ts` wrappers and `active-client.tsx`
+- **Platform Integrations**: 8 (Clerk, Stripe, AgentMail, Social publishing + Inbox reading, LLM, fal.ai, Slack, Exa)
 - **LangGraph Nodes**: 9 (7 LLM agents + `human_review` + `compile_output`)
-- **Agent Modules**: 11 (7 graph agents + 4 standalone: `autonomous_operator`, `competitive_intel`, `video_script`, `amplify`)
+- **Agent Modules**: 19 (7 graph agents + 12 standalone: `autonomous_operator`, `competitive_intel`, `video_script`, `amplify`, and 260923's `post_writer`, `setup_profile`, `create_content`, `lifecycle_email`, `launch_pr`, `ads`, `advocacy`, `inbox_reply`)
+
+> **Before deploying `feat/cadence-parity`:** run `db/migrations/260923_creative_asset.sql`, then `260923_amplify_asset_source.sql`, then `260923_inbox.sql` by hand on Neon ([database-schema.md](database-schema.md#database-schema)). New optional env vars: `LINKEDIN_INBOX_SCOPE` (blank until the LinkedIn app is approved for comment reading), `LINKEDIN_API_VERSION` (default `202608`) — both in `.env.example` / `backend/.env.example`.
 
 ## Documents
 
 | Document | Description | Last Updated |
 |----------|-------------|-------------|
-| [api-endpoints.md](api-endpoints.md) | All 92 REST API endpoints, approval gate, Amplify, client edit/archive | 260922 |
-| [database-schema.md](database-schema.md) | 22 tables, columns, relationships, migrations | 260921 |
-| [services.md](services.md) | Business logic services, moderation, repurpose, Amplify agent | 260922 |
+| [api-endpoints.md](api-endpoints.md) | All 133 REST API endpoints, approval gate, Amplify, generator contract, Setup, Post Studio, Create, Inbox, Insights, Workspace, OAuth | 260923 |
+| [database-schema.md](database-schema.md) | 24 tables, columns, relationships, pending Neon migrations | 260923 |
+| [services.md](services.md) | Business logic services, moderation, shared generator services, inbox, insights | 260923 |
 | [workers.md](workers.md) | Asyncio background tasks | 260817 |
-| [integrations.md](integrations.md) | Social, Stripe, Clerk, AgentMail, LLM, fal.ai, Slack | 260817 |
+| [integrations.md](integrations.md) | Social publishing + Inbox reading, Stripe, Clerk, AgentMail, LLM, fal.ai, Slack, Exa | 260923 |
 | [websocket.md](websocket.md) | SSE real-time agent streaming (no WebSocket) | 260921 |
-| [frontend-pages.md](frontend-pages.md) | 17 UI pages, top-nav IA, Queue, Amplify, client edit/archive | 260922 |
-| [frontend-components.md](frontend-components.md) | Design system, `ui/` primitives, posts/amplify/clients components, lib modules | 260922 |
-| [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, roles, multi-tenancy, portal | 260921 |
-| [billing.md](billing.md) | Stripe billing, 4 plan tiers, Amplify generation quota | 260921 |
-| [changelog.md](changelog.md) | Chronological change log | 260921 |
+| [frontend-pages.md](frontend-pages.md) | 26 UI pages, top-nav IA + shortcuts, active client, Welcome, Setup, Create, Queue/Calendar, Inbox, Insights, Settings | 260923 |
+| [frontend-components.md](frontend-components.md) | Design system, `ui/` primitives, shell, feature components, lib + `api-*` modules | 260923 |
+| [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, roles, multi-tenancy, portal, OAuth state | 260923 |
+| [billing.md](billing.md) | Stripe billing, 4 plan tiers, shared generation quota | 260923 |
+| [changelog.md](changelog.md) | Chronological change log | 260923 |
 
 ## Feature Honesty
 
@@ -44,7 +46,13 @@ Remaining gaps — all surfaced honestly to the user:
 | TikTok publishing | no publisher exists | Not implemented | "draft only" badge on channel picker and repurpose targets |
 | Instagram metrics | `services/platform_metrics.py` (T2.2) | Returns `unavailable` | Content analytics shows the unavailable reason |
 | Notifications | `services/notifications.py` | `create_notification` has no callers | Bell says notifications are not generated yet; Settings → Notifications shows "Not available yet" |
-| Audit log | `services/audit.py` | `log_action` has no callers | `GET /audit` returns `status: unavailable` with a reason |
+| Audit log | `services/audit.py` | Only Inbox replies call `log_action` (260923); nothing else is audited | `GET /audit` returns `status: unavailable` when empty (its reason text, "no route writes audit entries", is now stale) |
+| LinkedIn Inbox | `services/inbox.py` | Needs a restricted LinkedIn permission; off unless `LINKEDIN_INBOX_SCOPE` is set | Per-account `api_access_denied` banner with LinkedIn's requirement spelled out |
+| DMs | `services/inbox.py` | Not read on any platform | DM chip marked unavailable with the reason |
+| X Inbox reads | `services/inbox.py` | Depend on the X API plan (pay-per-use reads) | X's own 402/403 text shown as `api_access_denied` |
+| Ad accounts / spend / CTR | `routers/create_ads.py` | Copy and structure only | Prominent notice on `/create/ads` |
+| Email sending, launch submission | `create_email.py`, `create_launch.py` | Drafts only | Screens say so; no send/submit button |
+| OAuth account handle | `routers/oauth.py` | Stored as the placeholder `{platform}_user` | Not flagged in the UI |
 | RBAC enforcement | `services/team.py` | `check_permission` has no callers | Team page carries an amber banner saying roles are labels, not restrictions |
 | `performance_score` | never written | No producer | `GET /content/suggestions` returns `status: unavailable` |
 | Org logo upload | no endpoint | Not implemented | Settings shows "Logo upload not available yet" |
@@ -57,24 +65,24 @@ Remaining gaps — all surfaced honestly to the user:
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Frontend (Next.js 15 + React 19 + Clerk)            │
-│  Vercel · 17 pages · Tailwind tokens, light/dark     │
+│  Vercel · 26 pages · Tailwind tokens, light/dark     │
 └────────────────────┬────────────────────────────────┘
                      │ HTTPS + SSE
 ┌────────────────────▼────────────────────────────────┐
 │  Backend (FastAPI)                                   │
-│  Fly.io · 86 endpoints · 25 routers                  │
+│  Fly.io · 133 endpoints · 35 routers                 │
 │  Clerk JWT + HS256 fallback + X-API-Key              │
 ├──────────────────────────────────────────────────────┤
 │  LangGraph Agent Pipeline (9 nodes)                  │
 │  Orchestrator → [Strategy ∥ SEO] → [Content ∥ Ads]   │
 │  → Human Review → QA/Brand → Compile → Analytics     │
 ├──────────────────────────────────────────────────────┤
-│  Services: 27 modules — Billing · Publishing · Scheduler · LLM   │
-│  Moderation · Approval gate · Repurpose · Magic Brief · …        │
+│  Services: 44 modules — Billing · Publishing · Scheduler · LLM   │
+│  Moderation · Approval gate · Quota · Brand context · Inbox · …  │
 └────────────────────┬────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────┐
-│  PostgreSQL (Neon) · 22 tables · Multi-tenant        │
+│  PostgreSQL (Neon) · 24 tables · Multi-tenant        │
 └─────────────────────────────────────────────────────┘
 ```
 

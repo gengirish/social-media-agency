@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
 import { QuotaHint } from "@/components/ui/quota-hint";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { SOURCE_TYPE_LABEL, type RepurposeSource } from "@/lib/api-create-content";
 import { platformLabel } from "./labels";
 
-export type SourceMode = "content" | "text";
+export type SourceMode = "content" | "asset" | "text";
 
 const FIELD =
   "w-full rounded-md border border-line bg-panel px-3 py-2 text-sm text-ink placeholder:text-muted transition-colors focus:border-accent/60 focus:outline-none disabled:opacity-60";
@@ -42,6 +43,11 @@ export interface AmplifyFormProps {
   contentLoading: boolean;
   sourceId: string;
   onSourceChange: (id: string) => void;
+  /** Saved Create-screen output (Cadence's collectRepurposeSources). */
+  assetSources: RepurposeSource[];
+  assetLoading: boolean;
+  sourceAssetId: string;
+  onSourceAssetChange: (id: string) => void;
   sourceText: string;
   onSourceTextChange: (text: string) => void;
   platforms: string[];
@@ -62,7 +68,12 @@ export interface AmplifyFormProps {
 
 export function AmplifyForm(p: AmplifyFormProps) {
   const selected = p.contentItems.find((c) => c.id === p.sourceId);
-  const hasSource = p.sourceMode === "content" ? Boolean(p.sourceId) : p.sourceText.trim().length > 0;
+  const hasSource =
+    p.sourceMode === "content"
+      ? Boolean(p.sourceId)
+      : p.sourceMode === "asset"
+        ? Boolean(p.sourceAssetId)
+        : p.sourceText.trim().length > 0;
   const canGenerate =
     !p.locked && !p.generating && !p.quotaExhausted && Boolean(p.clientId) && hasSource && p.platforms.length > 0;
   const inputsDisabled = p.generating || p.locked;
@@ -105,6 +116,7 @@ export function AmplifyForm(p: AmplifyFormProps) {
               {(
                 [
                   ["content", "From the queue"],
+                  ["asset", "From Create"],
                   ["text", "Paste text"],
                 ] as const
               ).map(([mode, label]) => (
@@ -159,6 +171,48 @@ export function AmplifyForm(p: AmplifyFormProps) {
                   </div>
                 )}
               </>
+            ) : p.sourceMode === "asset" ? (
+              !p.clientId ? (
+                <p className="text-sm text-muted">Choose a client first.</p>
+              ) : p.assetLoading ? (
+                <p className="text-sm text-muted">Loading saved content…</p>
+              ) : p.assetSources.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 px-4 py-8 text-center font-mono text-xs text-muted">
+                  <Sparkles className="h-4 w-4" aria-hidden />
+                  Nothing to repurpose yet — generate a blog post, comparison page, niche scan, launch kit or video
+                  script in Create first.
+                  <Link href="/create/content" className="text-accent-text underline">
+                    Go to Create › Content
+                  </Link>
+                </div>
+              ) : (
+                <div role="radiogroup" aria-label="Saved content" className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+                  {p.assetSources.map((s) => {
+                    const on = p.sourceAssetId === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        disabled={inputsDisabled}
+                        onClick={() => p.onSourceAssetChange(s.id)}
+                        className={cn(
+                          "press-scale flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-200",
+                          on ? "border-accent bg-accent/10" : "border-line hover:border-slate-300"
+                        )}
+                      >
+                        <span className={cn("truncate text-[12.5px] font-medium", on ? "text-ink" : "text-slate-600")}>
+                          {s.label}
+                        </span>
+                        <span className="shrink-0 font-mono text-[9.5px] uppercase text-muted">
+                          {SOURCE_TYPE_LABEL[s.kind] ?? s.kind}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )
             ) : (
               <textarea
                 aria-label="Source text"
@@ -244,7 +298,7 @@ export function AmplifyForm(p: AmplifyFormProps) {
             Cancel
           </Button>
         ) : (
-          <QuotaHint used={p.generationsUsed} limit={p.generationsLimit} noun="packs left this period" />
+          <QuotaHint used={p.generationsUsed} limit={p.generationsLimit} noun="generations left this period" />
         )}
         {p.generating && (
           <p className="basis-full text-xs text-muted">

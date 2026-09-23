@@ -9,6 +9,7 @@ import json
 from langchain_core.messages import SystemMessage
 
 from agency.agents.state import CampaignState
+from agency.agents.utils import parse_agent_json, text_of
 from agency.services.llm_provider import get_worker_llm
 
 PLATFORM_GUIDELINES = {
@@ -134,16 +135,11 @@ async def content_writer_node(state: CampaignState) -> dict:
 
     response = await llm.ainvoke(messages)
 
-    try:
-        pieces = json.loads(response.content)
-    except json.JSONDecodeError:
-        content = response.content
-        start = content.find("[")
-        end = content.rfind("]") + 1
-        if start != -1 and end > start:
-            pieces = json.loads(content[start:end])
-        else:
-            pieces = [{"platform": channels[0], "content_type": "post", "title": "Generated Post", "body": response.content, "hashtags": []}]
+    parsed = await parse_agent_json(response.content, agent="content_writer", expect=list)
+    if parsed is None:
+        pieces = [{"platform": channels[0], "content_type": "post", "title": "Generated Post", "body": text_of(response.content), "hashtags": []}]
+    else:
+        pieces = parsed
 
     if isinstance(pieces, dict):
         pieces = [pieces]

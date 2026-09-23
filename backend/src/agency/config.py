@@ -111,6 +111,16 @@ class Settings(BaseSettings):
     meta_app_id: str = ""
     meta_app_secret: str = ""
 
+    # Inbox (services/inbox.py). Reading LinkedIn comments needs a permission
+    # LinkedIn grants only to approved apps (r_member_social for a member's
+    # posts, r_organization_social for company pages). Leave blank until the
+    # LinkedIn app has it: when set, it is appended to the LinkedIn OAuth scope
+    # request and the Inbox starts reading comments. Requesting a scope the app
+    # does not hold makes LinkedIn reject the whole authorization.
+    linkedin_inbox_scope: str = ""
+    # LinkedIn versioned REST API (YYYYMM). Versions sunset after ~12 months.
+    linkedin_api_version: str = "202608"
+
     # OAuth tokens at rest (Fernet). In dev, a built-in fallback is used if
     # unset (see utils.encryption).
     token_encryption_key: str = ""

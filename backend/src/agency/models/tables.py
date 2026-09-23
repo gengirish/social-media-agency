@@ -314,6 +314,10 @@ class RepurposePack(Base):
         UUID(as_uuid=True), ForeignKey("content_piece.id", ondelete="SET NULL"), nullable=True
     )
     source_text = Column(Text, nullable=True)
+    # A saved Create-screen asset (blog post, comparison page, ...) as the source.
+    source_asset_id = Column(
+        UUID(as_uuid=True), ForeignKey("creative_asset.id", ondelete="SET NULL"), nullable=True
+    )
     platforms = Column(JSONB, nullable=False, default=[])
     atom_count = Column(Integer, nullable=False, default=0)
     committed_count = Column(Integer, nullable=False, default=0)
@@ -326,6 +330,75 @@ class RepurposePack(Base):
     __table_args__ = (
         Index("idx_repurpose_pack_org_created", "org_id", text("created_at DESC")),
     )
+
+
+class CreativeAsset(Base):
+    """Kept output of a Create-screen generator (blog post, email campaign, ad set, ...).
+
+    ``kind`` is validated against ``services.creative_assets.ASSET_KINDS``.
+    Social posts never live here — they go to ``content_piece`` as drafts so
+    moderation and approval apply.
+    """
+
+    __tablename__ = "creative_asset"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id = Column(
+        UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    kind = Column(String(40), nullable=False)
+    title = Column(String(500), nullable=False, default="")
+    payload = Column(JSONB, nullable=False, default={})
+    source_asset_id = Column(
+        UUID(as_uuid=True), ForeignKey("creative_asset.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index(
+            "idx_creative_asset_org_client_kind",
+            "org_id",
+            "client_id",
+            "kind",
+            text("created_at DESC"),
+        ),
+    )
+
+
+class InboxItemState(Base):
+    """What a human did with one Inbox item (read / handled / replied).
+
+    Inbox items are read live from X and LinkedIn and never stored; only this
+    triage state is. ``item_key`` is ``"<platform>:<platform item id>"``.
+    """
+
+    __tablename__ = "inbox_item_state"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id = Column(
+        UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    item_key = Column(String(255), nullable=False)
+    is_read = Column(Boolean, nullable=False, default=False)
+    handled = Column(Boolean, nullable=False, default=False)
+    reply_id = Column(String(255), nullable=True)
+    reply_url = Column(Text, nullable=True)
+    updated_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("org_id", "client_id", "item_key"),)
 
 
 class AnalyticsSnapshot(Base):

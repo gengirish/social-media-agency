@@ -38,6 +38,7 @@ def _piece_to_calendar_item(piece: ContentPiece) -> dict:
         "title": piece.title,
         "body": piece.body,
         "platform": piece.platform,
+        "hashtags": list(piece.hashtags or []),
         "status": piece.status,
         "scheduled_at": piece.scheduled_at.isoformat() if piece.scheduled_at else None,
         "published_at": piece.published_at.isoformat() if piece.published_at else None,
@@ -184,9 +185,17 @@ async def schedule_content(
 async def get_calendar(
     start: datetime = Query(..., description="Range start (UTC)"),
     end: datetime = Query(..., description="Range end (UTC)"),
+    client_id: UUID | None = Query(None, description="Only this client's posts"),
+    include_pending: bool = Query(
+        False, description="Also return drafts/approved posts with a planned day, and failed ones"
+    ),
     user=Depends(get_current_user),
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
-    pieces = await scheduler.get_calendar(db, org_id, start, end)
+    # ``client_id`` needs no separate ownership check: the query is already
+    # ``org_id``-filtered, so a foreign client id simply matches nothing.
+    pieces = await scheduler.get_calendar(
+        db, org_id, start, end, client_id=client_id, include_pending=include_pending
+    )
     return {"items": [_piece_to_calendar_item(p) for p in pieces]}

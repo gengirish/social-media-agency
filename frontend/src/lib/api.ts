@@ -41,10 +41,11 @@ async function unwrap<T>(res: Response): Promise<T> {
     const body = await res.json().catch(() => ({}));
     throw new ApiError(res.status, detailMessage(body.detail), body.detail);
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = _clerkGetToken ? await _clerkGetToken() : null;
 
   const res = await fetch(`${API_BASE}${path}`, {
@@ -100,7 +101,7 @@ async function requestWithApiKey<T>(
 }
 
 /** Build a query string from defined values only. Returns "" when empty. */
-function qs(params: Record<string, string | number | boolean | undefined | null>): string {
+export function qs(params: Record<string, string | number | boolean | undefined | null>): string {
   const search = new URLSearchParams();
   for (const key of Object.keys(params)) {
     const value = params[key];
@@ -179,6 +180,8 @@ export const api = {
   getCampaign: (id: string) => request<Campaign>(`/api/v1/campaigns/${id}`),
   createCampaign: (data: CampaignBriefRequest) =>
     request<Campaign>("/api/v1/campaigns", { method: "POST", body: JSON.stringify(data) }),
+  rerunCampaign: (id: string) =>
+    request<Campaign>(`/api/v1/campaigns/${id}/rerun`, { method: "POST" }),
 
   getCampaignContent: (campaignId: string) =>
     request<{ items: ContentPiece[]; total: number }>(`/api/v1/campaigns/${campaignId}/content`),
@@ -1779,6 +1782,8 @@ export interface AmplifyAtom {
 export interface AmplifyPreviewRequest {
   client_id: string;
   source_content_id?: string;
+  /** A saved Create-screen asset (blog post, comparison page, niche scan, video script, launch kit). */
+  source_asset_id?: string;
   source_text?: string;
   platforms: string[];
   max_atoms?: number;
@@ -1804,6 +1809,7 @@ export interface AmplifyPack {
   client_id: string;
   client_name: string | null;
   source_content_id: string | null;
+  source_asset_id?: string | null;
   source_title: string | null;
   source_excerpt: string | null;
   platforms: string[];

@@ -12,6 +12,14 @@ const PAGES: PageCheck[] = [
   { path: "/pricing", heading: /simple pricing/i },
   { path: "/settings", heading: /^settings$/i },
   { path: "/analytics", heading: /^analytics$/i },
+  { path: "/welcome", heading: /./ },
+  { path: "/setup/profile", heading: /^brand profile$/i },
+  { path: "/setup/accounts", heading: /^connected accounts$/i },
+  { path: "/create/content", heading: /^content$/i },
+  { path: "/create/email", heading: /^email$/i },
+  { path: "/create/launch", heading: /^launch$/i },
+  { path: "/create/ads", heading: /^ads$/i },
+  { path: "/inbox", heading: /^inbox$/i },
 ];
 
 test.describe("Navigation", () => {

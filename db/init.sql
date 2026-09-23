@@ -389,6 +389,57 @@ CREATE INDEX IF NOT EXISTS idx_repurpose_pack_org_created
     ON repurpose_pack(org_id, created_at DESC);
 
 -- ---------------------------------------------------------------------------
+-- creative_asset — long-form output of the Create screens (Content, Email,
+-- Launch, Ads, Insights' advocacy, Setup's strategy lens). One row per
+-- generation the human chose to keep. ``kind`` is a closed set enforced in
+-- services/creative_assets.py::ASSET_KINDS; ``payload`` is the kind's JSON
+-- shape. Social posts are NOT stored here — they live in content_piece so the
+-- approval gate applies to them.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS creative_asset (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    client_id UUID NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    kind VARCHAR(40) NOT NULL,
+    title VARCHAR(500) NOT NULL DEFAULT '',
+    payload JSONB NOT NULL DEFAULT '{}',
+    source_asset_id UUID REFERENCES creative_asset(id) ON DELETE SET NULL,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_creative_asset_org_client_kind
+    ON creative_asset(org_id, client_id, kind, created_at DESC);
+
+-- Amplify can repurpose a saved asset (blog post, comparison page, niche scan,
+-- video script, launch kit). Added here rather than in repurpose_pack's CREATE
+-- because creative_asset is defined after it.
+ALTER TABLE repurpose_pack
+    ADD COLUMN IF NOT EXISTS source_asset_id UUID REFERENCES creative_asset(id) ON DELETE SET NULL;
+
+-- ---------------------------------------------------------------------------
+-- inbox_item_state — per-item triage state for the Inbox (/inbox). The items
+-- themselves are NOT stored: they are read live from X / LinkedIn on every
+-- load. This row only remembers what the human did with one: opened it (read),
+-- closed it out (handled), or replied from CampaignForge (reply_*).
+-- ``item_key`` is "<platform>:<platform item id>".
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inbox_item_state (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    client_id UUID NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    item_key VARCHAR(255) NOT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    handled BOOLEAN NOT NULL DEFAULT FALSE,
+    reply_id VARCHAR(255),
+    reply_url TEXT,
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (org_id, client_id, item_key)
+);
+
+-- ---------------------------------------------------------------------------
 -- RAG knowledge base (backend/src/agency/services/knowledge_base.py).
 --
 -- pgvector is an OPTIONAL prerequisite, created defensively on purpose:

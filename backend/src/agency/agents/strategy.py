@@ -9,6 +9,7 @@ import json
 from langchain_core.messages import SystemMessage
 
 from agency.agents.state import CampaignState
+from agency.agents.utils import parse_agent_json, text_of
 from agency.services.knowledge_base import retrieve_knowledge
 from agency.services.llm_provider import get_worker_llm
 
@@ -80,16 +81,8 @@ async def strategy_node(state: CampaignState) -> dict:
 
     response = await llm.ainvoke(messages)
 
-    try:
-        strategy = json.loads(response.content)
-    except json.JSONDecodeError:
-        content = response.content
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start != -1 and end > start:
-            strategy = json.loads(content[start:end])
-        else:
-            strategy = {"raw_output": response.content}
+    parsed = await parse_agent_json(response.content, agent="strategy")
+    strategy = parsed if isinstance(parsed, dict) else {"raw_output": text_of(response.content)}
 
     return {
         "strategy": strategy,

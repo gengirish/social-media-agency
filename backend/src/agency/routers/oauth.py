@@ -2,15 +2,18 @@
 
 import json
 import urllib.parse
+from typing import Any
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from agency.config import get_settings
+from agency.config import Settings, get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import Client, PlatformAccount
+from agency.services.oauth_state import InvalidOAuthStateError, sign_state, verify_state
 from agency.utils.encryption import encrypt_token
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
@@ -48,15 +51,65 @@ PLATFORM_CLIENT_KEYS = {
 }
 
 
+def _requested_scopes(platform: str, settings: Settings) -> str:
+    """Scopes for the authorize URL.
+
+    LinkedIn's comment-read permission (``r_member_social`` / ``r_organization_social``)
+    is appended only when ``LINKEDIN_INBOX_SCOPE`` says the app holds it: LinkedIn
+    rejects the whole authorization for a scope the app was not granted, which would
+    break connecting LinkedIn for publishing too. See ``services/inbox.py``.
+    """
+    scopes = OAUTH_CONFIGS[platform]["scopes"]
+    extra = (getattr(settings, "linkedin_inbox_scope", "") or "").strip()
+    if platform == "linkedin" and extra:
+        present = set(scopes.split())
+        scopes = " ".join([scopes, *[s for s in extra.split() if s not in present]])
+    return scopes
+
+
+#: Platforms whose OAuth 2.0 flow requires PKCE (X rejects an authorize request without it).
+PKCE_PLATFORMS = {"twitter"}
+
+
+def oauth_platform_status() -> dict[str, dict[str, Any]]:
+    """Per supported platform: whether its app credentials are set, and the scopes requested."""
+    settings = get_settings()
+    out: dict[str, dict[str, Any]] = {}
+    for platform in OAUTH_CONFIGS:
+        key_attr, _ = PLATFORM_CLIENT_KEYS[platform]
+        scopes = _requested_scopes(platform, settings).replace(",", " ").split()
+        out[platform] = {"configured": bool(getattr(settings, key_attr, "")), "scopes": scopes}
+    return out
+
+
 @router.get("/{platform}/authorize")
 async def get_oauth_url(
     platform: str,
-    user=Depends(get_current_user),
+    for_client: UUID | None = Query(default=None, alias="client_id"),
+    code_challenge: str | None = Query(default=None, max_length=128),
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     org_id: UUID = Depends(get_org_id),
-):
-    """Return the OAuth authorization URL for a given platform."""
+) -> dict[str, str]:
+    """Return the OAuth authorization URL for a given platform.
+
+    ``client_id`` (optional, resolved against the caller's org) is carried
+    through the provider in a signed ``state`` so the callback page knows which
+    client to attach the account to. ``code_challenge`` is the S256 PKCE
+    challenge, required for X; the browser keeps the verifier.
+    """
     if platform not in OAUTH_CONFIGS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported platform: {platform}")
+    if for_client is not None:
+        owner = await db.execute(
+            select(Client.id).where(Client.id == for_client, Client.org_id == org_id)
+        )
+        if owner.scalar_one_or_none() is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
+    if platform in PKCE_PLATFORMS and not code_challenge:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"{platform} requires a PKCE code_challenge"
+        )
 
     settings = get_settings()
     key_attr, _ = PLATFORM_CLIENT_KEYS[platform]
@@ -74,9 +127,12 @@ async def get_oauth_url(
         "client_id": client_id,
         "redirect_uri": callback_url,
         "response_type": "code",
-        "scope": config["scopes"],
-        "state": str(org_id),
+        "scope": _requested_scopes(platform, settings),
+        "state": sign_state(org_id=org_id, client_id=for_client, platform=platform),
     }
+    if platform in PKCE_PLATFORMS and code_challenge:
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
     auth_url = f"{config['authorize_url']}?{urllib.parse.urlencode(params)}"
     return {"authorize_url": auth_url, "platform": platform}
 
@@ -84,11 +140,11 @@ async def get_oauth_url(
 @router.post("/{platform}/callback")
 async def oauth_callback(
     platform: str,
-    body: dict,
-    user=Depends(get_current_user),
-    db=Depends(get_db),
+    body: dict[str, Any],
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     org_id: UUID = Depends(get_org_id),
-):
+) -> dict[str, Any]:
     """Exchange OAuth code for tokens and store platform account."""
     if platform not in OAUTH_CONFIGS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported platform: {platform}")
@@ -115,6 +171,25 @@ async def oauth_callback(
     if owner.scalar_one_or_none() is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
 
+    # The signed state (sent by the in-app callback page) must have been issued to
+    # this org, for this platform, and — when it names a client — for this client.
+    # Required: without it a callback cannot prove this org started the flow.
+    state = body.get("state")
+    if not state:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state required")
+    try:
+        state_client = verify_state(str(state), org_id=org_id, platform=platform)
+    except InvalidOAuthStateError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    if state_client is not None and state_client != client_uuid:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "OAuth state was issued for another client"
+        )
+
+    code_verifier = body.get("code_verifier")
+    if platform in PKCE_PLATFORMS and not code_verifier:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "code_verifier required")
+
     settings = get_settings()
     key_attr, secret_attr = PLATFORM_CLIENT_KEYS[platform]
     client_id = getattr(settings, key_attr, "")
@@ -123,18 +198,28 @@ async def oauth_callback(
     config = OAUTH_CONFIGS[platform]
     callback_url = f"{_first_cors_origin(settings.cors_origins)}/api/oauth/{platform}/callback"
 
+    token_form = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "redirect_uri": callback_url,
+    }
+    headers = {"Accept": "application/json"}
     async with httpx.AsyncClient() as client_http:
-        token_resp = await client_http.post(
-            config["token_url"],
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": callback_url,
-            },
-            headers={"Accept": "application/json"},
-        )
+        if platform in PKCE_PLATFORMS:
+            # X confidential clients authenticate with HTTP Basic; PKCE needs the verifier.
+            token_form["code_verifier"] = str(code_verifier)
+            token_resp = await client_http.post(
+                config["token_url"],
+                data=token_form,
+                headers=headers,
+                auth=(str(client_id), str(client_secret)),
+            )
+        else:
+            token_form["client_secret"] = client_secret
+            token_resp = await client_http.post(
+                config["token_url"], data=token_form, headers=headers
+            )
 
     if token_resp.status_code != 200:
         raise HTTPException(

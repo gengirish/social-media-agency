@@ -4,6 +4,60 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260923 — Cadence full parity
+
+Every Cadence Crew prototype screen now has a CampaignForge route (branch `feat/cadence-parity`; plan and screen map in [`docs/cadence-parity-plan-260923.md`](../cadence-parity-plan-260923.md)). Where Cadence simulated something — OAuth popups, a seeded inbox, browser-side LLM calls, sending — this does it for real or says it is unavailable. Nav order stays Setup, Create, Posts (not Cadence's Setup, Posts, Create).
+
+> **Deploy order:** run by hand on Neon, in order, *before* the backend deploy — `db/migrations/260923_creative_asset.sql`, `260923_amplify_asset_source.sql` (FK to `creative_asset`), `260923_inbox.sql`. Otherwise `/assets`, every Create screen, `/amplify/*` and `/inbox` fail with `UndefinedTable` / `UndefinedColumn`. New optional env vars: `LINKEDIN_INBOX_SCOPE`, `LINKEDIN_API_VERSION` (added to both `.env.example` files).
+
+### Foundation
+- **Added**: active client — top-nav `ClientSwitcher` (Cadence's product switcher) backed by `GET /clients/overview` (real per-client setup progress and queue counts); every Create / Posts / Inbox / Insights screen scopes to it.
+- **Added**: `/welcome` (adaptive onboarding, then a welcome-back hub; the logo links here), public `/legal` (privacy, terms, AI notice), dashboard footer, keyboard shortcuts `1`–`6` (nav groups) and `?` (help), last-visited sub-tab per group, ambient glows and Cadence motion keyframes.
+- **Added**: campaign focus — `PUT/DELETE /clients/{id}/campaign-focus` (`client.settings.campaign_focus`), shown by `CampaignIndicator`, fed to every generator except the PRFAQ.
+- **Added**: `creative_asset` table + `/assets` CRUD — stored output of the Create screens (closed `ASSET_KINDS`).
+- **Changed**: `services/generation_quota.py` and `services/brand_context.py` extracted from Amplify; every generator now shares one quota (1 generation per successful call), one tenant-scoped client lookup and one brand prompt block.
+- **Added**: UI primitives `ErrorBanner`, `ConfirmDialog`, `undoToast` (8 s), `SearchInput`, `PlatformFilterRow`, `CampaignIndicator`.
+- **Changed**: nav regrouped — **Setup** (Profile, Clients, Accounts) · **Create** (Campaigns, Content, Email, Launch, Amplify, Ads, Templates) · **Posts** (Queue, Calendar) · **Inbox** · **Insights** · **Settings**.
+
+### Setup
+- **Added**: `/setup/profile` — intake (real website scan via Magic Brief, coached audience/differentiator answers, fixed tone register), then Campaign, Brand Voice (generate → edit → approve) and Strategy Lens (saved as an asset). Endpoints `/setup/{client_id}/profile`, `/profile/evaluate-answer`, `/brand-voice/generate`, `/brand-voice`, `/strategy-lens`. Merges column by column; never wipes fields it did not mention.
+- **Added**: `/setup/accounts` (moved from `/settings?tab=platforms`, which still resolves) with `GET /setup/{client_id}/accounts`, a scope-listing consent dialog and real provider redirects.
+- **Changed**: OAuth — signed `state` (HS256, 15 min, bound to org + platform + client, key **derived** from `JWT_SECRET` so it can never verify as a login token); **PKCE for X** (verifier in `sessionStorage`, HTTP Basic token exchange); LinkedIn requests `LINKEDIN_INBOX_SCOPE` on top of its publishing scopes when set; new in-app return page `app/(dashboard)/api/oauth/[platform]/callback`.
+
+### Posts
+- **Added**: `routers/post_studio.py` — `POST /content/generate`, `POST /content` (manual), `POST /content/{id}/regenerate`, `POST /content/{id}/creative-brief`, `DELETE /content/{id}` (409 `published_locked` for published), `GET /post-studio/channels`. Everything created or rewritten is Pending; a draft may carry a *planned* day in `scheduled_at` that the scheduler ignores. Generations are not charged if the caller disconnected.
+- **Changed**: `GET /publishing/calendar` gains `client_id` and `include_pending`; items include `hashtags`.
+- **Changed**: Queue rebuilt as Cadence's list — sidebar (client card, channels, usage, stats), generate posts, regenerate, creative brief, autosaving Pending edits, bulk approve/publish/delete, delete with undo, run report. Calendar — month/week, drag reschedule gated on approval, keyboard reschedule, add your own post, fill with AI, an honest "This week" panel.
+
+### Create
+- **Added**: `/create/content` — niche scan, blog post (keyword memory, AI-search pack, blog-from-gap), comparison page, video script; comparison/scan grounded in Exa research or explicitly marked unavailable.
+- **Added**: `/create/email` — 5 lifecycle campaign types; drafts only, nothing is sent.
+- **Added**: `/create/launch` — product launch kit, community kit, partnership outreach, and the PRFAQ stress-test (brain tier, stored at `client.settings.prfaq`, ignores the campaign focus; launch kits record `prfaq_addressed`).
+- **Added**: `/create/ads` — Google RSA / Meta copy on the ad-copy tier with code-enforced guardrails (`services/ad_guardrails.py`: limits, trademark and personal-attribute risks) and advisory moderation that fails open visibly. Copy and structure only.
+- **Changed**: Amplify accepts `source_asset_id` (blog post, comparison page, niche scan, video script, launch kit) — "From Create" source; recorded on `repurpose_pack.source_asset_id` and each committed atom.
+
+### Inbox
+- **Added**: `/inbox` — live X mentions and (with `LINKEDIN_INBOX_SCOPE`) LinkedIn comments on CampaignForge-published posts; nothing seeded. Explicit per-account status (`ok`, `not_connected`, `needs_reconnect`, `api_access_denied`, `rate_limited`, `unsupported`, `error`); DMs marked unavailable. Read/handled state in the new `inbox_item_state` table. Reply suggestions (worker tier, message fenced as untrusted). `POST /inbox/reply` posts for real only on a confirmed human click, only to an item in that account's fetched inbox, after moderation (override recorded), and writes `audit_log` — the first caller of `log_action`.
+
+### Insights & Settings
+- **Added**: `GET /insights/summary` — per-client funnel, publish/moderation rates, content quality signal, engagement and recommendations, every ratio gated on n ≥ 3 with thresholds shown. `POST /insights/advocacy` — review request / case study / proof line citing only server-supplied counts.
+- **Added**: `/workspace/activity` (activity log derived from real rows), `/workspace/export` (client JSON export, no tokens), `/workspace/posting-prefs` (voice register + cadence, fed to every generator). Settings gains per-client tabs: Client profile, Connected accounts, Posting preferences, Plan & usage, Activity log, Export.
+- **Changed**: the approval gate records moderation refusals (`moderation_flagged` product event) and pre-approval edits (`metadata.edited_before_approval`) so the quality signal has real data. New server-authored events: `moderation_flagged`, `advocacy_generated`.
+
+### Not replicated
+- Cadence's **Reset workspace data** (destructive; a workspace holds many clients), simulated OAuth popups, seeded inbox data.
+
+### Known gaps found while documenting
+- `routers/audit.py`'s empty-state reason ("no route writes audit entries") is stale now that Inbox replies are audited.
+- OAuth callback verifies `state` only when it is sent; account handles are still the `{platform}_user` placeholder.
+- `services/oauth_state.py`'s docstring says it signs with `JWT_SECRET`; the code uses the derived key.
+- Amplify's quota hint still says "packs left this period" although the pool is now shared by every generator.
+- The workspace export's Amplify packs omit `source_asset_id`.
+
+Tests: `test_foundation.py`, `test_setup_profile.py`, `test_post_studio.py`, `test_create_content.py`, `test_create_email_launch.py`, `test_ad_guardrails.py`, `test_create_ads.py`, `test_inbox.py`, `test_insights_settings.py`; E2E `navigation.spec.ts` asserts the H1 of every new route.
+
+---
+
 ## 260922 — Edit, archive and restore clients
 
 - **Added**: client editing: `PATCH /clients/{id}` (partial) and `GET`/`PUT /clients/{id}/brand-profile` (upsert, partial on update). Until now a client's details and brand voice could be set only at creation, and `POST .../brand-profile` failed on a second call. The client page has an **Edit client** form covering both, plus an **About** card (description, website, email) it did not show before.

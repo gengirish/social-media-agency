@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useActiveClient } from "@/lib/active-client";
 import Link from "next/link";
 import { api, type BrandProfile, type Client } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
@@ -24,6 +25,7 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ClientView>("active");
   const [showForm, setShowForm] = useState(false);
+  const { refresh: refreshActiveClient, setActiveId } = useActiveClient();
   const [formData, setFormData] = useState<ClientForm>(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
   const [reading, setReading] = useState(false);
@@ -94,11 +96,19 @@ export default function ClientsPage() {
     }
   }
 
+  // The client switcher links here with ?new=1. Read once on mount; window
+  // avoids a useSearchParams Suspense boundary for a one-shot flag.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("new") === "1") setShowForm(true);
+  }, []);
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setCreating(true);
     try {
       const client = await api.createClient(formData);
+      // Like Cadence's "Add another product": the new client becomes the active one.
+      setActiveId(client.id);
       trackFeature("client-create", { from_website_read: !!profile });
       if (profile) {
         try {
@@ -123,6 +133,7 @@ export default function ClientsPage() {
       }
       setShowForm(false);
       resetForm();
+      void refreshActiveClient();
       if (view === "active") loadClients();
       else setView("active");
     } catch (err) {
