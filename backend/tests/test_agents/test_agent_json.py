@@ -103,3 +103,29 @@ async def test_strategy_node_survives_the_production_failure(monkeypatch, lite):
 def test_utils_module_keeps_legacy_parser():
     # parse_llm_json is used by the Create-screen agents; it must stay synchronous.
     assert utils.parse_llm_json('{"a": 1}') == {"a": 1}
+
+
+async def test_copied_prompt_comments_parse_without_repair(lite):
+    """Production 260923 root cause: the SEO prompt's example JSON carried // comment
+    lines, the model copied them, and the repair call faithfully kept them."""
+    stub = lite(RuntimeError("must not be called"))
+    seo_like = """{
+    "primary_keywords": [
+        {"keyword": "remote work tools", "intent": "commercial"},
+        // search_volume and difficulty are YOUR estimates
+        // Omit either field if you have no basis for it.
+    ],
+    "trending_topics": ["async", "4-day week",],
+}"""
+    out = await parse_agent_json(seo_like, agent="seo")
+    assert out == {
+        "primary_keywords": [{"keyword": "remote work tools", "intent": "commercial"}],
+        "trending_topics": ["async", "4-day week"],
+    }
+    assert stub.calls == []
+
+
+def test_seo_prompt_example_has_no_comments():
+    from agency.agents.seo import SYSTEM_PROMPT
+
+    assert not any(line.lstrip().startswith("//") for line in SYSTEM_PROMPT.splitlines())

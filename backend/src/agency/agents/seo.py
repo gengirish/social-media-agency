@@ -23,12 +23,13 @@ Generate SEO research and keyword strategy based on the campaign plan and brand 
 {execution_plan}
 
 ## Your Output
-Return a JSON document:
+search_volume and difficulty are YOUR estimates — no search API is called. Omit
+either field if you have no basis for it. Never state a numeric volume.
+
+Return ONLY a valid JSON document (no comments, no trailing commas):
 {{
     "primary_keywords": [
         {{"keyword": "...", "search_volume": "high|medium|low", "difficulty": "high|medium|low", "intent": "informational|commercial|transactional"}}
-        // search_volume and difficulty are YOUR estimates — no search API is called.
-        // Omit either field if you have no basis for it. Never state a numeric volume.
     ],
     "long_tail_keywords": ["keyword phrase 1", "keyword phrase 2"],
     "hashtag_strategy": {{

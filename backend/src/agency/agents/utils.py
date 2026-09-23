@@ -69,6 +69,12 @@ def text_of(content: object) -> str:
     return str(content)
 
 
+def _strip_json_noise(text: str) -> str:
+    """Drop whole-line ``//`` comments and trailing commas before ``]``/``}``."""
+    lines = [line for line in text.splitlines() if not line.lstrip().startswith("//")]
+    return re.sub(r",(\s*[\]}])", r"\1", "\n".join(lines))
+
+
 def _try_parse(content: str, expect: type) -> tuple[object | None, str]:
     """Cheap strategies only. Returns (value, last_error)."""
     open_ch, close_ch = ("[", "]") if expect is list else ("{", "}")
@@ -78,6 +84,10 @@ def _try_parse(content: str, expect: type) -> tuple[object | None, str]:
     start, end = content.find(open_ch), content.rfind(close_ch) + 1
     if start != -1 and end > start:
         candidates.append(content[start:end])
+        # Models copy habits from prompt examples: whole-line // comments and
+        # trailing commas. Both are unambiguous to strip outside string values
+        # (a whole-line comment cannot sit inside a JSON string).
+        candidates.append(_strip_json_noise(content[start:end]))
     error = "no JSON found"
     for candidate in candidates:
         try:
