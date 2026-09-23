@@ -279,19 +279,34 @@ class SchedulerEngine:
         return {"status": "scheduled", "scheduled_at": scheduled_at.isoformat()}
 
     async def get_calendar(
-        self, db: AsyncSession, org_id: UUID, start: datetime, end: datetime
+        self,
+        db: AsyncSession,
+        org_id: UUID,
+        start: datetime,
+        end: datetime,
+        *,
+        client_id: UUID | None = None,
+        include_pending: bool = False,
     ) -> list:
-        """Get all scheduled/published content in a date range."""
-        result = await db.execute(
-            select(ContentPiece)
-            .where(
-                ContentPiece.org_id == org_id,
-                ContentPiece.status.in_(["scheduled", "published"]),
-                ContentPiece.scheduled_at >= start,
-                ContentPiece.scheduled_at <= end,
-            )
-            .order_by(ContentPiece.scheduled_at)
+        """Content in a date range, by ``scheduled_at``.
+
+        Default: scheduled/published only. ``include_pending`` adds drafts and
+        approved posts that carry a *planned* day (Calendar's "Add post"), plus
+        failed ones — none of those is published by the scheduler, which only
+        ever picks ``status == "scheduled"``.
+        """
+        statuses = ["scheduled", "published"]
+        if include_pending:
+            statuses += ["draft", "approved", "failed"]
+        q = select(ContentPiece).where(
+            ContentPiece.org_id == org_id,
+            ContentPiece.status.in_(statuses),
+            ContentPiece.scheduled_at >= start,
+            ContentPiece.scheduled_at <= end,
         )
+        if client_id is not None:
+            q = q.where(ContentPiece.client_id == client_id)
+        result = await db.execute(q.order_by(ContentPiece.scheduled_at))
         return list(result.scalars().all())
 
 
