@@ -6,7 +6,7 @@ Thin: the numbers come from ``services/insights.py``, the prompt from
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import structlog
@@ -78,7 +78,7 @@ async def create_advocacy(
     asset = await save_asset(
         db,
         org_id=org_id,
-        client_id=client.id,
+        client_id=cast(UUID, client.id),
         kind="advocacy",
         title=f"Advocacy — {client.brand_name}",
         payload={**result, "facts": facts},

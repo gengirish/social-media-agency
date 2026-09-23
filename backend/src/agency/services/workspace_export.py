@@ -80,7 +80,7 @@ async def export_client(db: AsyncSession, org_id: UUID, client: Client) -> dict[
         )
     ).scalars()
 
-    post_rows = [
+    post_rows: list[dict[str, Any]] = [
         {
             "id": str(p.id),
             "campaign_id": str(p.campaign_id) if p.campaign_id else None,
@@ -98,7 +98,7 @@ async def export_client(db: AsyncSession, org_id: UUID, client: Client) -> dict[
         for p in posts
     ]
     asset_rows = [asset_out(a) for a in assets]
-    pack_rows = [
+    pack_rows: list[dict[str, Any]] = [
         {
             "id": str(k.id),
             "source_content_id": str(k.source_content_id) if k.source_content_id else None,
@@ -110,7 +110,7 @@ async def export_client(db: AsyncSession, org_id: UUID, client: Client) -> dict[
         }
         for k in packs
     ]
-    campaign_rows = [
+    campaign_rows: list[dict[str, Any]] = [
         {
             "id": str(c.id),
             "name": c.name,
@@ -123,7 +123,7 @@ async def export_client(db: AsyncSession, org_id: UUID, client: Client) -> dict[
         }
         for c in campaigns
     ]
-    account_rows = [
+    account_rows: list[dict[str, Any]] = [
         {
             "platform": a.platform,
             "account_handle": a.account_handle,
@@ -133,7 +133,7 @@ async def export_client(db: AsyncSession, org_id: UUID, client: Client) -> dict[
         }
         for a in accounts
     ]
-    brand = None
+    brand: dict[str, Any] | None = None
     if bp is not None:
         brand = {
             "voice_description": bp.voice_description,

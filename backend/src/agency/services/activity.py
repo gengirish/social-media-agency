@@ -109,7 +109,8 @@ async def client_activity(
             add(p.updated_at, "post.failed", f"Publishing {_label(p)} to {name} failed", ref)
         elif p.status == "rejected":
             add(p.updated_at, "post.rejected", f"Rejected {_label(p)} for {name}", ref)
-        moderation = (p.metadata_ or {}).get("moderation")
+        meta: dict[str, Any] = dict(p.metadata_ or {})
+        moderation = meta.get("moderation")
         if isinstance(moderation, dict):
             if moderation.get("status") == "overridden":
                 add(
@@ -130,7 +131,7 @@ async def client_activity(
         )
     ).scalars()
     for ev in flag_rows:
-        props = ev.properties if isinstance(ev.properties, dict) else {}
+        props: dict[str, Any] = ev.properties if isinstance(ev.properties, dict) else {}
         if props.get("client_id") != target:
             continue
         issues = props.get("issue_count")
@@ -207,7 +208,7 @@ async def client_activity(
         )
     ).scalars()
     for entry in audits:
-        details = entry.details if isinstance(entry.details, dict) else {}
+        details: dict[str, Any] = entry.details if isinstance(entry.details, dict) else {}
         if details.get("client_id") != target:
             continue
         detail = str(

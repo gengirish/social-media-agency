@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -349,6 +349,7 @@ async def latest_engagement(
 
 async def build_summary(db: AsyncSession, org_id: UUID, client: Client) -> dict[str, Any]:
     """Everything the Insights screen shows, for one org-resolved client."""
+    client_id = cast(UUID, client.id)
     pieces = (
         await db.execute(
             select(ContentPiece.platform, ContentPiece.status, ContentPiece.metadata_).where(
@@ -380,7 +381,7 @@ async def build_summary(db: AsyncSession, org_id: UUID, client: Client) -> dict[
         if isinstance((m or {}).get("moderation"), dict)
     ]
     overridden = sum(1 for r in moderation_records if r and r.get("status") == "overridden")
-    refused = await moderation_flag_count(db, org_id, client.id)
+    refused = await moderation_flag_count(db, org_id, client_id)
     # Every moderation run: approvals that recorded a result, plus refusals.
     checks = len(moderation_records) + refused
     flags = overridden + refused
@@ -393,7 +394,7 @@ async def build_summary(db: AsyncSession, org_id: UUID, client: Client) -> dict[
     outcomes = {k: sum(row[k] for row in signal.values()) for k in ("kept", "edited", "discarded")}
     reviewed = outcomes["kept"] + outcomes["edited"]
 
-    engagement = await latest_engagement(db, org_id, client.id)
+    engagement = await latest_engagement(db, org_id, client_id)
     by_platform = {p: platform_counts.get(p, 0) for p in connected}
     recs, rules = recommendations_for(
         InsightStats(
