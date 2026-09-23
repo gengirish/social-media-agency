@@ -116,7 +116,7 @@ def build_community_kit_prompt(brand: dict[str, Any]) -> str:
         "keep the space feeling alive and not over-moderated/corporate.\n\n"
         'Return ONLY JSON: {"channelStructure": string[], "welcomeMessage": string, '
         '"engagementPrompts": string[], "eventAnnouncementTemplate": string, "moderationNote": '
-        'string}'
+        "string}"
     )
 
 
@@ -144,7 +144,8 @@ async def _call(llm: Any, prompt: str) -> Any:
 
 
 async def generate_prfaq(brand: dict[str, Any]) -> Any:
-    return await _call(get_brain_llm(), build_prfaq_prompt(brand))
+    llm = get_brain_llm()  # type: ignore[no-untyped-call]  # untyped getter in llm_provider
+    return await _call(llm, build_prfaq_prompt(brand))
 
 
 async def generate_launch_kit(brand: dict[str, Any], prfaq: dict[str, Any] | None) -> Any:
