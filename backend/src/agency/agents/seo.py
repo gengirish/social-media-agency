@@ -9,6 +9,7 @@ import json
 from langchain_core.messages import SystemMessage
 
 from agency.agents.state import CampaignState
+from agency.agents.utils import parse_agent_json, text_of
 from agency.services.llm_provider import get_lite_llm
 
 SYSTEM_PROMPT = """You are the SEO Agent of CampaignForge, a digital marketing agency AI.
@@ -71,16 +72,8 @@ async def seo_node(state: CampaignState) -> dict:
 
     response = await llm.ainvoke(messages)
 
-    try:
-        seo_data = json.loads(response.content)
-    except json.JSONDecodeError:
-        content = response.content
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start != -1 and end > start:
-            seo_data = json.loads(content[start:end])
-        else:
-            seo_data = {"raw_output": response.content}
+    parsed = await parse_agent_json(response.content, agent="seo")
+    seo_data = parsed if isinstance(parsed, dict) else {"raw_output": text_of(response.content)}
 
     keywords = seo_data.get("primary_keywords", [])
     if isinstance(keywords, list) and keywords and isinstance(keywords[0], str):
