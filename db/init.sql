@@ -412,6 +412,12 @@ CREATE TABLE IF NOT EXISTS creative_asset (
 CREATE INDEX IF NOT EXISTS idx_creative_asset_org_client_kind
     ON creative_asset(org_id, client_id, kind, created_at DESC);
 
+-- Amplify can repurpose a saved asset (blog post, comparison page, niche scan,
+-- video script, launch kit). Added here rather than in repurpose_pack's CREATE
+-- because creative_asset is defined after it.
+ALTER TABLE repurpose_pack
+    ADD COLUMN IF NOT EXISTS source_asset_id UUID REFERENCES creative_asset(id) ON DELETE SET NULL;
+
 -- ---------------------------------------------------------------------------
 -- RAG knowledge base (backend/src/agency/services/knowledge_base.py).
 --

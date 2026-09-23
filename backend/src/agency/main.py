@@ -21,6 +21,7 @@ from agency.routers import (
     comments,
     competitive,
     content,
+    create_content,
     health,
     integrations,
     magic_brief,
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
         product_analytics,
         amplify,
         assets,
+        create_content,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 
