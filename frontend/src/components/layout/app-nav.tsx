@@ -3,14 +3,24 @@
 import Link from "next/link";
 import { useEffect, useState, type ComponentType } from "react";
 import { UserButton } from "@clerk/nextjs";
-import { Inbox, ListChecks, Menu, Settings, Sparkles, TrendingUp, Wand2, X } from "lucide-react";
+import { CheckCircle2, Inbox, ListChecks, Menu, Settings, Sparkles, TrendingUp, Wand2, X } from "lucide-react";
 import { NotificationsBell } from "@/components/notifications-bell";
 import { ThemeToggle, useTheme } from "@/components/theme";
 import { clerkVariables } from "@/lib/clerk-appearance";
 import { NAV_GROUPS, STANDALONE_TITLES, resolveNav, type NavIconName } from "@/lib/navigation";
 import { ClientSwitcher } from "@/components/layout/client-switcher";
 import { groupHref } from "@/components/layout/shell-extras";
+import { useActiveClient } from "@/lib/active-client";
+import type { ClientOverview } from "@/lib/api-foundation";
 import { cn } from "@/lib/utils";
+
+/** Cadence's sub-tab check marks: a Setup step the active client has completed. */
+function tabDone(href: string, client: ClientOverview | null): boolean {
+  if (!client) return false;
+  if (href === "/setup/profile") return client.has_brand_profile;
+  if (href === "/setup/accounts") return client.connected_accounts > 0;
+  return false;
+}
 
 const ICONS: Record<NavIconName, ComponentType<{ className?: string }>> = {
   setup: Sparkles,
@@ -38,6 +48,7 @@ export function AppNav({
   const [menuOpen, setMenuOpen] = useState(false);
   const active = resolveNav(pathname, queryTab);
   const theme = useTheme();
+  const { active: activeClient } = useActiveClient();
   // Cadence breadcrumb: "Group / Tab", or just the group when it has one tab.
   const crumb = active
     ? active.group.tabs.length > 1
@@ -120,7 +131,13 @@ export function AppNav({
                 </div>
                 <div className="flex flex-wrap gap-1.5 pl-5">
                   {group.tabs.map((tab) => (
-                    <SubTabLink key={tab.href} href={tab.href} label={tab.label} active={active?.tab === tab} />
+                    <SubTabLink
+                      key={tab.href}
+                      href={tab.href}
+                      label={tab.label}
+                      active={active?.tab === tab}
+                      done={tabDone(tab.href, activeClient)}
+                    />
                   ))}
                 </div>
               </div>
@@ -132,7 +149,13 @@ export function AppNav({
       {active && active.group.tabs.length > 1 && (
         <nav aria-label={`${active.group.label} sections`} className="hidden gap-2 px-4 pb-3 sm:px-6 lg:flex">
           {active.group.tabs.map((tab) => (
-            <SubTabLink key={tab.href} href={tab.href} label={tab.label} active={active.tab === tab} />
+            <SubTabLink
+              key={tab.href}
+              href={tab.href}
+              label={tab.label}
+              active={active.tab === tab}
+              done={tabDone(tab.href, activeClient)}
+            />
           ))}
         </nav>
       )}
@@ -140,17 +163,18 @@ export function AppNav({
   );
 }
 
-function SubTabLink({ href, label, active }: { href: string; label: string; active: boolean }) {
+function SubTabLink({ href, label, active, done = false }: { href: string; label: string; active: boolean; done?: boolean }) {
   return (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "rounded-md border px-3 py-1 text-[12.5px] font-medium transition-colors",
+        "flex items-center gap-1.5 rounded-md border px-3 py-1 text-[12.5px] font-medium transition-colors",
         active ? "border-accent bg-accent text-on-accent" : "border-line text-muted hover:border-slate-300 hover:text-ink"
       )}
     >
       {label}
+      {done && !active && <CheckCircle2 aria-label="done" className="h-[11px] w-[11px] text-accent-text" />}
     </Link>
   );
 }
