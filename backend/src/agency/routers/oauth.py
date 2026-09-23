@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
-from agency.config import get_settings
+from agency.config import Settings, get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import Client, PlatformAccount
 from agency.utils.encryption import encrypt_token
@@ -48,7 +48,7 @@ PLATFORM_CLIENT_KEYS = {
 }
 
 
-def _requested_scopes(platform: str, settings) -> str:
+def _requested_scopes(platform: str, settings: Settings) -> str:
     """Scopes for the authorize URL.
 
     LinkedIn's comment-read permission (``r_member_social`` / ``r_organization_social``)

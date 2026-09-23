@@ -254,10 +254,11 @@ async def _refresh_x_token(
     refresh = decrypt_token(str(account.refresh_token_enc or ""))
     if not refresh or not settings.twitter_client_id:
         return False
-    auth = (
-        (settings.twitter_client_id, settings.twitter_client_secret)
+    # Confidential clients authenticate with Basic; public clients send client_id only.
+    auth: httpx.BasicAuth | httpx._client.UseClientDefault = (
+        httpx.BasicAuth(settings.twitter_client_id, settings.twitter_client_secret)
         if settings.twitter_client_secret
-        else None
+        else httpx.USE_CLIENT_DEFAULT
     )
     try:
         resp = await http.post(
