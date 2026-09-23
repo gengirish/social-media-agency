@@ -48,6 +48,22 @@ PLATFORM_CLIENT_KEYS = {
 }
 
 
+def _requested_scopes(platform: str, settings) -> str:
+    """Scopes for the authorize URL.
+
+    LinkedIn's comment-read permission (``r_member_social`` / ``r_organization_social``)
+    is appended only when ``LINKEDIN_INBOX_SCOPE`` says the app holds it: LinkedIn
+    rejects the whole authorization for a scope the app was not granted, which would
+    break connecting LinkedIn for publishing too. See ``services/inbox.py``.
+    """
+    scopes = OAUTH_CONFIGS[platform]["scopes"]
+    extra = (getattr(settings, "linkedin_inbox_scope", "") or "").strip()
+    if platform == "linkedin" and extra:
+        present = set(scopes.split())
+        scopes = " ".join([scopes, *[s for s in extra.split() if s not in present]])
+    return scopes
+
+
 @router.get("/{platform}/authorize")
 async def get_oauth_url(
     platform: str,
@@ -74,7 +90,7 @@ async def get_oauth_url(
         "client_id": client_id,
         "redirect_uri": callback_url,
         "response_type": "code",
-        "scope": config["scopes"],
+        "scope": _requested_scopes(platform, settings),
         "state": str(org_id),
     }
     auth_url = f"{config['authorize_url']}?{urllib.parse.urlencode(params)}"

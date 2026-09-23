@@ -22,6 +22,7 @@ from agency.routers import (
     competitive,
     content,
     health,
+    inbox,
     integrations,
     magic_brief,
     notifications,
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
         product_analytics,
         amplify,
         assets,
+        inbox,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

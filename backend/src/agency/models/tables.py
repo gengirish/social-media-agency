@@ -368,6 +368,35 @@ class CreativeAsset(Base):
     )
 
 
+class InboxItemState(Base):
+    """What a human did with one Inbox item (read / handled / replied).
+
+    Inbox items are read live from X and LinkedIn and never stored; only this
+    triage state is. ``item_key`` is ``"<platform>:<platform item id>"``.
+    """
+
+    __tablename__ = "inbox_item_state"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id = Column(
+        UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    item_key = Column(String(255), nullable=False)
+    is_read = Column(Boolean, nullable=False, default=False)
+    handled = Column(Boolean, nullable=False, default=False)
+    reply_id = Column(String(255), nullable=True)
+    reply_url = Column(Text, nullable=True)
+    updated_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("org_id", "client_id", "item_key"),)
+
+
 class AnalyticsSnapshot(Base):
     __tablename__ = "analytics_snapshot"
 
