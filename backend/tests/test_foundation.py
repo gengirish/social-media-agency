@@ -236,3 +236,36 @@ async def test_get_org_client_404s_across_orgs(orgs, session_factory):
             await get_org_client(session, uuid4(), orgs["org_a"])
         found = await get_org_client(session, orgs["client_a"], orgs["org_a"])
         assert found.id == orgs["client_a"]
+
+
+# ---------------------------------------------------------------------------
+# campaign focus
+# ---------------------------------------------------------------------------
+async def test_campaign_focus_set_read_clear(client, orgs):
+    cid = str(orgs["client_a"])
+    resp = await client.put(
+        f"{API}/clients/{cid}/campaign-focus",
+        json={"description": "  Looking for beta testers  "},
+        headers=orgs["headers_a"],
+    )
+    assert resp.status_code == 200
+    assert resp.json()["campaign_focus"] == "Looking for beta testers"
+
+    overview = (await client.get(f"{API}/clients/overview", headers=orgs["headers_a"])).json()
+    assert overview["items"][0]["campaign_focus"] == "Looking for beta testers"
+
+    resp = await client.delete(f"{API}/clients/{cid}/campaign-focus", headers=orgs["headers_a"])
+    assert resp.status_code == 200
+    overview = (await client.get(f"{API}/clients/overview", headers=orgs["headers_a"])).json()
+    assert overview["items"][0]["campaign_focus"] is None
+
+
+@pytest.mark.parametrize("method", ["put", "delete"])
+async def test_campaign_focus_is_org_scoped(client, orgs, method):
+    kwargs = {"json": {"description": "hijack"}} if method == "put" else {}
+    resp = await getattr(client, method)(
+        f"{API}/clients/{orgs['client_b']}/campaign-focus", headers=orgs["headers_a"], **kwargs
+    )
+    assert resp.status_code == 404
+    overview = (await client.get(f"{API}/clients/overview", headers=orgs["headers_b"])).json()
+    assert overview["items"][0]["campaign_focus"] is None

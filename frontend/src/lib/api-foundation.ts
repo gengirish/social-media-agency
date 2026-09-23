@@ -18,6 +18,8 @@ export interface ClientOverview {
   scheduled: number;
   published: number;
   failed: number;
+  /** Cadence's "Campaign": the human-typed current focus every generator reads. */
+  campaign_focus: string | null;
 }
 
 export type AssetKind =
@@ -60,6 +62,13 @@ function assetListPath({ clientId, kinds, q, limit, offset }: AssetListQuery): s
 
 export const foundationApi = {
   clientsOverview: () => request<{ items: ClientOverview[] }>("/api/v1/clients/overview"),
+  setCampaignFocus: (clientId: string, description: string) =>
+    request<{ campaign_focus: string | null }>(`/api/v1/clients/${clientId}/campaign-focus`, {
+      method: "PUT",
+      body: JSON.stringify({ description }),
+    }),
+  clearCampaignFocus: (clientId: string) =>
+    request<{ campaign_focus: null }>(`/api/v1/clients/${clientId}/campaign-focus`, { method: "DELETE" }),
 
   listAssets: <P = Record<string, unknown>>(query: AssetListQuery) =>
     request<{ items: CreativeAsset<P>[]; total: number }>(assetListPath(query)),

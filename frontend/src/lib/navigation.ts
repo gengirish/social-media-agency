@@ -33,7 +33,7 @@ export const NAV_GROUPS: NavGroup[] = [
     tabs: [
       { label: "Profile", href: "/setup/profile" },
       { label: "Clients", href: "/clients" },
-      { label: "Accounts", href: "/settings?tab=platforms", path: "/settings", queryTab: "platforms" },
+      { label: "Accounts", href: "/setup/accounts" },
     ],
   },
   {

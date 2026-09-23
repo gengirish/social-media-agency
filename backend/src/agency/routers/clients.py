@@ -1,7 +1,9 @@
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -133,9 +135,63 @@ async def clients_overview(
                 "scheduled": by_status.get("scheduled", 0),
                 "published": by_status.get("published", 0),
                 "failed": by_status.get("failed", 0),
+                "campaign_focus": _campaign_focus(c),
             }
         )
     return {"items": items}
+
+
+def _campaign_focus(client: Client) -> str | None:
+    settings: Any = client.settings
+    focus = settings.get("campaign_focus") if isinstance(settings, dict) else None
+    desc = focus.get("description") if isinstance(focus, dict) else None
+    return desc.strip() if isinstance(desc, str) and desc.strip() else None
+
+
+class CampaignFocusRequest(BaseModel):
+    description: str = Field(min_length=1, max_length=300)
+
+
+@router.put("/{client_id}/campaign-focus")
+async def set_campaign_focus(
+    client_id: UUID,
+    body: CampaignFocusRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+) -> dict[str, Any]:
+    """Cadence's "Campaign": a short, human-typed statement of what is going on right now.
+
+    Every generator reads it through ``brand_context.brand_prompt_block``. No AI
+    involved — it is deliberately a plain statement the human owns and clears.
+    """
+    client = await _get_org_client(db, client_id, org_id)
+    settings: Any = client.settings
+    merged = dict(settings) if isinstance(settings, dict) else {}
+    merged["campaign_focus"] = {
+        "description": body.description.strip(),
+        "set_at": datetime.now(UTC).isoformat(),
+    }
+    # Reassign (not mutate) so SQLAlchemy sees the JSONB change.
+    client.settings = merged  # type: ignore[assignment]
+    await db.commit()
+    return {"campaign_focus": _campaign_focus(client)}
+
+
+@router.delete("/{client_id}/campaign-focus")
+async def clear_campaign_focus(
+    client_id: UUID,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+) -> dict[str, Any]:
+    client = await _get_org_client(db, client_id, org_id)
+    settings: Any = client.settings
+    merged = dict(settings) if isinstance(settings, dict) else {}
+    merged.pop("campaign_focus", None)
+    client.settings = merged  # type: ignore[assignment]
+    await db.commit()
+    return {"campaign_focus": None}
 
 
 @router.get("/{client_id}", response_model=ClientResponse)

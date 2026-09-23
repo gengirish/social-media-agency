@@ -99,7 +99,7 @@ export default function WelcomePage() {
       label: "Connect social accounts",
       body: "X, LinkedIn and Facebook publish for real once connected. Nothing goes out without your approval.",
       cta: accountsDone ? "Manage accounts" : "Connect accounts",
-      href: "/settings?tab=platforms",
+      href: "/setup/accounts",
       done: accountsDone,
       icon: <Link2 className="h-[15px] w-[15px]" />,
       detail: accountsDone ? `${plural(active.connected_accounts, "account")} connected` : null,
@@ -254,7 +254,7 @@ export default function WelcomePage() {
             Start with the brand profile <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         ) : !accountsDone ? (
-          <Link href="/settings?tab=platforms" className={cn(buttonVariants(), "animate-breathe")}>
+          <Link href="/setup/accounts" className={cn(buttonVariants(), "animate-breathe")}>
             Connect your first account <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         ) : (
