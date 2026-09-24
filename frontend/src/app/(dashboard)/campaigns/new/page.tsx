@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, type Client } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
@@ -23,6 +23,29 @@ const CHANNEL_OPTIONS = [
   { id: "tiktok", label: "TikTok", emoji: "🎵" },
 ];
 
+/* Red ring for a control whose Field is showing an error. */
+const invalidClass = "border-red-400 hover:border-red-400 focus:border-red-500 focus:ring-red-500/20";
+
+type ErrorKey =
+  | "clientId"
+  | "campaignName"
+  | "objective"
+  | "channels"
+  | "endDate"
+  | "budgetUsd";
+
+type Errors = Partial<Record<ErrorKey, string>>;
+
+/* In visual order, so the first error found is the first one on screen. */
+const FIELD_IDS: { key: ErrorKey; id: string }[] = [
+  { key: "clientId", id: "campaign-client" },
+  { key: "campaignName", id: "campaign-name" },
+  { key: "objective", id: "campaign-objective" },
+  { key: "channels", id: "campaign-channels" },
+  { key: "endDate", id: "campaign-end" },
+  { key: "budgetUsd", id: "campaign-budget" },
+];
+
 export default function NewCampaignPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
@@ -40,6 +63,10 @@ export default function NewCampaignPage() {
   const [endDate, setEndDate] = useState("");
   const [additionalContext, setAdditionalContext] = useState("");
 
+  // A step's errors only surface once the user has tried to leave it, then
+  // update live so fixing a field clears its message immediately.
+  const [attempted, setAttempted] = useState<Record<number, boolean>>({});
+
   useEffect(() => {
     api.getClients().then((res) => setClients(res.items)).catch(() => {});
   }, []);
@@ -50,9 +77,55 @@ export default function NewCampaignPage() {
     );
   }
 
+  // Mirrors the backend's CampaignBrief schema (name >= 3, objective >= 10) so
+  // a bad value is caught on the step that owns it, not by a 422 after Launch.
+  const stepErrors = useMemo<Record<number, Errors>>(() => {
+    const brief: Errors = {};
+    if (!clientId) brief.clientId = "Pick the client this campaign is for.";
+    const name = campaignName.trim();
+    if (!name) brief.campaignName = "Give the campaign a name.";
+    else if (name.length < 3) brief.campaignName = "Use at least 3 characters.";
+    const goal = objective.trim();
+    if (!goal) brief.objective = "Describe what this campaign should achieve.";
+    else if (goal.length < 10) brief.objective = "Say a little more — at least 10 characters.";
+
+    const setup: Errors = {};
+    if (channels.length === 0) setup.channels = "Pick at least one channel.";
+    if (startDate && endDate && endDate < startDate)
+      setup.endDate = "End date must be on or after the start date.";
+    if (!Number.isFinite(budgetUsd) || budgetUsd < 0) setup.budgetUsd = "Budget cannot be negative.";
+
+    return { 1: brief, 2: setup, 3: {} };
+  }, [clientId, campaignName, objective, channels, startDate, endDate, budgetUsd]);
+
+  const errors = attempted[step] ? stepErrors[step] : {};
+
+  function focusFirstError(stepErrs: Errors) {
+    const id = FIELD_IDS.find((f) => stepErrs[f.key])?.id;
+    if (!id) return;
+    const el = document.getElementById(id);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    el?.focus({ preventScroll: true });
+  }
+
+  function goToStep(target: number) {
+    const stepErrs = stepErrors[step];
+    // Going back is always allowed; only advancing is gated.
+    if (target > step && Object.keys(stepErrs).length > 0) {
+      setAttempted((prev) => ({ ...prev, [step]: true }));
+      focusFirstError(stepErrs);
+      return;
+    }
+    setStep(target);
+  }
+
   async function handleLaunch() {
-    if (!clientId || !campaignName || !objective) {
-      toast.error("Please fill in all required fields");
+    const blocking = [1, 2].find((s) => Object.keys(stepErrors[s]).length > 0);
+    if (blocking) {
+      setAttempted((prev) => ({ ...prev, [blocking]: true }));
+      setStep(blocking);
+      toast.error("Please fix the highlighted fields");
+      requestAnimationFrame(() => focusFirstError(stepErrors[blocking]));
       return;
     }
     setLoading(true);
@@ -137,29 +210,42 @@ export default function NewCampaignPage() {
       {/* Step 1: Brief */}
       {step === 1 && (
         <SectionCard key="step-1" eyebrow="The brief" bodyClassName="space-y-5">
-          <Field label="Client *" htmlFor="campaign-client">
-            <Select id="campaign-client" value={clientId} onChange={(e) => setClientId(e.target.value)}>
+          <Field label="Client *" htmlFor="campaign-client" error={errors.clientId}>
+            <Select
+              id="campaign-client"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              aria-invalid={Boolean(errors.clientId)}
+              aria-describedby={errors.clientId ? "campaign-client-error" : undefined}
+              className={cn(errors.clientId && invalidClass)}
+            >
               <option value="">Select a client...</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>{c.brand_name} — {c.industry}</option>
               ))}
             </Select>
           </Field>
-          <Field label="Campaign Name *" htmlFor="campaign-name">
+          <Field label="Campaign Name *" htmlFor="campaign-name" error={errors.campaignName}>
             <Input
               id="campaign-name"
               value={campaignName}
               onChange={(e) => setCampaignName(e.target.value)}
               placeholder="Q2 Product Launch Campaign"
+              aria-invalid={Boolean(errors.campaignName)}
+              aria-describedby={errors.campaignName ? "campaign-name-error" : undefined}
+              className={cn(errors.campaignName && invalidClass)}
             />
           </Field>
-          <Field label="Campaign Objective *" htmlFor="campaign-objective">
+          <Field label="Campaign Objective *" htmlFor="campaign-objective" error={errors.objective}>
             <Textarea
               id="campaign-objective"
               value={objective}
               onChange={(e) => setObjective(e.target.value)}
               rows={3}
               placeholder="Increase brand awareness and drive sign-ups for our new product launch..."
+              aria-invalid={Boolean(errors.objective)}
+              aria-describedby={errors.objective ? "campaign-objective-error" : undefined}
+              className={cn(errors.objective && invalidClass)}
             />
           </Field>
           <Field label="Target Audience" htmlFor="campaign-audience">
@@ -185,7 +271,14 @@ export default function NewCampaignPage() {
       {/* Step 2: Channels & Budget */}
       {step === 2 && (
         <SectionCard key="step-2" eyebrow="Channels & budget" bodyClassName="space-y-5">
-          <div>
+          <div
+            id="campaign-channels"
+            tabIndex={-1}
+            role="group"
+            aria-label="Channels"
+            aria-describedby={errors.channels ? "campaign-channels-error" : undefined}
+            className="outline-none"
+          >
             <p className="mb-2 text-xs font-medium text-muted">Channels</p>
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               {CHANNEL_OPTIONS.map((ch) => {
@@ -223,28 +316,46 @@ export default function NewCampaignPage() {
                 );
               })}
             </div>
-            <p className="mt-2.5 text-xs text-muted">
-              CampaignForge writes and schedules content for every channel above. Channels marked
-              &ldquo;draft only&rdquo; cannot be published to automatically yet — you post those
-              yourself.
-            </p>
+            {errors.channels ? (
+              <p id="campaign-channels-error" className="mt-2.5 text-xs text-red-600">
+                {errors.channels}
+              </p>
+            ) : (
+              <p className="mt-2.5 text-xs text-muted">
+                CampaignForge writes and schedules content for every channel above. Channels marked
+                &ldquo;draft only&rdquo; cannot be published to automatically yet — you post those
+                yourself.
+              </p>
+            )}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Start Date" htmlFor="campaign-start">
               <Input id="campaign-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             </Field>
-            <Field label="End Date" htmlFor="campaign-end">
-              <Input id="campaign-end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            <Field label="End Date" htmlFor="campaign-end" error={errors.endDate}>
+              <Input
+                id="campaign-end"
+                type="date"
+                min={startDate || undefined}
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                aria-invalid={Boolean(errors.endDate)}
+                aria-describedby={errors.endDate ? "campaign-end-error" : undefined}
+                className={cn(errors.endDate && invalidClass)}
+              />
             </Field>
           </div>
-          <Field label="Budget (USD)" htmlFor="campaign-budget">
+          <Field label="Budget (USD)" htmlFor="campaign-budget" error={errors.budgetUsd}>
             <Input
               id="campaign-budget"
               type="number"
+              min={0}
               value={budgetUsd}
               onChange={(e) => setBudgetUsd(Number(e.target.value))}
               placeholder="5000"
-              className="font-mono"
+              aria-invalid={Boolean(errors.budgetUsd)}
+              aria-describedby={errors.budgetUsd ? "campaign-budget-error" : undefined}
+              className={cn("font-mono", errors.budgetUsd && invalidClass)}
             />
           </Field>
           <Field label="Additional Context" htmlFor="campaign-context">
@@ -295,7 +406,7 @@ export default function NewCampaignPage() {
       {/* Navigation buttons */}
       <div className="flex justify-between">
         {step > 1 ? (
-          <Button variant="secondary" onClick={() => setStep(step - 1)}>
+          <Button variant="secondary" onClick={() => goToStep(step - 1)}>
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
         ) : (
@@ -303,7 +414,7 @@ export default function NewCampaignPage() {
         )}
 
         {step < 3 ? (
-          <Button onClick={() => setStep(step + 1)}>
+          <Button onClick={() => goToStep(step + 1)}>
             Next <ArrowRight className="h-4 w-4" />
           </Button>
         ) : (

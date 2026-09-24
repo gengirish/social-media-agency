@@ -19,12 +19,19 @@ export function Field({
   label,
   htmlFor,
   hint,
+  error,
   children,
   className,
 }: {
   label: ReactNode;
   htmlFor?: string;
   hint?: ReactNode;
+  /*
+   * Validation message for the control. Rendered with id `${htmlFor}-error` so
+   * the caller can point the control's aria-describedby at it; the caller also
+   * owns aria-invalid, since Field does not clone its children.
+   */
+  error?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
@@ -34,7 +41,13 @@ export function Field({
         {label}
       </label>
       {children}
-      {hint && <p className="text-xs text-muted">{hint}</p>}
+      {error ? (
+        <p id={htmlFor ? `${htmlFor}-error` : undefined} className="text-xs text-red-600">
+          {error}
+        </p>
+      ) : (
+        hint && <p className="text-xs text-muted">{hint}</p>
+      )}
     </div>
   );
 }
