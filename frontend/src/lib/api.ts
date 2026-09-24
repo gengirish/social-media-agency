@@ -24,15 +24,62 @@ function detailMessage(detail: unknown): string {
 
 let _clerkGetToken: (() => Promise<string | null>) | null = null;
 
-/** Called once from ClerkTokenSync to wire up Clerk's getToken. */
-export function setClerkTokenGetter(getter: () => Promise<string | null>) {
+/*
+ * Clerk readiness gate.
+ *
+ * `getToken()` resolves `null` until Clerk has hydrated the session, and every
+ * dashboard screen fires its fetches from a mount effect. Without this gate the
+ * first render of a freshly signed-up user raced Clerk and lost: the requests
+ * went out with **no** Authorization header at all, the API answered 401 (which
+ * is correct — there was no credential), and providers like ActiveClientProvider
+ * latched `error: true` with no retry, so the app stayed broken until a manual
+ * reload. It reproduced hardest for new users because their session is created
+ * in the same navigation that renders the dashboard.
+ *
+ * So: never fire an authenticated request while the token is merely *not ready
+ * yet*. Wait for Clerk to report `isLoaded`, then read the token.
+ */
+let _authReady = false;
+let _markAuthReady = () => {};
+const _authReadyPromise = new Promise<void>((resolve) => {
+  _markAuthReady = resolve;
+});
+
+/** Cap on how long a request waits for Clerk. Only ever hit if Clerk never loads
+ * (blocked script, offline) — the request then proceeds unauthenticated and 401s,
+ * which is the honest outcome rather than a hang. */
+const AUTH_READY_TIMEOUT_MS = 8000;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Called from ClerkTokenSync to wire up Clerk's getToken.
+ *
+ * `ready` is Clerk's `isLoaded`. Signed **out** counts as ready: `getToken()`
+ * legitimately returns null there, and requests should go out unauthenticated
+ * rather than stall for the timeout.
+ */
+export function setClerkTokenGetter(
+  getter: () => Promise<string | null>,
+  ready = true
+) {
   _clerkGetToken = getter;
+  if (ready && !_authReady) {
+    _authReady = true;
+    _markAuthReady();
+  }
 }
 
 /** Base URL and token, for callers that need their own fetch (e.g. keepalive). */
 export const API_BASE_URL = API_BASE;
 
+/** The bearer token, waiting for Clerk to hydrate rather than returning a
+ * premature null. Returns null only when genuinely signed out or Clerk never
+ * loaded. */
 export async function getAuthToken(): Promise<string | null> {
+  if (!_authReady) {
+    await Promise.race([_authReadyPromise, sleep(AUTH_READY_TIMEOUT_MS)]);
+  }
   return _clerkGetToken ? await _clerkGetToken() : null;
 }
 
@@ -46,16 +93,29 @@ async function unwrap<T>(res: Response): Promise<T> {
 }
 
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = _clerkGetToken ? await _clerkGetToken() : null;
+  const token = await getAuthToken();
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
+  const send = (bearer: string | null) =>
+    fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+        ...options?.headers,
+      },
+    });
+
+  let res = await send(token);
+
+  // Safety net for the narrow window the readiness gate cannot cover: Clerk
+  // reported loaded but handed back a token that was null or had just expired
+  // (its session tokens are short-lived and refreshed lazily). Only retried when
+  // the first attempt was unauthenticated or the server rejected the credential,
+  // and only once, so a genuinely signed-out caller still fails fast.
+  if (res.status === 401 && _clerkGetToken) {
+    const fresh = await _clerkGetToken().catch(() => null);
+    if (fresh && fresh !== token) res = await send(fresh);
+  }
 
   return unwrap<T>(res);
 }
