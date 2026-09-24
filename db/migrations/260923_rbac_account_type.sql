@@ -52,4 +52,4 @@ COMMIT;
 --
 -- NOTE: after Phase 1A this leaves every existing org without an `owner` (both
 -- provisioning paths hardcoded 'admin'), so nobody can manage billing. That is what
--- db/migrations/260923_owner_backfill.sql fixes — run it after this one.
+-- db/migrations/260924_owner_backfill.sql fixes — run it after this one.
