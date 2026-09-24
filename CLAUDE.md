@@ -241,7 +241,7 @@ Marketing assets are mirrored in **two trees**: `.claude/` (what Claude Code loa
 |---|---|
 | `workflows/` | `primary-workflow.md`, `sales-workflow.md`, `crm-workflow.md`, `marketing-rules.md`, `orchestration-protocol.md`, `documentation-management.md`, `data-reliability-rules.md` |
 | `agents/` | 20 marketing agents (attraction-specialist, lead-qualifier, email-wizard, copywriter, seo-specialist, reviewer personas, …) |
-| `skills/` | 59 skills. The `agency-*` skills (`agency-backend`, `agency-frontend`, `agency-database`, `agency-ai-engine`, `agency-deploy`, `agency-testing`, `agency-billing`, `agency-realtime`, `agency-agentmail`, `agency-project`) document **this codebase** — read the relevant one before non-trivial product work |
+| `skills/` | 60 skills. The `agency-*` skills (`agency-backend`, `agency-frontend`, `agency-database`, `agency-ai-engine`, `agency-deploy`, `agency-testing`, `agency-billing`, `agency-realtime`, `agency-agentmail`, `agency-project`) document **this codebase** — read the relevant one before non-trivial product work. `campaignforge-brief` turns a product URL into paste-ready inputs for the app's own New Client / New Campaign forms (verified facts + guardrail Additional Context); worked example in `campaigns/certforge-launch/05-campaignforge-brief.md` |
 | `commands/` | 100 slash commands grouped by domain (campaign, content, seo, cro, growth, analytics, …) plus the English `training/` course |
 | `rules/deployment-domains.mdc` | Cursor `.mdc` rule format; Claude Code does not read `.claude/rules/`, so this file is inert on the Claude side |
 | `campaigns/` (repo root) | Campaign outputs (e.g. `ai-upskill-cohort`) |
