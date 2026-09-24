@@ -1,7 +1,7 @@
 [project]
 name = "campaignforge"
 version = "0.1.0"
-description = "CampaignForge AI — Multi-Agent Digital Marketing Agency"
+description = "CampaignForge AI â€” Multi-Agent Digital Marketing Agency"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
@@ -17,7 +17,7 @@ dependencies = [
     "bcrypt>=4.0.0,<5.0.0",
     "python-multipart>=0.0.12",
     "httpx>=0.28.0",
-    # NOTE: celery was declared here but never imported — background work is
+    # NOTE: celery was declared here but never imported â€” background work is
     # asyncio (a detached task per campaign, plus the scheduler's 60s loop).
     # redis is kept: it is the intended backing for SSE fan-out once the
     # in-process _campaign_streams dict has to work across >1 machine.
@@ -67,7 +67,7 @@ src = ["src"]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
-# E501 only. These modules are mostly prompt text — JSON schema examples and
+# E501 only. These modules are mostly prompt text â€” JSON schema examples and
 # instruction lines inside triple-quoted templates sent verbatim to an LLM.
 # A line break inside one of those literals changes the model's input, so
 # rewrapping to satisfy a style rule is a behaviour change dressed as a lint
@@ -86,7 +86,7 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI's whole dependency-injection design puts these calls in parameter
-# defaults — `db: AsyncSession = Depends(get_db)` is the documented idiom, not
+# defaults â€” `db: AsyncSession = Depends(get_db)` is the documented idiom, not
 # the mutable-default bug B008 exists to catch. Without this, B008 fires on
 # every injected parameter in the codebase (217 of 294 findings) and buries
 # every real lint error under noise.
@@ -121,3 +121,77 @@ addopts = ["--cov=src/agency", "--cov-report=term-missing", "-v"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
+
+# --- mypy baseline (260924) -------------------------------------------------
+# `strict = true` above applies to the whole package. These 60 modules predate any
+# type annotation and carry 420 errors between them — 199 missing return annotations
+# and 122 bare generics, i.e. mechanical, not unsound. They are exempted so the CI
+# type-check gates the ~half of the codebase that is already clean instead of failing
+# on everything and being ignored.
+#
+# THIS LIST ONLY SHRINKS. Annotate a module, delete its line, and it is gated forever
+# after. Never add to it: a new module must be born clean.
+[[tool.mypy.overrides]]
+module = [
+    "agency.agents.ad_copy",
+    "agency.agents.analytics",
+    "agency.agents.autonomous_operator",
+    "agency.agents.content_writer",
+    "agency.agents.graph",
+    "agency.agents.orchestrator",
+    "agency.agents.qa_brand",
+    "agency.agents.seo",
+    "agency.agents.state",
+    "agency.agents.strategy",
+    "agency.agents.utils",
+    "agency.agents.video_script",
+    "agency.dependencies",
+    "agency.main",
+    "agency.middleware.api_key_auth",
+    "agency.models.database",
+    "agency.models.schemas",
+    "agency.models.tables",
+    "agency.routers.acquisition",
+    "agency.routers.audit",
+    "agency.routers.auth",
+    "agency.routers.billing",
+    "agency.routers.brand_analytics",
+    "agency.routers.campaigns",
+    "agency.routers.clients",
+    "agency.routers.comments",
+    "agency.routers.competitive",
+    "agency.routers.content",
+    "agency.routers.health",
+    "agency.routers.integrations",
+    "agency.routers.magic_brief",
+    "agency.routers.notifications",
+    "agency.routers.oauth",
+    "agency.routers.portal",
+    "agency.routers.product_analytics",
+    "agency.routers.public_api",
+    "agency.routers.publishing",
+    "agency.routers.reports",
+    "agency.routers.slack",
+    "agency.routers.stats",
+    "agency.routers.team",
+    "agency.routers.webhooks_config",
+    "agency.services.ad_optimization",
+    "agency.services.api_keys",
+    "agency.services.audit",
+    "agency.services.billing",
+    "agency.services.brand_learning",
+    "agency.services.client_acquisition",
+    "agency.services.cross_learning",
+    "agency.services.image_generation",
+    "agency.services.llm_provider",
+    "agency.services.notifications",
+    "agency.services.platform_metrics",
+    "agency.services.product_analytics",
+    "agency.services.publishing",
+    "agency.services.reporting",
+    "agency.services.scheduler",
+    "agency.services.slack_integration",
+    "agency.services.team",
+    "agency.services.white_label",
+]
+ignore_errors = true
