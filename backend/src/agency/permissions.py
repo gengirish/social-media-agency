@@ -136,7 +136,9 @@ def normalize_role(role: str | None) -> Role | None:
         return None
     candidate = LEGACY_ROLE_MAP.get(role, role)
     if candidate in CAPS:
-        return cast(Role, candidate)
+        # No cast: ``CAPS`` is keyed by ``Role``, so membership narrows ``candidate``
+        # on its own. mypy >= 1.20 reports an explicit cast here as redundant.
+        return candidate
     return None
 
 

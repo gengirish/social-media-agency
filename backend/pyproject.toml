@@ -47,8 +47,13 @@ dev = [
     "pytest-cov>=6.0.0",
     "httpx>=0.28.0",
     "aiosqlite>=0.20.0",
-    "ruff>=0.8.0",
-    "mypy>=1.13.0",
+    # Linters are PINNED, not ranged. They are blocking CI gates, and an unbounded
+    # spec means CI installs whatever released most recently: on 260924 CI resolved
+    # mypy 2.3.1 against a developer's 1.19.1 and failed on a cast the older version
+    # required, with nobody having changed the code. A linter upgrade should be a
+    # deliberate PR that re-baselines, never a surprise on an unrelated change.
+    "ruff==0.16.8",
+    "mypy==2.3.1",
 ]
 
 [build-system]
