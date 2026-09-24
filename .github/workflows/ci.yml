@@ -5,6 +5,11 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  # Manual trigger. Added 260924 because this workflow had registered as "active"
+  # since March without ever producing a single run — pushes to main and PRs into
+  # it both failed to fire it, with no error anywhere in the API. A dispatchable
+  # workflow turns that silence into either a run or a concrete error message.
+  workflow_dispatch:
 
 jobs:
   backend:
