@@ -37,6 +37,7 @@ import { downloadTextFile, isAbortError, postStudioApi } from "@/lib/api-posts";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
 import { trackFeature } from "@/lib/analytics";
 import { canPublish, publishUnavailableReason } from "@/lib/platforms";
+import { useSession } from "@/lib/session";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { CampaignIndicator } from "@/components/ui/campaign-indicator";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -110,6 +111,14 @@ function removeAll(set: Set<string>, ids: string[]) {
 
 export default function QueuePage() {
   const { active, activeId, clients, loading: clientsLoading, refresh: refreshClients } = useActiveClient();
+  /*
+   * Presentation only — every one of these is enforced by `require_cap` on the
+   * router. A `member` can approve but not publish, so the Queue legitimately
+   * shows Approve with no Publish/Schedule anywhere on it.
+   */
+  const { can, isPersonal } = useSession();
+  const mayApprove = can("content.approve");
+  const mayPublish = can("publish.write");
 
   const [scope, setScope] = useState<Scope>("client");
   const [tab, setTab] = useState<QueueStatus>("draft");
@@ -150,7 +159,9 @@ export default function QueuePage() {
   const regenAbort = useRef<AbortController | null>(null);
   const briefAbort = useRef<AbortController | null>(null);
 
-  const clientId = scope === "client" ? activeId : null;
+  // A personal account has exactly one client, so there is no "all clients" to
+  // scope to — the picker is hidden and the scope stays pinned to it.
+  const clientId = scope === "client" || isPersonal ? activeId : null;
   const clientNames = useMemo(() => new Map(clients.map((c) => [c.id, clientLabel(c)])), [clients]);
 
   // Overdue labels depend on the clock, not just on data.
@@ -316,7 +327,7 @@ export default function QueuePage() {
       reload();
       void refreshClients();
       // Cadence's "Approve & schedule": the picker opens straight after a passed check.
-      if (canPublish(post.platform)) setScheduleFor({ ...post, status: "approved" });
+      if (mayPublish && canPublish(post.platform)) setScheduleFor({ ...post, status: "approved" });
     } catch (err) {
       const code = apiErrorCode(err);
       if (code === "moderation_flagged") {
@@ -681,18 +692,20 @@ export default function QueuePage() {
         description="Every post waits here for a person. Approving runs a moderation check first; only approved posts can be scheduled or published."
         actions={
           <>
-            <SegmentedTabs
-              label="Queue scope"
-              items={[
-                { id: "client" as Scope, label: clientLabel(active) },
-                { id: "all" as Scope, label: "All clients" },
-              ]}
-              value={scope}
-              onChange={(s) => {
-                setScope(s);
-                setPage(1);
-              }}
-            />
+            {!isPersonal && (
+              <SegmentedTabs
+                label="Queue scope"
+                items={[
+                  { id: "client" as Scope, label: clientLabel(active) },
+                  { id: "all" as Scope, label: "All clients" },
+                ]}
+                value={scope}
+                onChange={(s) => {
+                  setScope(s);
+                  setPage(1);
+                }}
+              />
+            )}
             <Link href="/calendar" className={buttonVariants({ variant: "secondary", size: "sm" })}>
               <CalendarDays className="h-3.5 w-3.5" />
               Calendar
@@ -704,11 +717,15 @@ export default function QueuePage() {
       {noClient ? (
         <EmptyState
           icon={Inbox}
-          title="Add a client first"
-          description="Posts belong to a client. Add one, set up its brand profile, then generate its first post here."
+          title={isPersonal ? "Your brand isn't set up yet" : "Add a client first"}
+          description={
+            isPersonal
+              ? "Posts are written for your brand. Set it up under Setup › Clients, then generate your first post here."
+              : "Posts belong to a client. Add one, set up its brand profile, then generate its first post here."
+          }
           action={
-            <Link href="/clients?new=1" className={buttonVariants({ size: "sm" })}>
-              Add a client
+            <Link href={isPersonal ? "/clients" : "/clients?new=1"} className={buttonVariants({ size: "sm" })}>
+              {isPersonal ? "Open your brand" : "Add a client"}
             </Link>
           }
         />
@@ -806,7 +823,7 @@ export default function QueuePage() {
                 </button>
                 {selectedPosts.length > 0 && (
                   <>
-                    {tab === "draft" && (
+                    {tab === "draft" && mayApprove && (
                       <button
                         type="button"
                         onClick={() => void bulkApprove()}
@@ -817,7 +834,7 @@ export default function QueuePage() {
                         Approve {selectedPosts.length}
                       </button>
                     )}
-                    {(tab === "approved" || tab === "scheduled") && (
+                    {mayPublish && (tab === "approved" || tab === "scheduled") && (
                       <button
                         type="button"
                         onClick={() => setBulkPublishOpen(true)}

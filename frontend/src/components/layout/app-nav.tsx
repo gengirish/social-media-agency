@@ -7,9 +7,9 @@ import { CheckCircle2, Inbox, ListChecks, Menu, Settings, Sparkles, TrendingUp, 
 import { NotificationsBell } from "@/components/notifications-bell";
 import { ThemeToggle, useTheme } from "@/components/theme";
 import { clerkVariables } from "@/lib/clerk-appearance";
-import { NAV_GROUPS, STANDALONE_TITLES, resolveNav, type NavIconName } from "@/lib/navigation";
+import { STANDALONE_TITLES, resolveNav, type NavIconName } from "@/lib/navigation";
 import { ClientSwitcher } from "@/components/layout/client-switcher";
-import { groupHref } from "@/components/layout/shell-extras";
+import { groupHref, useVisibleNavGroups } from "@/components/layout/shell-extras";
 import { useActiveClient } from "@/lib/active-client";
 import type { ClientOverview } from "@/lib/api-foundation";
 import { cn } from "@/lib/utils";
@@ -46,7 +46,10 @@ export function AppNav({
   lastVisited?: Record<string, string>;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const active = resolveNav(pathname, queryTab);
+  // Tabs the viewer lacks the capability for are gone before the resolver sees
+  // them, so an unreachable location simply has no active tab.
+  const groups = useVisibleNavGroups();
+  const active = resolveNav(pathname, queryTab, groups);
   const theme = useTheme();
   const { active: activeClient } = useActiveClient();
   // Cadence breadcrumb: "Group / Tab", or just the group when it has one tab.
@@ -80,7 +83,7 @@ export function AppNav({
         </div>
 
         <nav aria-label="Primary" className="ml-auto hidden items-center gap-1 lg:flex">
-          {NAV_GROUPS.map((group) => {
+          {groups.map((group) => {
             const Icon = ICONS[group.id];
             const isActive = active?.group.id === group.id;
             return (
@@ -121,7 +124,7 @@ export function AppNav({
 
       {menuOpen && (
         <nav id="mobile-nav" aria-label="Primary" className="border-t border-line px-4 py-3 lg:hidden">
-          {NAV_GROUPS.map((group) => {
+          {groups.map((group) => {
             const Icon = ICONS[group.id];
             return (
               <div key={group.id} className="py-1.5">

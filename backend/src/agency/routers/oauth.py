@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agency.config import Settings, get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import Client, PlatformAccount
+from agency.permissions import Capability, require_cap
 from agency.services.oauth_state import InvalidOAuthStateError, sign_state, verify_state
 from agency.utils.encryption import encrypt_token
 
@@ -82,7 +83,16 @@ def oauth_platform_status() -> dict[str, dict[str, Any]]:
     return out
 
 
-@router.get("/{platform}/authorize")
+#: Connecting, re-connecting or disconnecting a social account is what makes real
+#: publishing to a live client account possible, so all three routes below require
+#: ``oauth.connect`` (owner/admin only). The gate is a router dependency, never a
+#: service-layer check — ``services/scheduler.py`` publishes on a timer with no user
+#: in scope. It also runs *before* the handler body, so the tenancy resolution of
+#: ``client_id`` and the ``_first_cors_origin`` redirect-URI construction are untouched.
+_OAUTH_GATE = Depends(require_cap(Capability.OAUTH_CONNECT))
+
+
+@router.get("/{platform}/authorize", dependencies=[_OAUTH_GATE])
 async def get_oauth_url(
     platform: str,
     for_client: UUID | None = Query(default=None, alias="client_id"),
@@ -137,7 +147,7 @@ async def get_oauth_url(
     return {"authorize_url": auth_url, "platform": platform}
 
 
-@router.post("/{platform}/callback")
+@router.post("/{platform}/callback", dependencies=[_OAUTH_GATE])
 async def oauth_callback(
     platform: str,
     body: dict[str, Any],
@@ -251,7 +261,7 @@ async def oauth_callback(
     return {"status": "connected", "platform": platform, "account_handle": account_handle}
 
 
-@router.delete("/{platform}/{account_id}")
+@router.delete("/{platform}/{account_id}", dependencies=[_OAUTH_GATE])
 async def disconnect_platform(
     platform: str,
     account_id: UUID,

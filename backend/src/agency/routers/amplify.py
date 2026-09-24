@@ -34,6 +34,7 @@ from agency.models.tables import (
     CreativeAsset,
     RepurposePack,
 )
+from agency.permissions import Capability, require_cap
 from agency.services import product_analytics as pa
 from agency.services.brand_context import get_org_client, load_brand_context
 from agency.services.create_content import REPURPOSABLE_ASSET_KINDS, asset_source_text
@@ -122,7 +123,12 @@ async def _campaign_brief(db: AsyncSession, campaign_id: Any, org_id: UUID) -> s
     return "\n".join(parts)
 
 
-@router.post("/preview")
+@router.post(
+    "/preview",
+    # A pack costs one generation against the org's monthly allowance; the gate
+    # runs before the quota check, so a rejected viewer spends nothing.
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
 async def preview(
     body: PreviewRequest,
     user: dict[str, Any] = Depends(get_current_user),
@@ -285,7 +291,10 @@ async def preview(
     }
 
 
-@router.post("/{pack_id}/commit")
+@router.post(
+    "/{pack_id}/commit",
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
 async def commit(
     pack_id: UUID,
     body: CommitRequest,

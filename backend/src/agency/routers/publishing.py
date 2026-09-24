@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import ContentPiece, PlatformAccount
+from agency.permissions import Capability, require_cap
 from agency.services.billing import billing
 from agency.services.content_approval import (
     ContentGateError,
@@ -47,7 +48,15 @@ def _piece_to_calendar_item(piece: ContentPiece) -> dict:
     }
 
 
-@router.post("/{content_id}/publish")
+# CAPABILITY GATE: publishing posts to a client's live account, so it is
+# owner/admin only — a ``member`` may approve copy but may not push it out.
+# The gate lives here and nowhere deeper: ``services/scheduler.py::_publish_piece``
+# runs on a timer with no user in scope, so the same check inside
+# ``services/publishing.py`` would stop scheduled posts going out at 3am.
+@router.post(
+    "/{content_id}/publish",
+    dependencies=[Depends(require_cap(Capability.PUBLISH_WRITE))],
+)
 async def publish_now(
     content_id: UUID,
     user=Depends(get_current_user),
@@ -146,7 +155,12 @@ async def publish_now(
     }
 
 
-@router.post("/{content_id}/schedule")
+# CAPABILITY GATE: scheduling is publishing with a delay — the scheduler posts
+# whatever is ``scheduled`` when it comes due — so it needs the same capability.
+@router.post(
+    "/{content_id}/schedule",
+    dependencies=[Depends(require_cap(Capability.PUBLISH_WRITE))],
+)
 async def schedule_content(
     content_id: UUID,
     body: ScheduleRequest,

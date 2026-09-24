@@ -12,8 +12,10 @@
 -- a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
 
 -- Demo Organization
-INSERT INTO organization (id, name, slug, domain) VALUES
-('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'CampaignForge Demo', 'campaignforge-demo', 'demo.campaignforge.ai')
+-- account_type is 'business': the demo org has a team (two users below), and
+-- 'personal' would subtract team.manage from every seat in it.
+INSERT INTO organization (id, name, slug, domain, account_type) VALUES
+('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'CampaignForge Demo', 'campaignforge-demo', 'demo.campaignforge.ai', 'business')
 ON CONFLICT (id) DO NOTHING;
 
 -- Demo Users (password: "password123" — bcrypt hash; JWT / legacy auth only)
@@ -23,7 +25,7 @@ INSERT INTO users (org_id, email, password_hash, full_name, role) VALUES
  'Admin User', 'admin'),
 ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'creator@campaignforge.ai',
  '$2b$12$LJ3xFjGLGnBBkYG.ILdte.XqFgjlOe3MihOb.pBFqHHKkYN8wLyOi',
- 'Content Creator', 'content_creator')
+ 'Content Creator', 'member')
 ON CONFLICT (email) DO NOTHING;
 
 -- Demo Subscription (one row per org)

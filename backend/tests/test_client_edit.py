@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select
 
 from agency.models.tables import BrandProfile, Client, ContentPiece
-from tests.conftest import auth_header_for, create_client_row, create_content_row, create_org
+from tests.conftest import auth_for, create_client_row, create_content_row, create_org
 
 API = "/api/v1"
 
@@ -23,7 +23,7 @@ async def orgs(session_factory):
         "org_a": org_a,
         "client_a": await create_client_row(session_factory, org_a, "Brand A"),
         "client_b": await create_client_row(session_factory, org_b, "Brand B"),
-        "headers_a": auth_header_for(org_a),
+        "headers_a": await auth_for(session_factory, org_a),
     }
 
 

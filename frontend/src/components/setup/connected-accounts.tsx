@@ -38,6 +38,7 @@ import { Eyebrow, Panel } from "@/components/ui/panel";
 import { PostDialog } from "@/components/posts/dialog";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
 import { publishUnavailableReason } from "@/lib/platforms";
+import { useSession } from "@/lib/session";
 import { trackFeature } from "@/lib/analytics";
 import { setupApi, createPkce, type ClientAccount, type ClientAccountsResponse } from "@/lib/api-setup";
 import { cn } from "@/lib/utils";
@@ -121,6 +122,14 @@ export function platformName(id: string): string {
 
 export function ConnectedAccounts({ showContinue = true }: { showContinue?: boolean }) {
   const { active, activeId, refresh } = useActiveClient();
+  /*
+   * `GET /oauth/{platform}/authorize` and the disconnect DELETE are gated on
+   * `oauth.connect` (owner/admin), so both affordances are hidden — not
+   * disabled — for a member or viewer. This is distinct from a platform that
+   * genuinely cannot be connected (`PlatformMeta.unavailable`): one is "you are
+   * not allowed", the other is "this does not exist yet".
+   */
+  const mayConnect = useSession().can("oauth.connect");
   const [data, setData] = useState<ClientAccountsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -235,6 +244,7 @@ export function ConnectedAccounts({ showContinue = true }: { showContinue?: bool
                 setConsentFor(p);
               }}
               onDisconnect={setDisconnecting}
+              mayConnect={mayConnect}
             />
           ))}
         </div>
@@ -252,7 +262,11 @@ export function ConnectedAccounts({ showContinue = true }: { showContinue?: bool
             </Button>
           )}
           <span className="text-[11.5px] text-muted">
-            {connectedCount === 0 ? "Connect at least one channel to continue" : "Nice — you're ready to post"}
+            {connectedCount > 0
+              ? "Nice — you're ready to post"
+              : mayConnect
+                ? "Connect at least one channel to continue"
+                : "No channels connected yet — an owner or admin connects them"}
           </span>
         </div>
       )}
@@ -341,6 +355,7 @@ function PlatformCard({
   delay,
   onConnect,
   onDisconnect,
+  mayConnect,
 }: {
   platform: PlatformMeta;
   accounts: ClientAccount[];
@@ -349,6 +364,7 @@ function PlatformCard({
   delay: number;
   onConnect: () => void;
   onDisconnect: (account: ClientAccount) => void;
+  mayConnect: boolean;
 }) {
   const connected = accounts.length > 0;
   const Icon = platform.icon;
@@ -400,16 +416,23 @@ function PlatformCard({
               <span className="truncate font-mono text-[11px] text-slate-600" title={a.display_name ?? undefined}>
                 {a.account_handle || a.display_name || "Connected account"}
               </span>
-              <button
-                type="button"
-                onClick={() => onDisconnect(a)}
-                className="press-scale flex shrink-0 items-center gap-1 text-[11px] font-medium text-muted hover:text-ink"
-              >
-                <Unplug className="h-3 w-3" /> Disconnect
-              </button>
+              {mayConnect && (
+                <button
+                  type="button"
+                  onClick={() => onDisconnect(a)}
+                  className="press-scale flex shrink-0 items-center gap-1 text-[11px] font-medium text-muted hover:text-ink"
+                >
+                  <Unplug className="h-3 w-3" /> Disconnect
+                </button>
+              )}
             </div>
           ))}
         </div>
+      ) : !mayConnect ? (
+        <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted">
+          <Lock className="mt-0.5 h-3 w-3 shrink-0" />
+          Connecting an account is limited to workspace owners and admins.
+        </p>
       ) : (
         <>
           <Button size="sm" className="w-full" disabled={loading || notConfigured} onClick={onConnect}>

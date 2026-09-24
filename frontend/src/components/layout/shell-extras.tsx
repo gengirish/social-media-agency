@@ -9,11 +9,33 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PostDialog } from "@/components/posts/dialog";
 import { NAV_GROUPS, resolveNav, type NavGroup } from "@/lib/navigation";
+import { useSession } from "@/lib/session";
 
 const LAST_VISITED_KEY = "cf-last-visited";
+
+/**
+ * `NAV_GROUPS` with every tab the viewer lacks the capability for removed, and
+ * any group left with no tabs dropped so it never renders as an empty pill.
+ *
+ * `can()` is false while the session is still loading, so a privileged tab
+ * never flashes before capabilities are known. This is cosmetic — the routes
+ * are gated server-side — but it is the single place the filtering happens, so
+ * the nav, the shortcuts and last-visited all agree on what exists.
+ */
+export function useVisibleNavGroups(): NavGroup[] {
+  const { can } = useSession();
+  return useMemo(
+    () =>
+      NAV_GROUPS.map((group) => ({
+        ...group,
+        tabs: group.tabs.filter((tab) => !tab.requires || can(tab.requires)),
+      })).filter((group) => group.tabs.length > 0),
+    [can]
+  );
+}
 
 function readLastVisited(): Record<string, string> {
   try {
@@ -26,9 +48,10 @@ function readLastVisited(): Record<string, string> {
 /** Records the current location under its group; returns the group → href map. */
 export function useLastVisited(pathname: string, queryTab: string | null): Record<string, string> {
   const [map, setMap] = useState<Record<string, string>>({});
+  const groups = useVisibleNavGroups();
   useEffect(() => {
     const current = readLastVisited();
-    const active = resolveNav(pathname, queryTab);
+    const active = resolveNav(pathname, queryTab, groups);
     if (active) {
       current[active.group.id] = active.tab.href;
       try {
@@ -38,7 +61,7 @@ export function useLastVisited(pathname: string, queryTab: string | null): Recor
       }
     }
     setMap(current);
-  }, [pathname, queryTab]);
+  }, [pathname, queryTab, groups]);
   return map;
 }
 
@@ -63,6 +86,7 @@ export function KeyboardShortcuts({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
+  const groups = useVisibleNavGroups();
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -70,9 +94,9 @@ export function KeyboardShortcuts({
       if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
       if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
       const index = Number(e.key) - 1;
-      if (Number.isInteger(index) && index >= 0 && index < NAV_GROUPS.length) {
+      if (Number.isInteger(index) && index >= 0 && index < groups.length) {
         e.preventDefault();
-        router.push(groupHref(NAV_GROUPS[index], lastVisited));
+        router.push(groupHref(groups[index], lastVisited));
         return;
       }
       if (e.key === "?") {
@@ -82,12 +106,12 @@ export function KeyboardShortcuts({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [router, lastVisited, onOpenChange]);
+  }, [router, lastVisited, onOpenChange, groups]);
 
   return (
     <PostDialog open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts" className="max-w-xs">
       <div className="space-y-1.5">
-        {[...NAV_GROUPS.map((g, i) => [String(i + 1), g.label] as const), ["?", "Show this"] as const].map(([key, label]) => (
+        {[...groups.map((g, i) => [String(i + 1), g.label] as const), ["?", "Show this"] as const].map(([key, label]) => (
           <div key={key} className="flex items-center justify-between">
             <span className="text-xs text-slate-600">{label}</span>
             <kbd className="rounded border border-line bg-canvas px-[7px] py-px font-mono text-[11px] text-ink">{key}</kbd>

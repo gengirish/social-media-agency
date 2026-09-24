@@ -97,6 +97,11 @@ class Organization(Base):
     name = Column(String(255), nullable=False)
     # Portal identity — see db/init.sql. Unique, nullable (null = portal disabled).
     slug = Column(String(64), unique=True)
+    # Account shape, not a plan tier: 'personal' (solo creator) | 'business' (agency).
+    # Decides which features exist; agency/permissions.py subtracts the seat-management
+    # capabilities for 'personal'. Every new org starts personal and flips one-way to
+    # business on the first team invite or growth-tier purchase.
+    account_type = Column(String(20), nullable=False, default="personal", server_default="personal")
     domain = Column(String(255))
     settings = Column(JSONB, default={})
     agentmail_inbox_id = Column(String(255))
@@ -115,7 +120,10 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default="viewer")
-    is_active = Column(Boolean, default=True)
+    # NOT NULL: ``resolve_capabilities`` filters ``is_active IS TRUE``, which excludes
+    # NULL, so a NULL here is a silent lockout — the user authenticates and then 403s
+    # on every gated route. ``server_default`` so raw-SQL inserts get TRUE too.
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 

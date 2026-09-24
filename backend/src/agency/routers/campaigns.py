@@ -40,6 +40,7 @@ from agency.models.tables import (
     Subscription,
     Workflow,
 )
+from agency.permissions import Capability, require_cap
 from agency.services import product_analytics as pa
 from agency.services.billing import PLAN_CONFIG
 from agency.services.webhook_dispatcher import EVENT_CAMPAIGN_COMPLETED, dispatch_webhook
@@ -56,7 +57,14 @@ _campaign_streams: dict[str, asyncio.Queue] = {}
 _active_pipelines: set[str] = set()
 
 
-@router.post("", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=CampaignResponse,
+    status_code=status.HTTP_201_CREATED,
+    # Running the pipeline spends the org's campaign allowance, so it needs more
+    # than read access. ``member`` holds campaign.run; ``viewer`` does not.
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
 async def create_campaign(
     brief: CampaignBrief,
     user=Depends(get_current_user),
@@ -205,7 +213,11 @@ Budget: ${budget}
 Duration: {campaign.start_date} to {campaign.end_date}"""
 
 
-@router.post("/{campaign_id}/rerun", response_model=CampaignResponse)
+@router.post(
+    "/{campaign_id}/rerun",
+    response_model=CampaignResponse,
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
 async def rerun_campaign(
     campaign_id: UUID,
     user=Depends(get_current_user),
@@ -702,7 +714,10 @@ async def get_trends(
     return await get_trending_topics(platform)
 
 
-@router.post("/autonomous")
+@router.post(
+    "/autonomous",
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
 async def create_autonomous_campaign(
     body: dict,
     user=Depends(get_current_user),
@@ -792,7 +807,12 @@ async def get_campaign_content(
     return {"items": pieces, "total": len(pieces)}
 
 
-@router.patch("/{campaign_id}/review")
+@router.patch(
+    "/{campaign_id}/review",
+    # Product rule 2: a human has final say. A viewer is not that human — this
+    # decision resumes the paused graph and spends the rest of the run.
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
 async def submit_human_review(
     campaign_id: UUID,
     decision: dict,

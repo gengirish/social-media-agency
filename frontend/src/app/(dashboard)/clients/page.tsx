@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useActiveClient } from "@/lib/active-client";
+import { useSession } from "@/lib/session";
 import Link from "next/link";
 import { api, type BrandProfile, type Client } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
-import { Plus, Users, Globe, Mail, Sparkles, Loader2, X, Archive } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Plus, Users, Globe, Mail, Sparkles, Loader2, X, Archive, PenLine } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/panel";
 import { SectionCard } from "@/components/ui/section-card";
 import { Field, Input, Textarea } from "@/components/ui/field";
@@ -21,6 +22,15 @@ type ClientView = "active" | "archived";
 const READ_FIELDS = ["brand_name", "industry", "description"] as const;
 
 export default function ClientsPage() {
+  /*
+   * A personal account has exactly one client, created for it at signup
+   * (`Campaign.client_id` is NOT NULL, so there always has to be one). It is
+   * that person's own brand, not a roster, so the page drops the add / archive
+   * / switch furniture and presents the single record. Editing it stays open —
+   * a solo user still edits their own brand. The picker returns when the org
+   * flips to `business` on its first team invite.
+   */
+  const { isPersonal } = useSession();
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ClientView>("active");
@@ -99,8 +109,9 @@ export default function ClientsPage() {
   // The client switcher links here with ?new=1. Read once on mount; window
   // avoids a useSearchParams Suspense boundary for a one-shot flag.
   useEffect(() => {
+    if (isPersonal) return;
     if (new URLSearchParams(window.location.search).get("new") === "1") setShowForm(true);
-  }, []);
+  }, [isPersonal]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -151,16 +162,22 @@ export default function ClientsPage() {
     <div className="space-y-8">
       <PageHeader
         eyebrow="Setup"
-        title="Clients"
-        description="Manage your brands and their profiles"
+        title={isPersonal ? "Your brand" : "Clients"}
+        description={
+          isPersonal
+            ? "The brand every campaign, post and ad is written for"
+            : "Manage your brands and their profiles"
+        }
         actions={
-          <Button onClick={() => setShowForm(!showForm)} aria-expanded={showForm}>
-            <Plus className="h-4 w-4" /> Add Client
-          </Button>
+          isPersonal ? undefined : (
+            <Button onClick={() => setShowForm(!showForm)} aria-expanded={showForm}>
+              <Plus className="h-4 w-4" /> Add Client
+            </Button>
+          )
         }
       />
 
-      {showForm && (
+      {!isPersonal && showForm && (
         <form onSubmit={handleCreate}>
           <SectionCard eyebrow="Onboard a brand" title={<span className="text-lg">New Client</span>} bodyClassName="space-y-4">
             <Field label="Website" htmlFor="website_url">
@@ -235,6 +252,7 @@ export default function ClientsPage() {
         </form>
       )}
 
+      {!isPersonal && (
       <SegmentedTabs
         label="Client status"
         items={[
@@ -244,8 +262,11 @@ export default function ClientsPage() {
         value={view}
         onChange={setView}
       />
+      )}
 
-      {clients.length === 0 ? (
+      {isPersonal ? (
+        <BrandRecord client={clients[0] ?? null} />
+      ) : clients.length === 0 ? (
         view === "archived" ? (
           <EmptyState icon={Archive} title="No archived clients" description="Clients you archive are kept here and can be restored" />
         ) : (
@@ -291,6 +312,57 @@ export default function ClientsPage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The single brand of a personal account, shown as one record rather than a
+ * tile in a roster. No archive and no "add another" — there is only ever one
+ * until the workspace becomes a business account.
+ */
+function BrandRecord({ client }: { client: Client | null }) {
+  if (!client) {
+    return (
+      <EmptyState
+        icon={Users}
+        title="Your brand record is missing"
+        description="Every account is set up with one brand. Sign out and back in to have it restored, or contact support."
+      />
+    );
+  }
+  return (
+    <div className="rounded-xl border border-line bg-panel/70 p-6 shadow-soft backdrop-blur-xl motion-safe:animate-screen-in">
+      <div className="flex flex-wrap items-start gap-4">
+        <div
+          aria-hidden
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-accent/40 bg-accent/10 font-display text-base font-semibold text-accent-text"
+        >
+          {client.brand_name.slice(0, 2).toUpperCase()}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-display text-xl font-semibold text-ink">{client.brand_name}</h2>
+          <p className="mt-0.5 font-mono text-[11px] text-muted">{client.industry}</p>
+          {client.description && <p className="mt-3 max-w-2xl text-sm text-muted">{client.description}</p>}
+        </div>
+        <Link href={`/clients/${client.id}`} className={buttonVariants({ size: "sm" })}>
+          <PenLine className="h-3.5 w-3.5" /> Edit brand
+        </Link>
+      </div>
+      {(client.website_url || client.contact_email) && (
+        <div className="mt-5 flex flex-wrap items-center gap-5 border-t border-line pt-4 font-mono text-[11px] text-muted">
+          {client.website_url && (
+            <span className="flex items-center gap-1.5">
+              <Globe className="h-3.5 w-3.5" /> {client.website_url.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+            </span>
+          )}
+          {client.contact_email && (
+            <span className="flex items-center gap-1.5">
+              <Mail className="h-3.5 w-3.5" /> {client.contact_email}
+            </span>
+          )}
         </div>
       )}
     </div>

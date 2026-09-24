@@ -10,6 +10,11 @@ CREATE TABLE IF NOT EXISTS organization (
     -- unauthenticated, so a non-unique key lets one org shadow another's namespace.
     -- Nullable = no portal for that org (fails closed).
     slug VARCHAR(64) UNIQUE,
+    -- Account shape, not a plan tier. 'personal' = solo creator (one hidden client,
+    -- no seat management), 'business' = agency. New orgs start personal and flip
+    -- one-way on the first team invite or growth-tier purchase.
+    account_type VARCHAR(20) NOT NULL DEFAULT 'personal'
+        CHECK (account_type IN ('personal', 'business')),
     domain VARCHAR(255),
     settings JSONB DEFAULT '{}',
     agentmail_inbox_id VARCHAR(255),
@@ -26,8 +31,16 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     full_name VARCHAR(255) NOT NULL,
-    role VARCHAR(50) NOT NULL DEFAULT 'viewer',
-    is_active BOOLEAN DEFAULT TRUE,
+    -- The four-role vocabulary from agency/permissions.py. The CHECK is what stops
+    -- the legacy strings ('manager', 'content_creator') coming back: a role the
+    -- capability matrix does not know resolves to *no* capabilities, so a typo here
+    -- locks a user out silently rather than loudly.
+    role VARCHAR(50) NOT NULL DEFAULT 'viewer'
+        CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+    -- NOT NULL deliberately: the capability gate filters `is_active IS TRUE`, which
+    -- excludes NULL, so a row inserted without this column would authenticate and
+    -- then 403 on everything. See db/migrations/260924_owner_backfill.sql.
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
