@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, apiErrorCode, moderationIssues, type Campaign, type ContentPiece } from "@/lib/api";
@@ -34,12 +34,20 @@ export default function CampaignDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  function loadContent() {
+  const loadContent = useCallback(() => {
     if (!id) return;
     api.getCampaignContent(id)
       .then((res) => setContent(res.items))
       .catch(() => {});
-  }
+  }, [id]);
+
+  // Load on mount, not only when the Content tab is opened: the "complete" SSE
+  // event that used to be the trigger is delivered once, to whoever happens to be
+  // connected, so a campaign that finished while the tab was in the background
+  // would otherwise show an empty library until reloaded.
+  useEffect(() => {
+    loadContent();
+  }, [loadContent]);
 
   async function handleRerun() {
     if (rerunning || !id) return;
@@ -131,14 +139,15 @@ export default function CampaignDetailPage() {
         ]}
       />
 
-      {/* Agent Dashboard */}
-      {activeTab === "agents" && (
+      {/* Agent Dashboard — hidden rather than unmounted, so switching to Content
+          and back does not discard the run's progress and drop its stream. */}
+      <div hidden={activeTab !== "agents"}>
         <LiveAgentDashboard
           key={runKey}
           campaignId={id}
           onComplete={handlePipelineComplete}
         />
-      )}
+      </div>
 
       {/* Content Library */}
       {activeTab === "content" && (

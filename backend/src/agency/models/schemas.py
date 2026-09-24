@@ -223,6 +223,20 @@ class AgentStreamEvent(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
+class CampaignProgressResponse(BaseModel):
+    """Replay of a campaign's pipeline state, for rehydrating the live dashboard.
+
+    The SSE stream is fire-and-forget and single-consumer: anything emitted while
+    the browser was disconnected is gone. This endpoint is the durable view, read
+    back from ``agent_run`` rows, so remounting the dashboard does not blank it.
+    """
+
+    campaign_status: str
+    progress: int
+    agent_statuses: dict[str, str]
+    is_active: bool
+
+
 # --- Workflow ---
 
 

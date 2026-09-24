@@ -243,6 +243,9 @@ export const api = {
   rerunCampaign: (id: string) =>
     request<Campaign>(`/api/v1/campaigns/${id}/rerun`, { method: "POST" }),
 
+  getCampaignProgress: (id: string) =>
+    request<CampaignProgress>(`/api/v1/campaigns/${id}/progress`),
+
   getCampaignContent: (campaignId: string) =>
     request<{ items: ContentPiece[]; total: number }>(`/api/v1/campaigns/${campaignId}/content`),
 
@@ -963,6 +966,13 @@ export interface AgentStreamEvent {
   content: string;
   progress: number;
   timestamp: string;
+}
+
+export interface CampaignProgress {
+  campaign_status: string;
+  progress: number;
+  agent_statuses: Record<string, string>;
+  is_active: boolean;
 }
 
 export interface BrandProfile {

@@ -30,6 +30,7 @@ from agency.models.schemas import (
     AgentStreamEvent,
     CampaignBrief,
     CampaignListResponse,
+    CampaignProgressResponse,
     CampaignResponse,
 )
 from agency.models.tables import (
@@ -55,6 +56,15 @@ _campaign_streams: dict[str, asyncio.Queue] = {}
 # Campaigns whose graph is executing in this process right now. Per-process only:
 # on a multi-machine deploy a run on another machine is not visible here.
 _active_pipelines: set[str] = set()
+
+# Graph node order, and therefore the denominator of the progress percentage.
+# The dashboard rehydrates against this list, so it must stay in step with
+# graph.py's node names.
+AGENT_ORDER = [
+    "orchestrate", "strategise", "seo_research",
+    "create_content", "write_ads", "human_review",
+    "qa_check", "compile_output", "analytics",
+]
 
 
 @router.post(
@@ -421,12 +431,6 @@ async def _run_campaign_pipeline(
     graph = get_runtime_compiled_graph()
     config = {"configurable": {"thread_id": campaign_id}}
 
-    agent_order = [
-        "orchestrate", "strategise", "seo_research",
-        "create_content", "write_ads", "human_review",
-        "qa_check", "compile_output", "analytics",
-    ]
-
     _active_pipelines.add(campaign_id)
     try:
         async for event in graph.astream(initial_state, config=config, stream_mode="updates"):
@@ -439,8 +443,8 @@ async def _run_campaign_pipeline(
                     ).model_dump_json())
                     continue
 
-                current_idx = agent_order.index(node_name) if node_name in agent_order else 0
-                progress = int((current_idx + 1) / len(agent_order) * 100)
+                current_idx = AGENT_ORDER.index(node_name) if node_name in AGENT_ORDER else 0
+                progress = int((current_idx + 1) / len(AGENT_ORDER) * 100)
 
                 await queue.put(AgentStreamEvent(
                     type="step_complete",
@@ -582,6 +586,69 @@ async def _persist_campaign_results(
             await db.commit()
     except Exception as e:  # noqa: BLE001 — post-run bookkeeping must not crash the run
         logger.error("campaign_completion_bookkeeping_failed", error=str(e))
+
+
+@router.get("/{campaign_id}/progress", response_model=CampaignProgressResponse)
+async def get_campaign_progress(
+    campaign_id: UUID,
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """Pipeline state as the database knows it, independent of the SSE stream.
+
+    The stream replays nothing — its queue is single-consumer and is dropped once
+    the run finishes — so a client that reconnects (tab switch, remount, refresh)
+    has no way to learn what already happened. This does, from the ``agent_run``
+    rows the pipeline writes per node.
+    """
+    campaign = (
+        await db.execute(
+            select(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if campaign is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    rows = (
+        await db.execute(
+            select(AgentRun.agent_name, AgentRun.status)
+            .where(AgentRun.campaign_id == campaign_id, AgentRun.org_id == org_id)
+            .order_by(AgentRun.created_at)
+        )
+    ).all()
+
+    # Every run starts at orchestrate, and a resume after review does not re-enter
+    # it, so the last orchestrate row is exactly where the current run began. Rows
+    # before it belong to a previous re-run and would otherwise report its progress.
+    names = [name for name, _ in rows]
+    start = len(names) - 1 - names[::-1].index("orchestrate") if "orchestrate" in names else 0
+    agent_statuses: dict[str, str] = {}
+    for name, run_status in rows[start:]:
+        agent_statuses[name] = "error" if run_status == "failed" else "complete"
+
+    completed = [AGENT_ORDER.index(n) for n in agent_statuses if n in AGENT_ORDER]
+    progress = int((max(completed) + 1) / len(AGENT_ORDER) * 100) if completed else 0
+
+    is_active = str(campaign_id) in _active_pipelines
+    if campaign.status == "completed":
+        progress = 100
+    elif (
+        campaign.status == "running"
+        and "human_review" not in agent_statuses
+        and "create_content" in agent_statuses
+        and "write_ads" in agent_statuses
+    ):
+        # Paused at the review gate: the graph interrupts *before* human_review, so
+        # that node never runs and never writes a row of its own.
+        agent_statuses["human_review"] = "waiting"
+
+    return CampaignProgressResponse(
+        campaign_status=campaign.status,
+        progress=progress,
+        agent_statuses=agent_statuses,
+        is_active=is_active,
+    )
 
 
 @router.get("/{campaign_id}/stream")
@@ -882,12 +949,6 @@ async def _resume_pipeline(
     if not queue:
         return
 
-    agent_order = [
-        "orchestrate", "strategise", "seo_research",
-        "create_content", "write_ads", "human_review",
-        "qa_check", "compile_output", "analytics",
-    ]
-
     _active_pipelines.add(campaign_id)
     try:
         async for event in graph.astream(None, config=config, stream_mode="updates"):
@@ -900,8 +961,8 @@ async def _resume_pipeline(
                     ).model_dump_json())
                     continue
 
-                current_idx = agent_order.index(node_name) if node_name in agent_order else 0
-                progress = int((current_idx + 1) / len(agent_order) * 100)
+                current_idx = AGENT_ORDER.index(node_name) if node_name in AGENT_ORDER else 0
+                progress = int((current_idx + 1) / len(AGENT_ORDER) * 100)
 
                 await queue.put(AgentStreamEvent(
                     type="step_complete",

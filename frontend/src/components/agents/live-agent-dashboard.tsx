@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { connectAgentStream } from "@/lib/agent-stream";
@@ -33,6 +33,31 @@ const AGENT_CONFIG = [
 ];
 
 type AgentStatus = "pending" | "running" | "complete" | "error" | "waiting";
+
+// How far along a status is. Merging the server's view with the live stream's
+// keeps whichever is further ahead, so a slow rehydrate cannot walk a finished
+// agent back to "running", and a stale row cannot undo a fresh stream event.
+const STATUS_RANK: Record<AgentStatus, number> = {
+  pending: 0,
+  running: 1,
+  waiting: 1,
+  complete: 2,
+  error: 2,
+};
+
+function mergeStatuses(
+  live: Record<string, AgentStatus>,
+  server: Record<string, string>
+): Record<string, AgentStatus> {
+  const merged: Record<string, AgentStatus> = { ...live };
+  for (const [agent, raw] of Object.entries(server)) {
+    const next = raw as AgentStatus;
+    if (STATUS_RANK[next] === undefined) continue;
+    const current = merged[agent];
+    if (!current || STATUS_RANK[next] > STATUS_RANK[current]) merged[agent] = next;
+  }
+  return merged;
+}
 
 interface LiveAgentDashboardProps {
   campaignId: string;
@@ -81,6 +106,52 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
     }
   };
 
+  // Held in refs so a parent re-render (new inline callback identity) cannot tear
+  // down the stream and blank the dashboard.
+  const onCompleteRef = useRef(onComplete);
+  const onWaitingHumanRef = useRef(onWaitingHuman);
+  onCompleteRef.current = onComplete;
+  onWaitingHumanRef.current = onWaitingHuman;
+
+  /**
+   * Rehydrate from the database.
+   *
+   * The SSE stream replays nothing: its queue is single-consumer and is dropped
+   * once the run ends, so a client that was not connected for a step never learns
+   * about it, and a reconnect after the run is answered with "No active pipeline".
+   * Without this read the dashboard shows an untouched pipeline at 0% whenever it
+   * remounts or the browser drops the connection — which is what happens on every
+   * tab switch.
+   */
+  const syncProgress = useCallback(async () => {
+    try {
+      const p = await api.getCampaignProgress(campaignId);
+      setAgentStatuses((prev) => mergeStatuses(prev, p.agent_statuses));
+      setProgress((prev) => Math.max(prev, p.progress));
+      if (p.campaign_status === "completed") setIsComplete(true);
+    } catch {
+      // A failed sync must leave whatever the stream has already shown intact.
+    }
+  }, [campaignId]);
+
+  useEffect(() => {
+    void syncProgress();
+  }, [syncProgress]);
+
+  // Coming back to the tab is exactly when the local view is most likely stale:
+  // the browser may have dropped the EventSource while the tab was hidden.
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState === "visible") void syncProgress();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [syncProgress]);
+
   useEffect(() => {
     let disconnectFn: (() => void) | null = null;
     let cancelled = false;
@@ -116,16 +187,20 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
                 ...prev,
                 human_review: "waiting",
               }));
-              onWaitingHuman?.();
+              onWaitingHumanRef.current?.();
             }
 
             if (event.type === "complete") {
               setIsComplete(true);
               setProgress(100);
-              onComplete?.();
+              onCompleteRef.current?.();
             }
 
-            if (event.type === "error") {
+            if (event.type === "error" && event.agent) {
+              // A stream-level error carries no agent ("No active pipeline for
+              // this campaign" on a reconnect after the run ended). Marking a
+              // blank agent failed would paint the pipeline red for a run that
+              // actually succeeded, so only node errors are recorded here.
               setAgentStatuses((prev) => ({
                 ...prev,
                 [event.agent]: "error",
@@ -147,7 +222,7 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
       disconnectRef.current?.();
       disconnectRef.current = null;
     };
-  }, [campaignId, getToken, onComplete, onWaitingHuman]);
+  }, [campaignId, getToken]);
 
 
   function getStatusIcon(agentId: string) {
