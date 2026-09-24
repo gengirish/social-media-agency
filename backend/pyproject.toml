@@ -35,6 +35,9 @@ dependencies = [
     "agentmail>=0.4.12",
     "python-dotenv>=1.0.0",
     "email-validator>=2.1.0",
+    # Deterministic repair of model JSON (unescaped quotes, missing commas,
+    # comments, truncation) before spending an LLM repair call. agents/utils.py
+    "json-repair>=0.30",
 ]
 
 [project.optional-dependencies]

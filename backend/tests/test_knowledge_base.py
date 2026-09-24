@@ -414,3 +414,14 @@ async def test_items_keep_the_shape_the_strategy_agent_consumes(session_factory,
         }
         assert isinstance(item["title"], str) and item["title"]
         assert isinstance(item["content"], str) and item["content"]
+
+
+def test_google_embedder_uses_current_model_at_storable_width(monkeypatch):
+    """text-embedding-004 was retired (404 in production, 260923)."""
+    model, dim = kb.EMBEDDING_MODELS["google"]
+    assert "text-embedding-004" not in model
+    assert dim <= kb.EMBEDDING_STORAGE_DIM
+
+    monkeypatch.setattr(kb, "_api_key_for", lambda _p: "test-key")
+    embedder = kb._build_embedder("google")
+    assert embedder.client.output_dimensionality == dim
