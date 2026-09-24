@@ -59,3 +59,6 @@ SKILL-ARCHITECTURE-CORRELATION.md
 docs/diagrams/*.visual-check.*
 
 .mypy_cache/
+
+# Installed agent skills are real files in .agents/; this is a machine-absolute symlink.
+.claude/skills/build-with-exa
