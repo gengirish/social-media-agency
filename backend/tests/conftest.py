@@ -148,12 +148,20 @@ async def client(
 
 
 def auth_header_for(
-    org_id: UUID | str, role: str = "admin", *, user_id: UUID | str | None = None
+    org_id: UUID | str, role: str = "owner", *, user_id: UUID | str | None = None
 ) -> dict[str, str]:
     """A local HS256 bearer token scoped to ``org_id`` (the dev/CI auth mode).
 
     ``user_id`` pins the ``sub`` claim, which routers resolve through
     ``get_current_user_id`` — needed by anything scoped per user (comments, notifications).
+
+    **This mints a token and nothing else — it does not create a ``users`` row.**
+    ``agency.permissions.require_cap`` reads the role from the database and fails
+    closed when no active row matches both the token's ``sub`` and the request's
+    org, so a caller built here **cannot pass a capability gate**, whatever the
+    ``role`` argument says (the claim is informational; the row is authoritative).
+    Use it only for routes with no ``require_cap`` dependency. For anything gated,
+    use :func:`auth_for`, which persists the matching row.
     """
     from jose import jwt
 
@@ -168,6 +176,67 @@ def auth_header_for(
         algorithm="HS256",
     )
     return {"Authorization": f"Bearer {token}"}
+
+
+async def auth_for(
+    session_factory: async_sessionmaker[AsyncSession],
+    org_id: UUID | str,
+    role: str = "owner",
+    *,
+    account_type: str | None = None,
+    user_id: UUID | str | None = None,
+) -> dict[str, str]:
+    """A bearer token **backed by a real ``users`` row** — the one capability gates accept.
+
+    ``require_cap`` resolves the caller by loading the ``users`` row matching both
+    the token's ``sub`` and the request's ``org_id`` (and ``is_active``), then reads
+    ``organization.account_type``. This factory creates exactly that: it persists a
+    ``User`` with ``role`` whose id becomes the token's ``sub``, so the row and the
+    token agree.
+
+    Args:
+        session_factory: the ``session_factory`` fixture.
+        org_id: an org created by :func:`create_org`; the user is created inside it.
+        role: one of ``owner`` / ``admin`` / ``member`` / ``viewer``. Also written to
+            the token's (informational) ``role`` claim. Pass a *different* value than
+            the row's to test staleness — use ``user_id`` + ``auth_header_for`` for that.
+        account_type: when given, the org's ``account_type`` column is updated to it
+            (``personal`` or ``business``) before the header is returned. ``None``
+            leaves whatever :func:`create_org` set (``business`` by default).
+        user_id: pin the user's id (and therefore the ``sub`` claim); defaults to a
+            fresh uuid4. Use it when the test also needs the id — e.g. to assert on
+            per-user rows, or to reuse the same caller across two headers.
+
+    Returns:
+        ``{"Authorization": "Bearer <jwt>"}``, ready to pass as ``headers=``.
+    """
+    uid = UUID(str(user_id)) if user_id is not None else uuid4()
+    oid = UUID(str(org_id))
+
+    await create_user_row(session_factory, oid, user_id=uid, role=role)
+    if account_type is not None:
+        await set_account_type(session_factory, oid, account_type)
+
+    return auth_header_for(oid, role, user_id=uid)
+
+
+async def set_account_type(
+    session_factory: async_sessionmaker[AsyncSession],
+    org_id: UUID,
+    account_type: str,
+) -> None:
+    """Flip an existing org between ``personal`` and ``business``.
+
+    Separate from :func:`create_org` because the account shape is sometimes changed
+    after the org and its rows already exist (the B2C → B2B flip).
+    """
+    from agency.models.tables import Organization
+
+    async with session_factory() as session:
+        org = await session.get(Organization, org_id)
+        assert org is not None, f"no organization {org_id}"
+        org.account_type = account_type
+        await session.commit()
 
 
 @pytest.fixture
@@ -190,13 +259,27 @@ async def create_org(
     name: str = "Test Org",
     *,
     slug: str | None = None,
+    account_type: str = "business",
 ) -> UUID:
+    """An organization row.
+
+    ``account_type`` defaults to ``'business'`` — not to the column's own
+    ``'personal'`` default — because the existing suites assume team seats and
+    multiple clients, which is the business shape. Pass ``'personal'`` explicitly
+    to exercise the solo account.
+
+    ``account_type`` does **not** change capabilities: ``PERSONAL_DENIED`` is
+    empty (see ``permissions.py``), so a personal org's owner keeps
+    ``team.manage`` and can invite — which is exactly what flips the org to
+    ``'business'``. It affects UI affordances and that one-way flip, nothing else.
+    """
     from agency.models.tables import Organization
     from agency.utils.slug import slugify
 
     org = Organization(
         id=uuid4(),
         name=name,
+        account_type=account_type,
         # Unique per org so the portal's slug lookup resolves exactly one row.
         slug=slug if slug is not None else f"{slugify(name)}-{uuid4().hex[:6]}",
         settings={},

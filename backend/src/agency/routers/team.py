@@ -6,7 +6,8 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from agency.dependencies import get_current_user, get_db, get_org_id
+from agency.dependencies import get_current_user, get_current_user_id, get_db, get_org_id
+from agency.permissions import Capability, require_cap
 from agency.services.email_service import send_email
 from agency.services.team import invite_team_member, list_team_members, update_member_role
 
@@ -33,7 +34,7 @@ async def get_team(
     return {"members": await list_team_members(db, org_id)}
 
 
-@router.post("/invite")
+@router.post("/invite", dependencies=[Depends(require_cap(Capability.TEAM_MANAGE))])
 async def invite_member(
     body: InviteRequest,
     user=Depends(get_current_user),
@@ -45,6 +46,9 @@ async def invite_member(
     The invitation email is best-effort: it sends from the shared AgentMail
     sender (or the org's own inbox when it has one) and the response reports
     honestly via `email_sent` whether anything actually went out.
+
+    A successful invite also flips the org from ``personal`` to ``business``
+    (`services.team.invite_team_member`, in the invite's own transaction).
     """
     # TODO: Replace the temp-password flow with signed invite links and
     # org-branded templates. Mailing a password is a stopgap.
@@ -96,14 +100,41 @@ async def invite_member(
     }
 
 
-@router.patch("/{user_id}/role")
+@router.patch(
+    "/{user_id}/role", dependencies=[Depends(require_cap(Capability.TEAM_MANAGE))]
+)
 async def patch_member_role(
     user_id: UUID,
     body: RoleUpdateRequest,
     user=Depends(get_current_user),
+    caller_id: UUID = Depends(get_current_user_id),
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
+    """Change a team member's role.
+
+    Two blocks live here rather than in ``services.team.update_member_role``:
+
+    * **Nobody edits their own role.** Until this route was gated, any
+      authenticated user in an org could PATCH themselves to ``admin``. The
+      capability gate closes that for members and viewers; this stops an admin
+      quietly self-promoting to ``owner`` — or demoting the last one, themselves.
+    * **No update assigns ``owner``.** An org has one owner, established at
+      provisioning. The service layer stays permissive on purpose so a real
+      ownership *transfer* (demote the incumbent and promote the successor in one
+      operation) stays expressible later; the policy belongs at the edge.
+    """
+    if user_id == caller_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {"code": "cannot_change_own_role"},
+        )
+    if body.role == "owner":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {"code": "cannot_assign_owner"},
+        )
+
     result = await update_member_role(db, org_id, user_id, body.role)
     if result.get("error"):
         code = (

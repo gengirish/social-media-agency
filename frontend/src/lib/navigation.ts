@@ -4,6 +4,8 @@
  * only the grouping is new. Pure data + a pure resolver, no React.
  */
 
+import type { Capability } from "@/lib/session";
+
 export type NavIconName = "setup" | "posts" | "create" | "inbox" | "insights" | "settings";
 
 export interface NavTab {
@@ -13,6 +15,14 @@ export interface NavTab {
   path?: string;
   /** Required `?tab=` value, for pages that expose sub-sections via the query string. */
   queryTab?: string;
+  /**
+   * Capability the viewer needs before this tab is shown. Presentation only —
+   * the route itself is gated server-side (`require_cap`, 403
+   * `insufficient_permissions`); hiding the tab just avoids offering a button
+   * that will reject the person. Filtering happens in the nav components, not
+   * here: this module stays pure data.
+   */
+  requires?: Capability;
 }
 
 export interface NavGroup {
@@ -72,8 +82,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Settings",
     tabs: [
       { label: "Workspace", href: "/settings" },
-      { label: "Team", href: "/team" },
-      { label: "Billing", href: "/pricing" },
+      { label: "Team", href: "/team", requires: "team.manage" },
+      { label: "Billing", href: "/pricing", requires: "billing.manage" },
     ],
   },
 ];
@@ -92,10 +102,18 @@ function tabPath(tab: NavTab): string {
  * The active group and tab for a location. A tab that also matches the query
  * (`/settings?tab=platforms` → Setup › Accounts) beats a path-only match
  * (`/settings` → Settings › Workspace); a longer path beats a shorter one.
+ *
+ * Pure: `groups` defaults to the full set, and a caller that hides tabs by
+ * capability passes its already-filtered groups in. Capability lookups never
+ * happen inside here.
  */
-export function resolveNav(pathname: string, queryTab: string | null): { group: NavGroup; tab: NavTab } | null {
+export function resolveNav(
+  pathname: string,
+  queryTab: string | null,
+  groups: NavGroup[] = NAV_GROUPS
+): { group: NavGroup; tab: NavTab } | null {
   let best: { group: NavGroup; tab: NavTab; score: number } | null = null;
-  for (const group of NAV_GROUPS) {
+  for (const group of groups) {
     for (const tab of group.tabs) {
       const path = tabPath(tab);
       if (pathname !== path && !pathname.startsWith(path + "/")) continue;

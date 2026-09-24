@@ -31,6 +31,7 @@ import {
   renderedLength,
 } from "@/lib/api-posts";
 import { publishUnavailableReason } from "@/lib/platforms";
+import { useSession } from "@/lib/session";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
@@ -349,6 +350,16 @@ export const PostCard = memo(function PostCard({
   onRequestBrief,
   onCancelBrief,
 }: PostCardProps) {
+  /*
+   * Presentation only — the server is the gate (`require_cap` in the routers).
+   * An affordance is hidden rather than disabled: a button that 403s on click
+   * is worse than an absent one. A `member` may approve but not publish, so
+   * this card can legitimately show Approve and no Publish/Schedule.
+   */
+  const { can } = useSession();
+  const mayApprove = can("content.approve");
+  const mayPublish = can("publish.write");
+
   const tone = platformTone(post.platform);
   const created = parse(post.created_at);
   const scheduledAt = parse(post.scheduled_at);
@@ -459,7 +470,7 @@ export const PostCard = memo(function PostCard({
         <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
           <CalendarClock className="h-3.5 w-3.5" aria-hidden />
           Planned for <span className="font-mono">{format(plannedFor, "EEE d MMM")}</span>
-          {isDraft ? " — approve it, then schedule it" : " — not scheduled yet"}
+          {isDraft ? (mayApprove ? " — approve it, then schedule it" : " — waiting on approval") : " — not scheduled yet"}
         </p>
       )}
 
@@ -500,7 +511,7 @@ export const PostCard = memo(function PostCard({
 
       {!editing && post.status !== "published" && (
         <div className="mt-4 border-t border-line pt-3">
-          {blocked && !isDraft && post.status !== "failed" && (
+          {mayPublish && blocked && !isDraft && post.status !== "failed" && (
             <p className="mb-3 flex gap-2 text-xs text-amber-800">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               {blocked}
@@ -509,14 +520,16 @@ export const PostCard = memo(function PostCard({
           <div className="flex flex-wrap items-center gap-2">
             {isDraft && (
               <>
-                <Button size="sm" onClick={() => onApprove(post)} disabled={anyBusy}>
-                  {busy === "approve" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  )}
-                  {busy === "approve" ? "Checking…" : "Approve"}
-                </Button>
+                {mayApprove && (
+                  <Button size="sm" onClick={() => onApprove(post)} disabled={anyBusy}>
+                    {busy === "approve" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    )}
+                    {busy === "approve" ? "Checking…" : "Approve"}
+                  </Button>
+                )}
                 <Button variant="secondary" size="sm" onClick={() => onRegenerate(post)} disabled={anyBusy}>
                   {busy === "regenerate" ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -533,7 +546,7 @@ export const PostCard = memo(function PostCard({
               </>
             )}
 
-            {(post.status === "approved" || post.status === "scheduled") && (
+            {mayPublish && (post.status === "approved" || post.status === "scheduled") && (
               <>
                 <Button
                   size="sm"

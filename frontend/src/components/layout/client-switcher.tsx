@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { CheckCircle2, ChevronDown, Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
+import { useSession } from "@/lib/session";
 import type { ClientOverview } from "@/lib/api-foundation";
 import { ConfirmDialog } from "@/components/ui/feedback";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
  */
 export function ClientSwitcher() {
   const { clients, active, activeId, setActiveId, loading, refresh } = useActiveClient();
+  const { isPersonal } = useSession();
   const [open, setOpen] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState<ClientOverview | null>(null);
   const [archiving, setArchiving] = useState(false);
@@ -139,13 +141,18 @@ export function ClientSwitcher() {
               );
             })}
           </div>
-          <Link
-            href="/clients?new=1"
-            onClick={() => setOpen(false)}
-            className="flex w-full items-center gap-1.5 px-3 py-2.5 text-[12.5px] font-medium text-accent-text"
-          >
-            <Plus className="h-3.5 w-3.5" /> Add another client
-          </Link>
+          {/* A personal account has exactly one brand, created at signup. Adding a
+              second is what makes it an agency, and that is a plan change rather
+              than a link in a dropdown — so no add affordance until it is one. */}
+          {!isPersonal && (
+            <Link
+              href="/clients?new=1"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-1.5 px-3 py-2.5 text-[12.5px] font-medium text-accent-text"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add another client
+            </Link>
+          )}
         </div>
       )}
 

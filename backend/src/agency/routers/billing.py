@@ -9,6 +9,7 @@ from stripe import SignatureVerificationError
 
 from agency.config import get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
+from agency.permissions import Capability, require_cap
 from agency.services.billing import billing
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
@@ -40,7 +41,7 @@ async def get_subscription(
     return await billing.get_subscription(db, org_id)
 
 
-@router.post("/checkout")
+@router.post("/checkout", dependencies=[Depends(require_cap(Capability.BILLING_MANAGE))])
 async def create_checkout(
     body: CheckoutRequest,
     user=Depends(get_current_user),
@@ -61,6 +62,13 @@ async def create_checkout(
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request, db=Depends(get_db)):
+    """Stripe's callback. **Deliberately ungated.**
+
+    Stripe authenticates itself with the `stripe-signature` header, verified
+    below; there is no bearer token, no user and no org on the request. A
+    ``require_cap`` here would 403 every callback Stripe makes and silently
+    strand every subscription change.
+    """
     settings = get_settings()
     if not settings.stripe_webhook_secret:
         raise HTTPException(

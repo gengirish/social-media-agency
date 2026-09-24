@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from agency.config import get_settings
 from agency.models.database import get_session_factory
-from agency.models.tables import Organization, Subscription, User
+from agency.models.tables import Client, Organization, Subscription, User
 from agency.services.billing import PLAN_CONFIG
 from agency.utils.slug import unique_org_slug
 
@@ -126,6 +126,9 @@ async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
                         org_id=str(demo_org_id),
                         clerk_id=clerk_user_id,
                     )
+                    # 'admin', not 'owner': these users join an existing org
+                    # that already has one. Nothing here provisions an org or a
+                    # client — the demo org is seeded.
                     user = User(
                         org_id=demo_org_id,
                         email=email,
@@ -140,9 +143,15 @@ async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
             if not user:
                 logger.info("clerk_user_auto_provision", email=email, clerk_id=clerk_user_id)
                 org_name = f"{full_name}'s Org"
+                # New org: its first user owns it, and it starts personal.
+                # ``account_type`` flips one-way to 'business' on the first team
+                # invite or growth-tier purchase. Kept identical to
+                # ``routers/auth.py::signup`` — if the two provisioning paths
+                # disagree, the two auth modes disagree about who owns an org.
                 org = Organization(
                     name=org_name,
                     slug=await unique_org_slug(db, org_name),
+                    account_type="personal",
                 )
                 db.add(org)
                 await db.flush()
@@ -152,9 +161,13 @@ async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
                     email=email,
                     password_hash="clerk-managed",
                     full_name=full_name,
-                    role="admin",
+                    role="owner",
                 )
                 db.add(user)
+
+                # ``Campaign.client_id`` is NOT NULL: an org with no client can
+                # never run a campaign. A personal account keeps exactly this one.
+                db.add(Client(org_id=org.id, brand_name=full_name))
 
                 free = PLAN_CONFIG["free"]
                 sub = Subscription(

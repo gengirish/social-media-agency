@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select
 
 from tests.conftest import (
-    auth_header_for,
+    auth_for,
     create_campaign_row,
     create_client_row,
     create_org,
@@ -74,7 +74,8 @@ async def test_rerun_restarts_pipeline_with_checkpointed_brief(
         {"client_brief": "Target Audience: CFOs", "target_languages": ["es"]}
     )
 
-    resp = await client.post(f"{API}/campaigns/{campaign_id}/rerun", headers=auth_header_for(org))
+    headers = await auth_for(session_factory, org)
+    resp = await client.post(f"{API}/campaigns/{campaign_id}/rerun", headers=headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "running"
 
@@ -93,7 +94,8 @@ async def test_rerun_restarts_pipeline_with_checkpointed_brief(
 async def test_rerun_rebuilds_brief_when_checkpoint_missing(client, session_factory, fake_runtime):
     org, campaign_id = await _setup(session_factory)
 
-    resp = await client.post(f"{API}/campaigns/{campaign_id}/rerun", headers=auth_header_for(org))
+    headers = await auth_for(session_factory, org)
+    resp = await client.post(f"{API}/campaigns/{campaign_id}/rerun", headers=headers)
     assert resp.status_code == 200, resp.text
 
     await asyncio.sleep(0)
@@ -105,7 +107,7 @@ async def test_rerun_rejects_other_orgs_campaign(client, session_factory, fake_r
     other_org = await create_org(session_factory, "Other Org")
 
     resp = await client.post(
-        f"{API}/campaigns/{campaign_id}/rerun", headers=auth_header_for(other_org)
+        f"{API}/campaigns/{campaign_id}/rerun", headers=await auth_for(session_factory, other_org)
     )
     assert resp.status_code == 404
     # A 404 that still wiped the owner's checkpoint would be worse than useless.
@@ -119,7 +121,8 @@ async def test_rerun_refuses_while_pipeline_active(client, session_factory, fake
     org, campaign_id = await _setup(session_factory, status="running")
     campaigns_router._active_pipelines.add(str(campaign_id))
 
-    resp = await client.post(f"{API}/campaigns/{campaign_id}/rerun", headers=auth_header_for(org))
+    headers = await auth_for(session_factory, org)
+    resp = await client.post(f"{API}/campaigns/{campaign_id}/rerun", headers=headers)
     assert resp.status_code == 409
     assert fake_runtime.graph.checkpointer.deleted == []
 
@@ -127,6 +130,7 @@ async def test_rerun_refuses_while_pipeline_active(client, session_factory, fake
 async def test_rerun_refuses_autonomous_campaign(client, session_factory, fake_runtime):
     org, campaign_id = await _setup(session_factory, status="autonomous")
 
-    resp = await client.post(f"{API}/campaigns/{campaign_id}/rerun", headers=auth_header_for(org))
+    headers = await auth_for(session_factory, org)
+    resp = await client.post(f"{API}/campaigns/{campaign_id}/rerun", headers=headers)
     assert resp.status_code == 400
     assert fake_runtime.launched == []

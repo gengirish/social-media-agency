@@ -3,6 +3,7 @@
 import { AlertTriangle, Loader2 } from "lucide-react";
 import type { ModerationIssue } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { PostDialog } from "./dialog";
 
@@ -19,6 +20,10 @@ const SEVERITY: Record<string, string> = {
  * Shown when approve returns 409 `moderation_flagged`. Editing is the primary
  * path; "Approve anyway" is deliberately secondary and is recorded server-side
  * as an override.
+ *
+ * The override needs `content.override` (owner/admin only — a `member` may
+ * approve clean copy but not wave a flagged post through), so that button is
+ * hidden for anyone without it rather than shown and 403'd.
  */
 export function ModerationWarning({
   open,
@@ -37,6 +42,7 @@ export function ModerationWarning({
   onOverride: () => void;
   onClose: () => void;
 }) {
+  const mayOverride = useSession().can("content.override");
   return (
     <PostDialog
       open={open}
@@ -52,15 +58,18 @@ export function ModerationWarning({
       description={
         <>
           Moderation found {issues.length === 1 ? "an issue" : `${issues.length} issues`} in &ldquo;
-          {postTitle || "Untitled post"}&rdquo;. It stays Pending until you edit it or approve it anyway.
+          {postTitle || "Untitled post"}&rdquo;. It stays Pending until
+          {mayOverride ? " you edit it or approve it anyway." : " it is edited and passes the check."}
         </>
       }
       footer={
         <>
-          <Button variant="secondary" onClick={onOverride} disabled={busy}>
-            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            Approve anyway
-          </Button>
+          {mayOverride && (
+            <Button variant="secondary" onClick={onOverride} disabled={busy}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              Approve anyway
+            </Button>
+          )}
           <Button onClick={onEdit} disabled={busy} autoFocus>
             Go back and edit
           </Button>
@@ -89,8 +98,9 @@ export function ModerationWarning({
         </p>
       )}
       <p className="mt-3 text-xs text-muted">
-        This is advisory — you decide. Nothing gets blocked without your say; approving anyway is logged against your
-        account.
+        {mayOverride
+          ? "This is advisory — you decide. Nothing gets blocked without your say; approving anyway is logged against your account."
+          : "Editing the post and approving it again is the way forward. Overriding a flagged post is limited to workspace owners and admins."}
       </p>
     </PostDialog>
   );

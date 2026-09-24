@@ -3,12 +3,21 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from sqlalchemy import func, select
 
 from agency.dependencies import get_current_user, get_current_user_id, get_db, get_org_id
 from agency.models.schemas import ContentPieceResponse, ContentUpdateRequest
 from agency.models.tables import Client, ContentPiece
+from agency.permissions import Capability, ensure_cap, require_cap
 from agency.services.content_approval import (
     ContentGateError,
     apply_content_edit,
@@ -463,10 +472,14 @@ Return ONLY a JSON array with one object per variant, in label order:
     }
 
 
-@router.post("/{content_id}/approve")
+@router.post(
+    "/{content_id}/approve",
+    dependencies=[Depends(require_cap(Capability.CONTENT_APPROVE))],
+)
 async def approve_content(
     content_id: UUID,
     background: BackgroundTasks,
+    request: Request,
     override: bool = Query(False, description="Approve despite moderation issues"),
     user_id: UUID = Depends(get_current_user_id),
     db=Depends(get_db),
@@ -481,7 +494,19 @@ async def approve_content(
       status unchanged; retry with ``?override=true`` to approve anyway (recorded in
       ``metadata.moderation.override_by``).
     - 409 ``{"code": "invalid_status", "status": <current>}``.
+    - 403 ``{"code": "insufficient_permissions", "required": "content.approve"}`` — or
+      ``"content.override"`` when ``?override=true`` is used without that capability.
+
+    Two capabilities, deliberately split. ``content.approve`` gates the route itself,
+    so a ``viewer`` cannot approve at all. ``content.override`` is checked *here*,
+    inside the handler, because it depends on a query flag a route-level dependency
+    cannot see: a ``member`` is a human and may approve clean copy, but must not be
+    able to wave a moderation flag through onto a live client account. The check runs
+    before the row is loaded, so a refusal can never leave the piece half-approved.
     """
+    if override:
+        await ensure_cap(Capability.CONTENT_OVERRIDE, request, user_id, org_id, db)
+
     result = await db.execute(
         select(ContentPiece).where(
             ContentPiece.id == content_id, ContentPiece.org_id == org_id

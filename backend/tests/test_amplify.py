@@ -22,6 +22,7 @@ from agency.models.tables import (
 from agency.services.repurpose import MAX_ATOMS, REPURPOSE_ANGLES, plan_atoms
 from tests.conftest import (
     _persist,
+    auth_for,
     auth_header_for,
     create_campaign_row,
     create_client_row,
@@ -259,7 +260,7 @@ async def test_preview_quota_exhausted_402(client, session_factory, stub_llm):
     resp = await client.post(
         f"{API}/preview",
         json={"client_id": str(client_id), "source_text": "hi", "platforms": ["twitter"]},
-        headers=auth_header_for(org_id),
+        headers=await auth_for(session_factory, org_id),
     )
     assert resp.status_code == 402
     assert resp.json()["detail"]["code"] == "generation_quota_exceeded"
@@ -283,7 +284,7 @@ async def test_preview_null_limit_falls_back_to_tier(client, session_factory, st
     resp = await client.post(
         f"{API}/preview",
         json={"client_id": str(client_id), "source_text": "hi", "platforms": ["twitter"]},
-        headers=auth_header_for(org_id),
+        headers=await auth_for(session_factory, org_id),
     )
     assert resp.status_code == 402
 
