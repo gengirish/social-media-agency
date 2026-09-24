@@ -69,8 +69,12 @@ def _normalize(raw: Any) -> dict[str, Any] | None:
     """
     if not isinstance(raw, dict):
         return None
+    # The isinstance check is redundant at runtime — ``is_resolvable_url`` does it
+    # too — but it is what narrows ``url`` from ``Any | None`` to ``str`` for the
+    # type checker, so the ``host``/``parse_published`` calls below stay checked
+    # rather than silently accepting None.
     url = raw.get("url")
-    if not exa_client.is_resolvable_url(url):
+    if not isinstance(url, str) or not exa_client.is_resolvable_url(url):
         return None
 
     published = exa_client.parse_published(raw.get("publishedDate"))
