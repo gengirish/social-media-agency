@@ -23,10 +23,18 @@ from agency.models.tables import (
     PlatformAccount,
     Subscription,
 )
+from agency.permissions import Capability, require_cap
 from agency.services.billing import PLAN_CONFIG
 from agency.services.brand_context import resolve_voice
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
+
+#: CF-17: archiving a client hides every campaign, post and connected account
+#: behind it from the whole org, and restoring brings it back. That is the shape
+#: of the workspace, not the marketing work, so it needs more than ``member``.
+_WORKSPACE_GATE = Depends(require_cap(Capability.WORKSPACE_MANAGE))
+
+
 
 
 @router.post("", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
@@ -291,7 +299,11 @@ async def update_client(
     return client
 
 
-@router.post("/{client_id}/archive", response_model=ClientResponse)
+@router.post(
+    "/{client_id}/archive",
+    response_model=ClientResponse,
+    dependencies=[_WORKSPACE_GATE],
+)
 async def archive_client(
     client_id: UUID,
     unschedule: bool = Query(
@@ -336,7 +348,11 @@ async def archive_client(
     return client
 
 
-@router.post("/{client_id}/restore", response_model=ClientResponse)
+@router.post(
+    "/{client_id}/restore",
+    response_model=ClientResponse,
+    dependencies=[_WORKSPACE_GATE],
+)
 async def restore_client(
     client_id: UUID,
     user: dict[str, Any] = Depends(get_current_user),

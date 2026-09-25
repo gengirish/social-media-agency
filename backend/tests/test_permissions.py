@@ -60,6 +60,7 @@ EXPECTED_MATRIX: dict[str, set[str]] = {
         "oauth.connect",
         "team.manage",
         "billing.manage",
+        "workspace.manage",
     },
     "admin": {
         "read",
@@ -69,6 +70,7 @@ EXPECTED_MATRIX: dict[str, set[str]] = {
         "content.override",
         "oauth.connect",
         "team.manage",
+        "workspace.manage",
     },
     "member": {"read", "campaign.run", "content.approve"},
     "viewer": {"read"},

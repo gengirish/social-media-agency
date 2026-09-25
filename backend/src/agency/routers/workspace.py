@@ -18,11 +18,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import BrandProfile
+from agency.permissions import Capability, require_cap
 from agency.services.activity import MAX_EVENTS, client_activity
 from agency.services.brand_context import get_org_client
 from agency.services.workspace_export import export_client
 
 router = APIRouter(prefix="/workspace", tags=["Workspace"])
+
+#: CF-17: posting preferences are per-client settings the whole org writes
+#: for, and the export is every stored record for a client in one file. Both
+#: are workspace administration rather than day-to-day marketing work.
+#: Reading the preferences stays open — a member needs to know the cadence
+#: and voice they are writing to.
+_WORKSPACE_GATE = Depends(require_cap(Capability.WORKSPACE_MANAGE))
 
 #: Cadence's VOICE_OPTIONS and CADENCE_OPTIONS, verbatim.
 VoiceRegister = Literal[
@@ -44,7 +52,7 @@ async def activity_log(
     return {"items": await client_activity(db, org_id, client, limit)}
 
 
-@router.get("/export")
+@router.get("/export", dependencies=[_WORKSPACE_GATE])
 async def export(
     client_id: UUID,
     user: dict[str, Any] = Depends(get_current_user),
@@ -84,7 +92,7 @@ async def get_posting_prefs(
     return {"posting_prefs": _prefs(client.settings)}
 
 
-@router.put("/posting-prefs")
+@router.put("/posting-prefs", dependencies=[_WORKSPACE_GATE])
 async def set_posting_prefs(
     client_id: UUID,
     body: PostingPrefs,

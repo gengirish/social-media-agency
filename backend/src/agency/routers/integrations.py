@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import CampaignTemplate
+from agency.permissions import Capability, require_cap
 from agency.services.api_keys import create_api_key, list_api_keys, revoke_api_key
 from agency.services.white_label import get_white_label, upsert_white_label
 
@@ -16,7 +17,14 @@ router = APIRouter(prefix="/integrations", tags=["Integrations"])
 # --- API Keys ---
 
 
-@router.post("/api-keys")
+#: CF-17: an API key is a credential that acts for the whole org through
+#: ``routers/public_api.py``, bypassing every seat-level check. Minting,
+#: listing (the list carries each key's prefix and scope) and revoking one are
+#: all workspace administration, not marketing work.
+_KEY_GATE = Depends(require_cap(Capability.WORKSPACE_MANAGE))
+
+
+@router.post("/api-keys", dependencies=[_KEY_GATE])
 async def create_key(
     body: dict,
     user=Depends(get_current_user),
@@ -29,7 +37,7 @@ async def create_key(
     return result
 
 
-@router.get("/api-keys")
+@router.get("/api-keys", dependencies=[_KEY_GATE])
 async def list_keys(
     user=Depends(get_current_user),
     db=Depends(get_db),
@@ -38,7 +46,7 @@ async def list_keys(
     return {"items": await list_api_keys(db, org_id)}
 
 
-@router.delete("/api-keys/{key_id}")
+@router.delete("/api-keys/{key_id}", dependencies=[_KEY_GATE])
 async def revoke_key(
     key_id: UUID,
     user=Depends(get_current_user),
