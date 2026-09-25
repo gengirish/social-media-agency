@@ -23,6 +23,21 @@ const CHANNEL_OPTIONS = [
   { id: "tiktok", label: "TikTok", emoji: "🎵" },
 ];
 
+/**
+ * Paid ad networks, opt-in and separate from the organic channels above (CF-04).
+ *
+ * A campaign that picked LinkedIn and X came back with Google and Meta search
+ * ads nobody asked for: the Ad Copy agent defaulted to `["google", "meta"]`
+ * whatever the brief said. Writing ad copy presumes a media budget, so it is now
+ * a deliberate tick here and nothing else turns it on — see
+ * `agents/ad_copy.py::selected_ad_platforms`, which is the enforcing end.
+ */
+const AD_CHANNEL_OPTIONS = [
+  { id: "google_ads", label: "Google Ads", emoji: "🔍" },
+  { id: "meta_ads", label: "Meta Ads", emoji: "📣" },
+  { id: "linkedin_ads", label: "LinkedIn Ads", emoji: "🏢" },
+];
+
 /* Red ring for a control whose Field is showing an error. */
 const invalidClass = "border-red-400 hover:border-red-400 focus:border-red-500 focus:ring-red-500/20";
 
@@ -90,7 +105,11 @@ export default function NewCampaignPage() {
     else if (goal.length < 10) brief.objective = "Say a little more — at least 10 characters.";
 
     const setup: Errors = {};
-    if (channels.length === 0) setup.channels = "Pick at least one channel.";
+    // Ad networks alone are not a campaign: the Content agent writes posts for
+    // the organic channels, and a brief of "Google Ads only" would produce
+    // social posts for an ad network (CF-04).
+    if (!channels.some((c) => CHANNEL_OPTIONS.some((o) => o.id === c)))
+      setup.channels = "Pick at least one channel.";
     if (startDate && endDate && endDate < startDate)
       setup.endDate = "End date must be on or after the start date.";
     if (!Number.isFinite(budgetUsd) || budgetUsd < 0) setup.budgetUsd = "Budget cannot be negative.";
@@ -327,6 +346,48 @@ export default function NewCampaignPage() {
                 yourself.
               </p>
             )}
+          </div>
+
+          {/* CF-04: paid ads are a separate spend decision, so they are their own
+              opt-in. Nothing here is created in an ad account — only copy. */}
+          <div role="group" aria-label="Paid ads">
+            <p className="mb-2 text-xs font-medium text-muted">Paid ads (optional)</p>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {AD_CHANNEL_OPTIONS.map((ch) => {
+                const on = channels.includes(ch.id);
+                return (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleChannel(ch.id)}
+                    className={cn(
+                      "press-scale flex items-center gap-2.5 rounded-lg border p-3 text-left text-sm font-medium transition-colors duration-200",
+                      on
+                        ? "border-accent bg-accent/10 text-ink shadow-[0_0_0_1px_rgb(var(--c-accent)/0.35)]"
+                        : "border-line bg-canvas/40 text-muted hover:border-slate-300 hover:text-ink"
+                    )}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                        on ? "border-accent bg-accent text-on-accent" : "border-slate-300"
+                      )}
+                    >
+                      {on && <Check className="h-3 w-3" />}
+                    </span>
+                    <span aria-hidden className="text-base leading-none">{ch.emoji}</span>
+                    {ch.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2.5 text-xs text-muted">
+              Tick one to have the Ad Copy agent draft headline and description variants for it.
+              Leave them all off and no ad copy is written. CampaignForge never creates an ad
+              campaign or spends a budget — it writes copy for you to use.
+            </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Start Date" htmlFor="campaign-start">
