@@ -884,6 +884,18 @@ export interface ContentMetadata {
   };
   post_url?: string | null;
   publish_error?: string | null;
+  /**
+   * Why a scheduled post could not go out, when the cause is the workspace
+   * rather than the post (CF-01) — today, no connected account for its platform.
+   * The post is returned to Approved with its schedule cleared, not marked
+   * Failed, and this is cleared when it publishes or is rescheduled.
+   */
+  publish_blocked?: {
+    reason: string;
+    code?: string;
+    platform?: string;
+    at?: string;
+  } | null;
   [key: string]: unknown;
 }
 

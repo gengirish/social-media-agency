@@ -380,6 +380,7 @@ export const PostCard = memo(function PostCard({
   const blocked = publishUnavailableReason(post.platform);
   const postUrl = post.metadata_?.post_url;
   const publishError = post.metadata_?.publish_error;
+  const publishBlocked = post.metadata_?.publish_blocked;
   const ad = adVariantOf(post);
   // Why this post cannot be approved, or null. Kept in step with the server's
   // `empty_content_reason` — the button is hidden here, refused there.
@@ -536,6 +537,16 @@ export const PostCard = memo(function PostCard({
         <div className="mt-3 flex gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
           <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <p>{publishError ? `Publishing failed: ${publishError}` : "Publishing failed. The platform did not return a reason."}</p>
+        </div>
+      )}
+
+      {/* CF-01: the post is fine — the workspace was not ready for it. It sits in
+          Approved with its schedule cleared, rather than in Failed where the only
+          action used to be Delete. */}
+      {publishBlocked && post.status !== "published" && (
+        <div className="mt-3 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <p>{publishBlocked.reason}</p>
         </div>
       )}
 
