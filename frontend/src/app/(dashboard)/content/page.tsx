@@ -344,6 +344,42 @@ export default function QueuePage() {
     }
   }
 
+  /**
+   * CF-06: put a failed post back in Approved so publishing can be tried again.
+   *
+   * Moderation runs again server-side — the post may have been edited to fix
+   * whatever the platform rejected — so this branches on the same codes approve
+   * does, reusing the moderation sheet rather than a bare toast.
+   */
+  async function retry(post: QueuePost, override = false) {
+    setPostBusy(post.id, "retry");
+    try {
+      const res = await postsApi.retry(post.id, override);
+      setModeration(null);
+      const mod = res.moderation?.status;
+      if (mod === "unavailable") toast.warning("Moderation check unavailable — back in Approved without it");
+      else if (override || mod === "overridden") toast.success("Back in Approved — moderation override recorded");
+      else toast.success("Back in Approved — publish it when you're ready");
+      trackFeature("post-retry", { platform: post.platform, override });
+      reload();
+      void refreshClients();
+    } catch (err) {
+      const code = apiErrorCode(err);
+      if (code === "moderation_flagged") {
+        setModeration({ post, issues: moderationIssues(err) });
+      } else if (code === "not_failed") {
+        toast.error("This post is no longer failed — refreshed the queue");
+        reload();
+      } else if (code === "empty_content") {
+        toast.error("There's nothing in this post to publish — edit it first");
+      } else {
+        toast.error(err instanceof Error ? err.message : "Could not retry this post");
+      }
+    } finally {
+      setPostBusy(post.id, null);
+    }
+  }
+
   async function saveEdit(post: QueuePost, edit: PostEdit) {
     try {
       const updated = await postsApi.edit(post.id, edit);
@@ -484,9 +520,10 @@ export default function QueuePage() {
     }
   }
 
-  const latest = useRef({ approve, saveEdit, deletePosts, regenerate, requestBrief });
-  latest.current = { approve, saveEdit, deletePosts, regenerate, requestBrief };
+  const latest = useRef({ approve, retry, saveEdit, deletePosts, regenerate, requestBrief });
+  latest.current = { approve, retry, saveEdit, deletePosts, regenerate, requestBrief };
   const onApprove = useCallback((p: QueuePost) => void latest.current.approve(p), []);
+  const onRetry = useCallback((p: QueuePost) => void latest.current.retry(p), []);
   const onEditSave = useCallback((p: QueuePost, e: PostEdit) => latest.current.saveEdit(p, e), []);
   const onDelete = useCallback((p: QueuePost) => latest.current.deletePosts([p]), []);
   const onRegenerate = useCallback((p: QueuePost) => void latest.current.regenerate(p), []);
@@ -963,6 +1000,7 @@ export default function QueuePage() {
                       onSchedule={onSchedule}
                       onPublish={onPublish}
                       onDelete={onDelete}
+                      onRetry={onRetry}
                       onRegenerate={onRegenerate}
                       onCancelRegenerate={onCancelRegenerate}
                       onRequestBrief={onRequestBrief}
@@ -1005,7 +1043,15 @@ export default function QueuePage() {
           if (moderation) setEditingId(moderation.post.id);
           setModeration(null);
         }}
-        onOverride={() => moderation && void approve(moderation.post, true)}
+        // A failed post reached this sheet through Retry, not Approve, and the
+        // approve endpoint refuses a failed piece — so the override has to go
+        // back to the same endpoint that raised the flag.
+        onOverride={() =>
+          moderation &&
+          void (moderation.post.status === "failed"
+            ? retry(moderation.post, true)
+            : approve(moderation.post, true))
+        }
       />
 
       <ScheduleDialog

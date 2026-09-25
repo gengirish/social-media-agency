@@ -740,7 +740,72 @@ export interface Campaign {
   budget: Record<string, unknown>;
   status: string;
   agent_plan: Record<string, unknown>;
+  /**
+   * Why the run failed, when it did (CF-07). Empty `{}` otherwise, and empty for
+   * campaigns that failed before this was recorded — render
+   * {@link campaignFailureSummary}, which says so rather than inventing a reason.
+   */
+  failure?: CampaignFailure | null;
   created_at: string;
+}
+
+export interface CampaignFailure {
+  error?: string;
+  error_type?: string;
+  /**
+   * The agents the crash is attributable to. Two when a parallel pair (Strategy ∥
+   * SEO, Content ∥ Ad Copy) was in flight and either could have thrown — the
+   * backend reports both rather than guessing.
+   */
+  agents?: string[];
+  /** The last agent that finished, or null if none did. */
+  after?: string | null;
+  at?: string;
+}
+
+/** Display names for the pipeline's nodes. Mirrors AGENT_ORDER in the router. */
+const AGENT_LABELS: Record<string, string> = {
+  orchestrate: "Orchestrator",
+  strategise: "Strategy",
+  seo_research: "SEO",
+  create_content: "Content",
+  write_ads: "Ad Copy",
+  human_review: "Human Review",
+  qa_check: "QA / Brand",
+  compile_output: "Compile",
+  analytics: "Analytics",
+};
+
+export function agentLabel(agent: string): string {
+  return AGENT_LABELS[agent] ?? agent;
+}
+
+/**
+ * A one-line account of why a campaign failed, for the card and the detail page.
+ *
+ * Returns null when the campaign has not failed. A failed campaign with nothing
+ * recorded returns a sentence saying exactly that — these are the runs that
+ * failed before the reason was stored, and claiming to know more would be worse
+ * than admitting the gap.
+ */
+export function campaignFailureSummary(campaign: Campaign): string | null {
+  if (campaign.status !== "failed") return null;
+  const failure = campaign.failure;
+  if (!failure?.error) return "No reason was recorded for this failure.";
+
+  const agents = failure.agents ?? [];
+  let where: string;
+  if (agents.length === 1) {
+    where = `${agentLabel(agents[0])} failed`;
+  } else if (agents.length > 1) {
+    // Either branch could have thrown; say so instead of picking one.
+    where = `${agents.map(agentLabel).join(" or ")} failed`;
+  } else if (failure.after) {
+    where = `Failed after ${agentLabel(failure.after)}`;
+  } else {
+    where = "The run failed";
+  }
+  return `${where}: ${failure.error}`;
 }
 
 export interface CampaignListResponse {
@@ -771,6 +836,57 @@ export interface ReviewSubmittedResponse {
   decision: string;
 }
 
+/** The ad platforms the Ad Copy agent writes for. */
+export type AdPlatform = "google" | "meta" | "linkedin";
+
+/**
+ * One ad variant in the shape its network renders, from
+ * `backend/services/ad_variants.py`. Which keys of `fields` are present depends
+ * on `platform`: Google has `headlines`/`descriptions`, Meta has
+ * `primary_text`/`headline`/`description`, LinkedIn has
+ * `intro_text`/`headline`/`description`.
+ *
+ * Read this rather than `body` when rendering an ad — `body` is the same copy
+ * flattened to labelled text for the generic paths.
+ */
+export interface AdVariant {
+  platform: AdPlatform;
+  variant: number;
+  angle: string;
+  cta: string;
+  target_keyword: string;
+  notes: string;
+  fields: {
+    headlines?: string[];
+    descriptions?: string[];
+    primary_text?: string;
+    intro_text?: string;
+    headline?: string;
+    description?: string;
+  };
+  /** Per-field character limits for this network, for the over-limit hint. */
+  limits: Record<string, number>;
+  /** Required fields that came back empty. */
+  missing: string[];
+  /** True when nothing usable was generated. Such a variant is stored failed. */
+  is_empty: boolean;
+}
+
+/** `content_piece.metadata`, as the API spells it (`metadata_`). */
+export interface ContentMetadata {
+  /** Present on ad variants. */
+  ad?: AdVariant;
+  /** Why a piece is not a usable draft, set when generation fell short. */
+  generation?: {
+    status: "failed" | "incomplete";
+    reason?: string;
+    missing?: string[];
+  };
+  post_url?: string | null;
+  publish_error?: string | null;
+  [key: string]: unknown;
+}
+
 export interface ContentPiece {
   id: string;
   campaign_id: string | null;
@@ -784,6 +900,31 @@ export interface ContentPiece {
   ai_generated: boolean;
   performance_score: number | null;
   created_at: string;
+  metadata_?: ContentMetadata | null;
+}
+
+/** The structured ad on a piece, or null when it is not an ad variant. */
+export function adVariantOf(piece: Pick<ContentPiece, "metadata_">): AdVariant | null {
+  const ad = piece.metadata_?.ad;
+  return ad && typeof ad === "object" && ad.fields ? ad : null;
+}
+
+/**
+ * Why this piece cannot be approved, or null when it can.
+ *
+ * An ad variant the agent returned empty is stored failed rather than draft, but
+ * older rows predate that and are still drafts with nothing in them — so this
+ * checks the content, not only the status (CF-05).
+ */
+export function unusableReason(piece: Pick<ContentPiece, "metadata_" | "body">): string | null {
+  const generation = piece.metadata_?.generation;
+  if (generation?.status === "failed") {
+    return generation.reason ?? "This item was generated empty.";
+  }
+  const ad = adVariantOf(piece);
+  if (ad?.is_empty) return "The ad copy agent returned no usable copy for this variant.";
+  if (!ad && !piece.body.trim()) return "This item has no content.";
+  return null;
 }
 
 export interface ContentListResponse {
@@ -1732,11 +1873,6 @@ export type QueueStatus = "draft" | "approved" | "scheduled" | "published" | "fa
 export interface QueuePost extends ContentPiece {
   scheduled_at?: string | null;
   published_at?: string | null;
-  metadata_?: {
-    post_url?: string | null;
-    publish_error?: string | null;
-    [key: string]: unknown;
-  } | null;
 }
 
 export interface QueueListResponse {
@@ -1795,6 +1931,17 @@ export const postsApi = {
   /** Runs moderation first. 409 `moderation_flagged` unless `override`. */
   approve: (id: string, override = false) =>
     request<ApproveResult>(`/api/v1/content/${id}/approve${override ? "?override=true" : ""}`, {
+      method: "POST",
+    }),
+
+  /**
+   * Send a post whose publish failed back to `approved`, ready to try again.
+   *
+   * Moderation runs again — a failed post can be edited, so the text may not be
+   * the text that was approved. 409 `not_failed` if it is not a failed post.
+   */
+  retry: (id: string, override = false) =>
+    request<ApproveResult>(`/api/v1/content/${id}/retry${override ? "?override=true" : ""}`, {
       method: "POST",
     }),
 

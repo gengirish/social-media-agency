@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, type Campaign, type Client } from "@/lib/api";
+import { api, campaignFailureSummary, type Campaign, type Client } from "@/lib/api";
+import { platformLabel } from "@/lib/platforms";
 import { toast } from "sonner";
-import { Plus, Megaphone, ArrowUpRight } from "lucide-react";
+import { Plus, Megaphone, ArrowUpRight, AlertTriangle } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/panel";
 import { EmptyState, LoadingState } from "@/components/ui/empty-state";
@@ -80,10 +81,19 @@ export default function CampaignsPage() {
 
                 <p className="mt-3 line-clamp-2 flex-1 text-sm text-muted">{campaign.objective}</p>
 
+                {/* CF-07: a short reason on the card, so a list of failures is
+                    something to act on rather than four identical red badges. */}
+                {campaignFailureSummary(campaign) && (
+                  <p className="mt-2 line-clamp-2 flex items-start gap-1.5 text-xs text-red-700">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                    {campaignFailureSummary(campaign)}
+                  </p>
+                )}
+
                 <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3">
                   <div className="flex flex-wrap gap-1.5">
                     {campaign.channels.map((ch) => (
-                      <Tag key={ch}>{ch}</Tag>
+                      <Tag key={ch}>{platformLabel(ch)}</Tag>
                     ))}
                   </div>
                   <ArrowUpRight className="h-4 w-4 shrink-0 text-muted transition-[color,transform] group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-accent-text" />

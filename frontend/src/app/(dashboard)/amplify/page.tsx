@@ -9,6 +9,7 @@ import {
   api,
   apiErrorStatus,
   isGenerationQuotaError,
+  unusableReason,
   type AmplifyPack,
   type AmplifyPreviewResponse,
   type Client,
@@ -98,6 +99,14 @@ function AmplifyWorkspace() {
     api
       .getContentPiece(sourceParam)
       .then((piece) => {
+        // A deep link can point at a piece that has nothing in it — say, an ad
+        // variant the agent returned empty. Amplifying it would spend a
+        // generation on nothing (CF-05).
+        const unusable = unusableReason(piece);
+        if (piece.status === "failed" || unusable !== null) {
+          toast.error(unusable ?? "That post failed, so there's nothing to amplify.");
+          return;
+        }
         setSourceMode("content");
         setClientId(piece.client_id);
         setSourceId(piece.id);
@@ -117,10 +126,14 @@ function AmplifyWorkspace() {
       .getContent({ client_id: clientId, per_page: 50 })
       .then((r) => {
         if (cancelled) return;
+        // CF-05: a failed or empty piece must not be offered as a source. There
+        // is nothing in it to repurpose, so a pack built from one would spend a
+        // generation to produce eight drafts of nothing.
+        const usable = r.items.filter((i) => i.status !== "failed" && unusableReason(i) === null);
         setContentItems((prev) => {
           // Keep a deep-linked piece that is older than the first page.
-          const pinned = prev.filter((p) => p.id === sourceId && p.client_id === clientId && !r.items.some((i) => i.id === p.id));
-          return [...pinned, ...r.items];
+          const pinned = prev.filter((p) => p.id === sourceId && p.client_id === clientId && !usable.some((i) => i.id === p.id));
+          return [...pinned, ...usable];
         });
       })
       .catch(() => !cancelled && setContentItems([]))

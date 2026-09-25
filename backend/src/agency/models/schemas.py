@@ -173,6 +173,10 @@ class CampaignResponse(BaseModel):
     budget: dict
     status: str
     agent_plan: dict
+    # Why the run failed, when it did (CF-07): {error, error_type, agents, after,
+    # at}. Empty for anything that has not failed, and empty for campaigns that
+    # failed before the column existed — the UI says so rather than inventing one.
+    failure: dict = Field(default_factory=dict)
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -201,6 +205,16 @@ class ContentPieceResponse(BaseModel):
     ai_generated: bool
     performance_score: float | None
     created_at: datetime
+    # Named ``metadata_`` on the wire as well as here. The column is mapped to
+    # ``metadata_`` because ``metadata`` is taken on a SQLAlchemy declarative
+    # class, and the list endpoints serialise the ORM row directly, so that is
+    # already the key the frontend reads (``QueuePost.metadata_``); aliasing it to
+    # "metadata" here alone would leave two spellings for one field.
+    #
+    # Ad variants keep their per-platform structure under ``metadata_.ad`` —
+    # without it the UI has only the flattened body and cannot tell a headline
+    # from a description.
+    metadata_: dict = Field(default_factory=dict)
 
     model_config = {"from_attributes": True}
 
