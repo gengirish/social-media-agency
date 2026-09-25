@@ -1,8 +1,10 @@
+import re
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Final
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 # --- Enums ---
 
@@ -153,6 +155,49 @@ class CampaignCreate(BaseModel):
     budget: dict = Field(default_factory=dict)
 
 
+#: Form labels that have been submitted as if they were values (CF-12).
+#:
+#: One campaign was saved with the objective "Campaign Objective *" — the
+#: literal label from step 1 of New Campaign. Browser autofill matches on label
+#: text and will happily write the label into the field it names, and the value
+#: then reaches the strategy prompt as the campaign's actual goal.
+#:
+#: Matching is on the normalised text, so the asterisk, case and spacing do not
+#: matter. Kept small and specific: this rejects a value that *is* a label, never
+#: one that merely contains those words, so "Campaign objective: grow signups
+#: among CTOs" is untouched.
+FIELD_LABELS: Final[frozenset[str]] = frozenset(
+    {
+        "campaign objective",
+        "objective",
+        "campaign name",
+        "target audience",
+        "key messages",
+        "additional context",
+        "client",
+        "budget",
+        "budget usd",
+        "start date",
+        "end date",
+    }
+)
+
+
+def normalise_label(value: str) -> str:
+    """Lower-cased, punctuation-stripped, single-spaced — for label comparison."""
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def reject_field_label(value: str, field: str) -> str:
+    """Raise when ``value`` is just the field's own label. Returns it otherwise."""
+    if normalise_label(value) in FIELD_LABELS:
+        raise ValueError(
+            f"{field} looks like the form's own label rather than a value — "
+            "this is usually browser autofill. Please type the real value."
+        )
+    return value
+
+
 class CampaignBrief(BaseModel):
     """The client brief that kicks off the LangGraph pipeline."""
 
@@ -167,6 +212,13 @@ class CampaignBrief(BaseModel):
     end_date: date
     additional_context: str = ""
     languages: list[str] = Field(default_factory=list)
+
+    @field_validator("campaign_name", "objective", "target_audience")
+    @classmethod
+    def _not_a_form_label(cls, value: str, info: ValidationInfo) -> str:
+        # These three are the fields that reach a prompt as the campaign's intent,
+        # so a label here becomes the brief the agents actually work from.
+        return reject_field_label(value, info.field_name or "This field")
 
 
 class CampaignResponse(BaseModel):

@@ -258,6 +258,7 @@ export default function NewCampaignPage() {
           <Field label="Campaign Name *" htmlFor="campaign-name" error={errors.campaignName}>
             <Input
               id="campaign-name"
+              autoComplete="off"
               value={campaignName}
               onChange={(e) => setCampaignName(e.target.value)}
               placeholder="Q2 Product Launch Campaign"
@@ -269,6 +270,7 @@ export default function NewCampaignPage() {
           <Field label="Campaign Objective *" htmlFor="campaign-objective" error={errors.objective}>
             <Textarea
               id="campaign-objective"
+              autoComplete="off"
               value={objective}
               onChange={(e) => setObjective(e.target.value)}
               rows={3}
@@ -281,6 +283,7 @@ export default function NewCampaignPage() {
           <Field label="Target Audience" htmlFor="campaign-audience">
             <Input
               id="campaign-audience"
+              autoComplete="off"
               value={targetAudience}
               onChange={(e) => setTargetAudience(e.target.value)}
               placeholder="Tech-savvy professionals, 25-45, interested in productivity tools"
@@ -289,6 +292,7 @@ export default function NewCampaignPage() {
           <Field label="Key Messages (one per line)" htmlFor="campaign-messages">
             <Textarea
               id="campaign-messages"
+              autoComplete="off"
               value={keyMessages}
               onChange={(e) => setKeyMessages(e.target.value)}
               rows={3}
