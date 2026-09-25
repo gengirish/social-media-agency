@@ -73,6 +73,96 @@ PLAN_CONFIG = {
 }
 
 
+#: How a workspace describes itself -> which plans its pricing page offers.
+#:
+#: PRESENTATION ONLY. Every profile bills against the same four ``PLAN_CONFIG``
+#: tiers, the same amounts and the same Stripe ``price_id``s; a profile decides
+#: only which of them are shown, in what order, and which one is called out.
+#: Nothing here grants a capability or changes a limit -- ``subscription`` remains
+#: the sole source of truth for what an org may do.
+#:
+#: ``tiers`` is also the display order. ``recommended`` must be one of them.
+WORKSPACE_PROFILES: dict[str, dict] = {
+    "product_owner": {
+        "label": "Product owner",
+        "description": "One product, marketed by the person who builds it.",
+        "tiers": ["free", "starter", "growth"],
+        "recommended": "starter",
+        # Why this tier: one product = one client, so the client ceiling never
+        # binds; what does bind is publishing at all, which Starter is the first
+        # tier to allow.
+        "reason": "One product is one client — Starter is the first tier that can publish.",
+    },
+    "freelancer": {
+        "label": "Freelancer / consultant",
+        "description": "A handful of clients, all of them run by you.",
+        "tiers": ["starter", "growth", "agency"],
+        "recommended": "growth",
+        "reason": "Growth lifts the client ceiling to 10 and opens every platform.",
+    },
+    "organization": {
+        "label": "Agency / organization",
+        "description": "A team running many client brands, with seats and white-label.",
+        "tiers": ["growth", "agency"],
+        "recommended": "agency",
+        "reason": "Agency is the only tier with white-label, API access and no client cap.",
+    },
+}
+
+
+def normalize_workspace_profile(value: str | None) -> str | None:
+    """A recognised profile key, or ``None``.
+
+    ``None`` is a real state -- "never chosen" -- and renders the full plan grid.
+    An unrecognised string (a stale row, a hand-edited database) normalises to
+    ``None`` rather than raising, so a bad value can never hide a plan someone
+    is entitled to buy.
+    """
+    return value if value in WORKSPACE_PROFILES else None
+
+
+def plans_for_profile(profile: str | None, current_tier: str | None = None) -> list[dict]:
+    """The plan list a workspace of this profile should see, in display order.
+
+    Two invariants, both load-bearing:
+
+    * ``current_tier`` is **always** included, even when the profile would not
+      offer it. Hiding the plan someone is already paying for would make their
+      own subscription unrepresentable on the billing screen.
+    * An unknown profile falls through to every plan. Fail open -- this is a
+      storefront, and the failure mode of guessing wrong is a hidden product.
+    """
+    key = normalize_workspace_profile(profile)
+    if key is None:
+        tiers = list(PLAN_CONFIG)
+    else:
+        cfg = WORKSPACE_PROFILES[key]
+        tiers = [t for t in cfg["tiers"] if t in PLAN_CONFIG]
+        if current_tier and current_tier in PLAN_CONFIG and current_tier not in tiers:
+            # Keep PLAN_CONFIG's own ordering rather than appending, so the grid
+            # never reads free -> growth -> starter.
+            tiers = [t for t in PLAN_CONFIG if t in {*tiers, current_tier}]
+    recommended = WORKSPACE_PROFILES[key]["recommended"] if key else None
+    return [
+        {"tier": t, **PLAN_CONFIG[t], "recommended": t == recommended}
+        for t in tiers
+    ]
+
+
+def workspace_profile_catalog() -> list[dict]:
+    """The choosable profiles, for the picker. Order is the dict's order."""
+    return [
+        {
+            "id": key,
+            "label": cfg["label"],
+            "description": cfg["description"],
+            "recommended_tier": cfg["recommended"],
+            "reason": cfg["reason"],
+        }
+        for key, cfg in WORKSPACE_PROFILES.items()
+    ]
+
+
 def generations_limit_for(sub: Subscription) -> int:
     """The org's Amplify pack allowance.
 
@@ -343,6 +433,33 @@ class BillingService:
 
     def get_plans(self) -> list:
         return [{"tier": k, **v} for k, v in PLAN_CONFIG.items()]
+
+    async def get_workspace_profile(self, db: AsyncSession, org_id: UUID) -> str | None:
+        """The org's stored profile, normalised. Never raises on a stale value."""
+        result = await db.execute(select(Organization).where(Organization.id == org_id))
+        org = result.scalar_one_or_none()
+        return normalize_workspace_profile(org.workspace_profile if org else None)
+
+    async def set_workspace_profile(
+        self, db: AsyncSession, org_id: UUID, profile: str | None
+    ) -> str | None:
+        """Store the org's profile. ``None`` clears it back to "never chosen".
+
+        Rejects an unrecognised key rather than storing it -- the column has a
+        CHECK constraint, and a 400 here is a better error than a database one.
+        Changing this does not touch the subscription: it is a display choice,
+        so it never starts, stops or reprices anything.
+        """
+        if profile is not None and profile not in WORKSPACE_PROFILES:
+            raise ValueError(f"Unknown workspace profile: {profile}")
+        result = await db.execute(select(Organization).where(Organization.id == org_id))
+        org = result.scalar_one_or_none()
+        if not org:
+            raise ValueError("Organization not found")
+        org.workspace_profile = profile
+        await db.commit()
+        logger.info("workspace_profile_set", org_id=str(org_id), profile=profile)
+        return profile
 
 
 billing = BillingService()

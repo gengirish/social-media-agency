@@ -20,6 +20,37 @@ Source of truth is `PLAN_CONFIG` in `services/billing.py`. Price IDs come from `
 
 > **Plan copy is not consistent across surfaces.** The landing page (`src/app/page.tsx`) lists Free as "1 client / 30 posts / mo"; the in-app pricing page (`src/app/(dashboard)/pricing/page.tsx`) lists it as "1 client / 5 campaigns / mo / No publishing". Both numbers exist in `PLAN_CONFIG`, but a visitor sees two different headline allowances. Neither page mentions the Amplify allowance. Open decision — see `docs/cadence-port-plan-260921.md`.
 
+### Workspace profile (pricing shaping)
+
+**Status**: [LIVE] (260925)
+**Column**: `organization.workspace_profile` — `product_owner` | `freelancer` | `organization`, nullable.
+**Config**: `WORKSPACE_PROFILES` in `services/billing.py`.
+
+How a workspace describes itself, chosen on `/pricing`. It decides **which of the four
+tiers above are offered, in what order, and which one is marked "Best for you"** —
+nothing else.
+
+| Profile | Tiers offered | Recommended |
+|---|---|---|
+| Product owner | Free, Starter, Growth | Starter |
+| Freelancer / consultant | Starter, Growth, Agency | Growth |
+| Agency / organization | Growth, Agency | Agency |
+
+Three things this is **not**, each of which has a test in `tests/test_workspace_profile.py`:
+
+- **Not a price change.** Every profile bills against the same `PLAN_CONFIG` amounts and
+  the same Stripe `price_id`s. There are no per-profile Stripe products.
+- **Not a permission.** It grants no capability and changes no limit; `subscription`
+  remains the only source of truth for what an org may do. It is deliberately *not*
+  `organization.account_type`, which is a one-way flip that drives `permissions.py` —
+  folding the two together would let a pricing-page click move someone's permissions.
+- **Not able to hide your own plan.** `plans_for_profile()` always re-inserts the org's
+  current tier (in `PLAN_CONFIG` order) even when the profile would not offer it, and an
+  unrecognised stored value falls back to the full grid. Both fail open.
+
+`NULL` is the default and means "never chosen" → the full four-tier grid, with Growth
+marked "Most Popular" as before. Setting it needs `billing.manage`.
+
 ### Checkout Flow
 
 1. Frontend calls `POST /api/v1/billing/checkout` with `plan_tier` (required); `success_url` / `cancel_url` optional — when omitted, defaults are `{FRONTEND_URL}/settings?checkout=success` and `{FRONTEND_URL}/pricing?checkout=cancel`
@@ -78,8 +109,9 @@ Only a verified event reaches `billing.handle_webhook()`. This closes the "anyon
 **Route**: `/pricing`
 **Component**: `PricingPage` (client component)
 
-- Fetches plans via `api.getPlans()` and subscription via `api.getSubscription()`
-- Displays 4 tiers: Free, Starter, Growth (highlighted), Agency
+- Fetches plans via `api.getPricing()` (shaped by the workspace profile) and subscription via `api.getSubscription()`. `api.getPlans()` still returns the raw, unshaped tier list — prefer `getPricing()` on any screen that sells.
+- A profile picker above the grid (`ProfilePicker`); choosing one saves immediately via `PUT /billing/workspace-profile` and reshapes the grid. Re-clicking the selected card clears it back to the full grid. Disabled without `billing.manage`.
+- Displays the tiers the server returned (2–4 of Free, Starter, Growth, Agency); the recommended one is highlighted and carries the profile's one-line reason
 - Current plan badge on active tier
 - Upgrade buttons call `api.createCheckout()` and redirect
 

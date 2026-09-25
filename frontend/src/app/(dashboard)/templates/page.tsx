@@ -19,6 +19,12 @@ interface Template {
   is_public: boolean;
 }
 
+/*
+ * These are CAMPAIGN templates (campaign_template rows), not ad-creative templates --
+ * launching one routes to /campaigns/new, not to the Ads generator. The tab lives in
+ * the Ads group because that is where it was asked for; nothing ads-specific has been
+ * invented for it, and the seeded categories below are the ones that actually exist.
+ */
 const CATEGORIES = ["all", "launch", "social", "awareness", "seasonal", "thought-leadership"];
 
 function formatCategoryLabel(cat: string) {
@@ -60,7 +66,7 @@ export default function TemplatesPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        eyebrow="Create"
+        eyebrow="Ads"
         title="Campaign Templates"
         description="Start faster with pre-built campaign templates"
       />

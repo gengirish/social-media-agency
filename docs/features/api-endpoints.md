@@ -383,7 +383,9 @@ Every query filters on `org_id` and the org-resolved `client_id`. Tests: `tests/
 
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
-| GET | `/billing/plans` | Yes | `list_plans` | Plan catalog |
+| GET | `/billing/plans` | Yes | `list_plans` | Plans shaped by the org's workspace profile, plus `all_plans` (unshaped), `profile` and the `profiles` catalogue |
+| GET | `/billing/workspace-profile` | Yes | `get_workspace_profile` | The org's chosen profile (`null` = never chosen) + the catalogue |
+| PUT | `/billing/workspace-profile` | `billing.manage` | `set_workspace_profile` | Set/clear the profile. Display only — reshapes the pricing page, moves no money |
 | GET | `/billing/subscription` | Yes | `get_subscription` | Org subscription + limits, incl. `generations_used` / `generations_limit` (Amplify quota — see [billing.md](billing.md#amplify-generation-quota)) |
 | POST | `/billing/checkout` | Yes | `create_checkout` | Stripe Checkout session |
 | POST | `/billing/webhook` | Stripe sig | `stripe_webhook` | Stripe webhook handler |

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { format, formatDistanceToNow, isValid, parseISO } from "date-fns";
 import {
@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Copy,
   ExternalLink,
+  Image as ImageIcon,
   Layers,
   Loader2,
   Palette,
@@ -18,6 +19,7 @@ import {
   Send,
   Sparkles,
   Trash2,
+  Video,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -589,6 +591,24 @@ export const PostCard = memo(function PostCard({
               </>
             )}
 
+            {/*
+              The brief is words for a human designer; these two would be the pixels.
+              Neither is wired up in the Queue, so both are disabled and say so rather
+              than being offered and failing -- the same rule as publishUnavailableReason.
+
+              Note for whoever enables these: image generation already EXISTS server-side
+              (POST /content/{id}/generate-image -> services/image_generation.py, fal.ai,
+              live when FAL_API_KEY is set; it appends to content_piece.media_urls). It has
+              no UI, no quota accounting and the card does not render media_urls, which is
+              why it ships disabled here. Short-video generation has no backend at all.
+            */}
+            {needsVisual && post.status !== "failed" && (
+              <>
+                <ComingSoonAction icon={ImageIcon} label="Create image" />
+                <ComingSoonAction icon={Video} label="Short video" />
+              </>
+            )}
+
             {post.status !== "failed" && (
               <Button variant="secondary" size="sm" onClick={() => onEditStart(post.id)} disabled={anyBusy}>
                 <PenLine className="h-3.5 w-3.5" />
@@ -623,3 +643,33 @@ export const PostCard = memo(function PostCard({
     </article>
   );
 });
+
+/**
+ * A visual-generation action the Queue cannot perform yet. Rendered disabled with
+ * a "Soon" tag so the card shows the intended shape of the feature without ever
+ * implying it will produce an image or a video today.
+ */
+function ComingSoonAction({
+  icon: Icon,
+  label,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      disabled
+      aria-disabled
+      title={`${label} — coming soon. Not available yet.`}
+      className="cursor-not-allowed"
+    >
+      <Icon className="h-3.5 w-3.5" aria-hidden />
+      {label}
+      <span className="ml-1 rounded-full border border-line px-1.5 py-px font-mono text-[9.5px] uppercase tracking-wide text-muted">
+        Soon
+      </span>
+    </Button>
+  );
+}

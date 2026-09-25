@@ -6,7 +6,7 @@
 
 import type { Capability } from "@/lib/session";
 
-export type NavIconName = "setup" | "posts" | "create" | "inbox" | "insights" | "settings";
+export type NavIconName = "setup" | "posts" | "create" | "ads" | "inbox" | "insights" | "settings";
 
 export interface NavTab {
   label: string;
@@ -32,7 +32,7 @@ export interface NavGroup {
 }
 
 /*
- * Group order is also the keyboard-shortcut order (1–6). Cadence's order is
+ * Group order is also the keyboard-shortcut order (1–7). Cadence's order is
  * Setup, Posts, Create; this app deliberately puts Create before Posts
  * (commit 70a67a9) because a Queue is empty until something has been created.
  */
@@ -55,6 +55,18 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Email", href: "/create/email" },
       { label: "Launch", href: "/create/launch" },
       { label: "Amplify", href: "/amplify" },
+    ],
+  },
+  /*
+   * Ads is its own group rather than a Create tab: paid copy has a separate
+   * review path (services/ad_guardrails.py) and never becomes a content_piece,
+   * so it does not share Create's approval-queue destination. Templates moved
+   * in with it at the user's request -- see the note in templates/page.tsx.
+   */
+  {
+    id: "ads",
+    label: "Ads",
+    tabs: [
       { label: "Ads", href: "/create/ads" },
       { label: "Templates", href: "/templates" },
     ],

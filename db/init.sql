@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS organization (
     -- one-way on the first team invite or growth-tier purchase.
     account_type VARCHAR(20) NOT NULL DEFAULT 'personal'
         CHECK (account_type IN ('personal', 'business')),
+    -- How the workspace describes itself. Presentation only: it reshapes the pricing
+    -- page and grants nothing. NULL = never chosen (show every plan). Deliberately
+    -- separate from account_type, which decides which features exist.
+    workspace_profile VARCHAR(24)
+        CHECK (workspace_profile IS NULL
+               OR workspace_profile IN ('product_owner', 'freelancer', 'organization')),
     domain VARCHAR(255),
     settings JSONB DEFAULT '{}',
     agentmail_inbox_id VARCHAR(255),

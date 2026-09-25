@@ -357,6 +357,20 @@ export const api = {
     return data.plans ?? data.items ?? [];
   },
 
+  /**
+   * The plans this workspace should be shown, already filtered and ordered by
+   * its chosen profile, plus the profile catalogue for the picker. Prefer this
+   * over `getPlans` on any screen that sells — `getPlans` returns the raw tier
+   * list with no shaping and no `recommended` flag.
+   */
+  getPricing: () => request<PricingResponse>("/api/v1/billing/plans"),
+
+  setWorkspaceProfile: (profile: WorkspaceProfileId | null) =>
+    request<{ profile: WorkspaceProfileId | null; plans: Plan[] }>(
+      "/api/v1/billing/workspace-profile",
+      { method: "PUT", body: JSON.stringify({ profile }) }
+    ),
+
   getSubscription: () => request<SubscriptionInfo>("/api/v1/billing/subscription"),
 
   createCheckout: (planTier: string, successUrl?: string, cancelUrl?: string) =>
@@ -1037,6 +1051,29 @@ export interface Plan {
   campaigns_limit?: number;
   features?: string[];
   amount?: number;
+  /** Set by the server from the workspace profile. Absent on the unshaped `getPlans` list. */
+  recommended?: boolean;
+}
+
+/** How a workspace describes itself. Display only — it grants nothing. */
+export type WorkspaceProfileId = "product_owner" | "freelancer" | "organization";
+
+export interface WorkspaceProfileOption {
+  id: WorkspaceProfileId;
+  label: string;
+  description: string;
+  recommended_tier: string;
+  reason: string;
+}
+
+export interface PricingResponse {
+  /** Shaped by the profile: which tiers, in what order, which one is recommended. */
+  plans: Plan[];
+  /** Every tier, unshaped. */
+  all_plans: Plan[];
+  /** `null` = never chosen, which shows the full grid. */
+  profile: WorkspaceProfileId | null;
+  profiles: WorkspaceProfileOption[];
 }
 
 export interface SubscriptionInfo {

@@ -2,7 +2,8 @@
 
 /*
  * Cadence shell behaviours: remember the last sub-tab per group (so a group
- * pill returns you where you were), number-key shortcuts 1–6 + "?" help, and
+ * pill returns you where you were), number-key shortcuts 1–N (one per visible
+ * group, in NAV_GROUPS order) + "?" help, and
  * the footer with legal links. Last-visited lives in sessionStorage — a
  * per-tab convenience, never state anything depends on.
  */
