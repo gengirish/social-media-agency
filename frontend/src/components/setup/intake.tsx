@@ -507,9 +507,14 @@ export function Intake({
               ))}
             </div>
             <div className="mt-8 flex flex-wrap items-center gap-3">
+              {/* CF-09: an approved profile showed the `approved` badge beside a
+                  button still reading "Approve profile", which read as though
+                  the approval had not taken. The action here is re-approving the
+                  edits on this screen, so it says that. */}
               <Button onClick={() => void approve()} disabled={!complete || approving}>
                 {approving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Approve profile <ArrowRight className="h-3.5 w-3.5" />
+                {profile.approved ? "Re-approve after edits" : "Approve profile"}{" "}
+                <ArrowRight className="h-3.5 w-3.5" />
               </Button>
               <Button variant="secondary" onClick={() => setConfirmStartOver(true)} disabled={approving}>
                 Start over

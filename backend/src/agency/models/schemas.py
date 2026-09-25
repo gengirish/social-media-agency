@@ -1,8 +1,10 @@
+import re
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Final
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 # --- Enums ---
 
@@ -106,6 +108,14 @@ class BrandProfileResponse(BaseModel):
     emoji_policy: str | None
     competitor_differentiation: str | None
     target_audience: str | None
+    # CF-08: the one answer to "what is this client's voice?", resolved across the
+    # three stores that can hold it (see services/brand_context.py::resolve_voice).
+    # Every screen renders this rather than picking a column, so they cannot show
+    # three different values for one client again. "" when nothing is set.
+    effective_voice: str = ""
+    #: Which store `effective_voice` came from: "guide", "register",
+    #: "tone_register", or None when there is none.
+    voice_source: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -145,6 +155,49 @@ class CampaignCreate(BaseModel):
     budget: dict = Field(default_factory=dict)
 
 
+#: Form labels that have been submitted as if they were values (CF-12).
+#:
+#: One campaign was saved with the objective "Campaign Objective *" — the
+#: literal label from step 1 of New Campaign. Browser autofill matches on label
+#: text and will happily write the label into the field it names, and the value
+#: then reaches the strategy prompt as the campaign's actual goal.
+#:
+#: Matching is on the normalised text, so the asterisk, case and spacing do not
+#: matter. Kept small and specific: this rejects a value that *is* a label, never
+#: one that merely contains those words, so "Campaign objective: grow signups
+#: among CTOs" is untouched.
+FIELD_LABELS: Final[frozenset[str]] = frozenset(
+    {
+        "campaign objective",
+        "objective",
+        "campaign name",
+        "target audience",
+        "key messages",
+        "additional context",
+        "client",
+        "budget",
+        "budget usd",
+        "start date",
+        "end date",
+    }
+)
+
+
+def normalise_label(value: str) -> str:
+    """Lower-cased, punctuation-stripped, single-spaced — for label comparison."""
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def reject_field_label(value: str, field: str) -> str:
+    """Raise when ``value`` is just the field's own label. Returns it otherwise."""
+    if normalise_label(value) in FIELD_LABELS:
+        raise ValueError(
+            f"{field} looks like the form's own label rather than a value — "
+            "this is usually browser autofill. Please type the real value."
+        )
+    return value
+
+
 class CampaignBrief(BaseModel):
     """The client brief that kicks off the LangGraph pipeline."""
 
@@ -160,6 +213,13 @@ class CampaignBrief(BaseModel):
     additional_context: str = ""
     languages: list[str] = Field(default_factory=list)
 
+    @field_validator("campaign_name", "objective", "target_audience")
+    @classmethod
+    def _not_a_form_label(cls, value: str, info: ValidationInfo) -> str:
+        # These three are the fields that reach a prompt as the campaign's intent,
+        # so a label here becomes the brief the agents actually work from.
+        return reject_field_label(value, info.field_name or "This field")
+
 
 class CampaignResponse(BaseModel):
     id: UUID
@@ -173,6 +233,10 @@ class CampaignResponse(BaseModel):
     budget: dict
     status: str
     agent_plan: dict
+    # Why the run failed, when it did (CF-07): {error, error_type, agents, after,
+    # at}. Empty for anything that has not failed, and empty for campaigns that
+    # failed before the column existed — the UI says so rather than inventing one.
+    failure: dict = Field(default_factory=dict)
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -201,6 +265,16 @@ class ContentPieceResponse(BaseModel):
     ai_generated: bool
     performance_score: float | None
     created_at: datetime
+    # Named ``metadata_`` on the wire as well as here. The column is mapped to
+    # ``metadata_`` because ``metadata`` is taken on a SQLAlchemy declarative
+    # class, and the list endpoints serialise the ORM row directly, so that is
+    # already the key the frontend reads (``QueuePost.metadata_``); aliasing it to
+    # "metadata" here alone would leave two spellings for one field.
+    #
+    # Ad variants keep their per-platform structure under ``metadata_.ad`` —
+    # without it the UI has only the flattened body and cannot tell a headline
+    # from a description.
+    metadata_: dict = Field(default_factory=dict)
 
     model_config = {"from_attributes": True}
 

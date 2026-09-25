@@ -120,9 +120,10 @@ async def gather_sources(
 
     api_key = exa_client.get_api_key()
     if not api_key:
-        return exa_client.unavailable(
-            f"Web search is not configured. {exa_client.SETUP_HINT}"
-        )
+        # The variable to set is logged for whoever runs the server, not shown
+        # to whoever is using the app (CF-16).
+        logger.info("web_search_exa_not_configured", fix=exa_client.SETUP_HINT)
+        return exa_client.unavailable(exa_client.NOT_CONFIGURED_REASON)
 
     payload: dict[str, Any] = {
         "query": cleaned,

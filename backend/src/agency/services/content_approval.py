@@ -63,6 +63,49 @@ def _merge_metadata(piece: ContentRow, updates: dict[str, Any]) -> None:
     piece.metadata_ = base
 
 
+def empty_content_reason(piece: ContentRow) -> str | None:
+    """Why this piece has nothing to approve, or ``None`` when it does.
+
+    The pipeline stores a variant the ad agent returned empty as ``failed`` rather
+    than ``draft``, so it never reaches approval — but rows written before that are
+    drafts whose body is the string ``"[]"``, and hiding the button in the UI does
+    not stop a direct call. Both are covered by judging the content.
+
+    A blank body is only empty when there is no attached media either: an
+    image-only post is legitimately bodyless.
+    """
+    metadata = piece.metadata_ or {}
+    generation = metadata.get("generation")
+    if isinstance(generation, dict) and generation.get("status") == "failed":
+        reason = generation.get("reason")
+        return str(reason) if reason else "This item was generated empty."
+
+    ad = metadata.get("ad")
+    if isinstance(ad, dict):
+        fields = ad.get("fields")
+        if isinstance(fields, dict) and not any(fields.values()):
+            return "The ad copy agent returned no usable copy for this variant."
+        # Structured ad variants carry their copy in ``fields``; the body is only a
+        # flattened mirror of it, so an empty body is not itself a problem here.
+        return None
+
+    body = (piece.body or "").strip()
+    # "[]" and "{}" are what the old ad-variant path wrote when the agent returned
+    # no headlines. They read as content to any length check but say nothing.
+    if body in {"", "[]", "{}", '""'} and not (piece.media_urls or []):
+        return "This item has no content."
+    return None
+
+
+def ensure_has_content(piece: ContentRow) -> None:
+    """Approval gate: refuse an item with nothing in it (CF-05)."""
+    reason = empty_content_reason(piece)
+    if reason is not None:
+        raise ContentGateError(
+            409, {"code": "empty_content", "status": piece.status, "message": reason}
+        )
+
+
 async def approve_content_piece(
     db: AsyncSession,
     piece: ContentRow,
@@ -78,6 +121,7 @@ async def approve_content_piece(
     Raises :class:`ContentGateError`:
 
     - 409 ``invalid_status`` — only ``draft``/``rejected`` pieces can be approved.
+    - 409 ``empty_content`` — the piece has nothing in it to approve.
     - 409 ``moderation_flagged`` — issues found and ``override`` is false.
 
     With ``override=True`` a flagged piece is approved and the override is recorded
@@ -85,6 +129,67 @@ async def approve_content_piece(
     """
     if piece.status not in APPROVABLE_STATUSES:
         raise ContentGateError(409, {"code": "invalid_status", "status": piece.status})
+    return await _moderate_then_approve(
+        db, piece, org_id=org_id, override=override, user_id=user_id
+    )
+
+
+async def retry_failed_content(
+    db: AsyncSession,
+    piece: ContentRow,
+    *,
+    org_id: UUID,
+    override: bool = False,
+    user_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Move a piece whose publish failed back to ``approved`` so it can be retried (CF-06).
+
+    A ``failed`` post had only Delete on it, which made a transient publish failure —
+    an expired token, a platform 503 — unrecoverable: the copy had to be written
+    again from scratch. It now goes back to the publishable state it was in before
+    the attempt.
+
+    Moderation runs again rather than being skipped. The body may have been edited
+    since the failure (editing a failed piece leaves it failed), and product rule 3
+    is that nothing reaches a publishable status without a moderation check on the
+    text as it now stands.
+
+    Raises :class:`ContentGateError`:
+
+    - 409 ``not_failed`` — only a ``failed`` piece can be retried.
+    - 409 ``empty_content`` / ``moderation_flagged`` — as for approval.
+    """
+    if piece.status != "failed":
+        raise ContentGateError(409, {"code": "not_failed", "status": piece.status})
+    return await _moderate_then_approve(
+        db,
+        piece,
+        org_id=org_id,
+        override=override,
+        user_id=user_id,
+        # The previous attempt's error must not linger: the card renders it from
+        # metadata, so leaving it would label a retried post as still failing.
+        clear_metadata_keys=("publish_error",),
+    )
+
+
+async def _moderate_then_approve(
+    db: AsyncSession,
+    piece: ContentRow,
+    *,
+    org_id: UUID,
+    override: bool,
+    user_id: UUID | None,
+    clear_metadata_keys: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """The shared body of approve and retry: check, moderate, set ``approved``.
+
+    Kept in one place so a second route into ``approved`` cannot drift from the
+    first — the gate is only worth anything if every path runs it.
+    """
+    # Before moderation: there is nothing to moderate, and approving it would put an
+    # empty post in the publish queue.
+    ensure_has_content(piece)
 
     brand_context = await load_brand_context(db, piece.client_id, org_id)
     result = await moderate_content(
@@ -136,6 +241,11 @@ async def approve_content_piece(
         record["status"] = result.status  # "passed" or "unavailable"
 
     piece.status = "approved"
+    if clear_metadata_keys:
+        meta = dict(piece.metadata_ or {})
+        for key in clear_metadata_keys:
+            meta.pop(key, None)
+        piece.metadata_ = meta
     _merge_metadata(piece, {"moderation": record})
     await db.commit()
 

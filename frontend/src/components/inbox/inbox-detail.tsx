@@ -233,7 +233,7 @@ export function InboxDetail({
             {suggestion?.needs_personal_attention ? "Escalation flag" : "Suggested reply"}
           </span>
           <div className="flex items-center gap-2">
-            {!generating && <QuotaHint used={generationsUsed} limit={generationsLimit} noun="generations left" />}
+            {!generating && <QuotaHint used={generationsUsed} limit={generationsLimit} />}
             <button
               type="button"
               onClick={suggest}

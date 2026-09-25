@@ -298,7 +298,7 @@ export function AmplifyForm(p: AmplifyFormProps) {
             Cancel
           </Button>
         ) : (
-          <QuotaHint used={p.generationsUsed} limit={p.generationsLimit} noun="generations left this period" />
+          <QuotaHint used={p.generationsUsed} limit={p.generationsLimit} />
         )}
         {p.generating && (
           <p className="basis-full text-xs text-muted">

@@ -43,6 +43,8 @@ from agency.models.tables import (
 )
 from agency.permissions import Capability, require_cap
 from agency.services import product_analytics as pa
+from agency.services.ad_variants import normalize as normalize_ad
+from agency.services.ad_variants import render_body as render_ad_body
 from agency.services.billing import PLAN_CONFIG
 from agency.services.webhook_dispatcher import EVENT_CAMPAIGN_COMPLETED, dispatch_webhook
 
@@ -65,6 +67,39 @@ AGENT_ORDER = [
     "create_content", "write_ads", "human_review",
     "qa_check", "compile_output", "analytics",
 ]
+
+# The same nodes grouped into the stages the graph actually runs them in: the
+# pairs are the parallel branches (Strategy ∥ SEO, then Content ∥ Ad Copy).
+#
+# Used to attribute a crash. The exception surfaces from ``astream`` without
+# naming the node, so the failing agent is inferred as "the stage that had not
+# finished". Where a stage has two branches and neither finished, both are
+# reported as candidates rather than one being guessed — product rule 4 applies
+# to diagnostics too.
+AGENT_STAGES: list[tuple[str, ...]] = [
+    ("orchestrate",),
+    ("strategise", "seo_research"),
+    ("create_content", "write_ads"),
+    ("human_review",),
+    ("qa_check",),
+    ("compile_output",),
+    ("analytics",),
+]
+
+
+def _failing_agents(completed: set[str]) -> list[str]:
+    """The agents a crash can be attributed to, given which ones finished.
+
+    Returns the unfinished members of the first incomplete stage — one name when
+    that is certain, two when a parallel pair was in flight, and ``[]`` when every
+    stage completed (the failure was in the bookkeeping after the graph, not in
+    an agent).
+    """
+    for stage in AGENT_STAGES:
+        pending = [name for name in stage if name not in completed]
+        if pending:
+            return pending
+    return []
 
 
 @router.post(
@@ -362,14 +397,41 @@ async def _record_agent_step(
     )
 
 
-async def _mark_campaign_failed(campaign_id: str, org_id: str, error: str) -> None:
-    """Move a crashed pipeline out of 'running' and record the failure.
+async def _mark_campaign_failed(
+    campaign_id: str,
+    org_id: str,
+    error: str,
+    *,
+    error_type: str = "",
+    completed: set[str] | None = None,
+) -> None:
+    """Move a crashed pipeline out of 'running' and record *why* it failed.
 
     Without this a pipeline exception leaves the campaign 'running' forever,
     which both misleads the user and hides the failure from the failure-rate
     metric.
+
+    The reason used to be logged and then dropped, so the UI could only show a
+    bare "Failed" badge with nothing to act on (CF-07). It is now written to
+    ``campaign.failure`` along with the agents the crash is attributable to, and
+    a ``failed`` ``agent_run`` row is recorded for each of them so the live
+    dashboard can mark that step red instead of leaving it queued.
     """
-    logger.error("campaign_pipeline_failed", campaign_id=campaign_id, org_id=org_id, error=error)
+    completed = completed or set()
+    agents = _failing_agents(completed)
+    # The last agent that did finish — the honest anchor when a parallel pair
+    # leaves the failing branch ambiguous.
+    after = next((name for name in reversed(AGENT_ORDER) if name in completed), None)
+
+    logger.error(
+        "campaign_pipeline_failed",
+        campaign_id=campaign_id,
+        org_id=org_id,
+        error=error,
+        error_type=error_type,
+        agents=agents,
+        after=after,
+    )
     try:
         factory = get_session_factory()
         async with factory() as db:
@@ -377,6 +439,27 @@ async def _mark_campaign_failed(campaign_id: str, org_id: str, error: str) -> No
             campaign = result.scalar_one_or_none()
             if campaign:
                 campaign.status = "failed"
+                campaign.failure = {
+                    "error": error,
+                    "error_type": error_type,
+                    "agents": agents,
+                    "after": after,
+                    "at": datetime.now(UTC).isoformat(),
+                }
+
+            # One failed row per candidate agent. With a parallel pair in flight
+            # both are marked, because either could be the one that threw — saying
+            # which would be a guess.
+            for agent_name in agents:
+                db.add(
+                    AgentRun(
+                        campaign_id=UUID(campaign_id),
+                        org_id=UUID(org_id),
+                        agent_name=agent_name,
+                        status="failed",
+                        output=error[:2000],
+                    )
+                )
 
             result = await db.execute(
                 select(Workflow).where(Workflow.campaign_id == UUID(campaign_id))
@@ -432,6 +515,8 @@ async def _run_campaign_pipeline(
     config = {"configurable": {"thread_id": campaign_id}}
 
     _active_pipelines.add(campaign_id)
+    # Which nodes finished, so a crash can be attributed to the stage that did not.
+    completed: set[str] = set()
     try:
         async for event in graph.astream(initial_state, config=config, stream_mode="updates"):
             for node_name, node_output in event.items():
@@ -455,6 +540,7 @@ async def _run_campaign_pipeline(
 
                 # Track agent run in DB
                 if node_name != "__interrupt__":
+                    completed.add(node_name)
                     await _record_agent_step(campaign_id, org_id, node_name, node_output)
 
         await queue.put(AgentStreamEvent(
@@ -486,7 +572,13 @@ async def _run_campaign_pipeline(
             agent="pipeline",
             content=f"Pipeline error: {str(e)}",
         ).model_dump_json())
-        await _mark_campaign_failed(campaign_id, org_id, str(e))
+        await _mark_campaign_failed(
+            campaign_id,
+            org_id,
+            str(e),
+            error_type=type(e).__name__,
+            completed=completed,
+        )
     finally:
         _active_pipelines.discard(campaign_id)
 
@@ -521,19 +613,38 @@ async def _persist_campaign_results(
                 )
                 db.add(cp)
 
-            # Save ad variants as content pieces
-            for ad in values.get("ad_variants", []):
+            # Save ad variants as content pieces.
+            #
+            # The agent's raw output is normalised to the fields its network
+            # actually renders (see services/ad_variants.py) and stored under
+            # metadata.ad, with the same copy flattened into body for the generic
+            # paths. A variant that came back with nothing usable is stored as
+            # failed, not draft, so it cannot be approved or amplified — it is
+            # kept rather than dropped so the run's output is accounted for.
+            for idx, raw_ad in enumerate(values.get("ad_variants", []), start=1):
+                ad = normalize_ad(raw_ad, index=idx)
+                metadata: dict = {"ad": ad, "raw": raw_ad if isinstance(raw_ad, dict) else {}}
+                if ad["is_empty"]:
+                    metadata["generation"] = {
+                        "status": "failed",
+                        "reason": "The ad copy agent returned no usable copy for this variant.",
+                    }
+                elif ad["missing"]:
+                    metadata["generation"] = {
+                        "status": "incomplete",
+                        "missing": ad["missing"],
+                    }
                 cp = ContentPiece(
                     campaign_id=campaign_id,
                     client_id=client_id,
                     org_id=org_id,
-                    content_type=f"{ad.get('platform', 'google')}_ad",
-                    platform=ad.get("platform", "google"),
-                    title=f"Ad Variant {ad.get('variant', 1)} - {ad.get('angle', 'general')}",
-                    body=json.dumps(ad.get("headlines", [])),
-                    metadata_=ad,
+                    content_type=f"{ad['platform']}_ad",
+                    platform=ad["platform"],
+                    title=f"Ad Variant {ad['variant']} - {ad['angle']}",
+                    body=render_ad_body(ad),
+                    metadata_=metadata,
                     ai_generated=True,
-                    status="draft",
+                    status="failed" if ad["is_empty"] else "draft",
                 )
                 db.add(cp)
 
@@ -950,6 +1061,9 @@ async def _resume_pipeline(
         return
 
     _active_pipelines.add(campaign_id)
+    # A resume re-enters after human_review, so everything up to and including it
+    # is already done — a crash here must not be attributed to Strategy or SEO.
+    completed: set[str] = set(AGENT_ORDER[: AGENT_ORDER.index("human_review") + 1])
     try:
         async for event in graph.astream(None, config=config, stream_mode="updates"):
             for node_name, node_output in event.items():
@@ -971,6 +1085,7 @@ async def _resume_pipeline(
                     progress=progress,
                 ).model_dump_json())
 
+                completed.add(node_name)
                 await _record_agent_step(campaign_id, org_id, node_name, node_output)
 
         await queue.put(AgentStreamEvent(
@@ -1001,6 +1116,12 @@ async def _resume_pipeline(
             agent="pipeline",
             content=f"Error after review: {str(e)}",
         ).model_dump_json())
-        await _mark_campaign_failed(campaign_id, org_id, str(e))
+        await _mark_campaign_failed(
+            campaign_id,
+            org_id,
+            str(e),
+            error_type=type(e).__name__,
+            completed=completed,
+        )
     finally:
         _active_pipelines.discard(campaign_id)

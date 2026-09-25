@@ -16,9 +16,25 @@ from agency.models.schemas import (
     ClientResponse,
     ClientUpdate,
 )
-from agency.models.tables import BrandProfile, Client, ContentPiece, PlatformAccount
+from agency.models.tables import (
+    BrandProfile,
+    Client,
+    ContentPiece,
+    PlatformAccount,
+    Subscription,
+)
+from agency.permissions import Capability, require_cap
+from agency.services.billing import PLAN_CONFIG
+from agency.services.brand_context import resolve_voice
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
+
+#: CF-17: archiving a client hides every campaign, post and connected account
+#: behind it from the whole org, and restoring brings it back. That is the shape
+#: of the workspace, not the marketing work, so it needs more than ``member``.
+_WORKSPACE_GATE = Depends(require_cap(Capability.WORKSPACE_MANAGE))
+
+
 
 
 @router.post("", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
@@ -28,6 +44,49 @@ async def create_client(
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
+    """Create a client, within the plan's client allowance.
+
+    CF-11: the Free plan advertises "1 client" and four existed, because the
+    limit was stored on the subscription and never checked. The campaign limit
+    was enforced in `campaigns.py`; this was the matching gap.
+
+    Only **active** clients count, and only *new* ones are refused. Clients
+    already over the limit keep working — taking away access to data an org
+    already has, over a limit that was never enforced while they created it,
+    would be punishing them for our bug.
+    """
+    sub = (
+        await db.execute(select(Subscription).where(Subscription.org_id == org_id))
+    ).scalar_one_or_none()
+    plan_tier = str(sub.plan_tier) if sub else "free"
+    plan = PLAN_CONFIG.get(plan_tier, PLAN_CONFIG["free"])
+    clients_limit = int(plan.get("clients_limit", 1))
+
+    active_clients = (
+        await db.execute(
+            select(func.count(Client.id)).where(
+                Client.org_id == org_id, Client.is_active.is_(True)
+            )
+        )
+    ).scalar() or 0
+
+    if active_clients >= clients_limit:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            {
+                "code": "client_limit_reached",
+                "limit": clients_limit,
+                "current": active_clients,
+                "plan_tier": plan_tier,
+                "message": (
+                    f"The {plan_tier.title()} plan includes {clients_limit} "
+                    f"client{'' if clients_limit == 1 else 's'} and you have "
+                    f"{active_clients}. Upgrade to add another, or archive one "
+                    "you are no longer working on."
+                ),
+            },
+        )
+
     client = Client(
         org_id=org_id,
         brand_name=request.brand_name,
@@ -240,7 +299,11 @@ async def update_client(
     return client
 
 
-@router.post("/{client_id}/archive", response_model=ClientResponse)
+@router.post(
+    "/{client_id}/archive",
+    response_model=ClientResponse,
+    dependencies=[_WORKSPACE_GATE],
+)
 async def archive_client(
     client_id: UUID,
     unschedule: bool = Query(
@@ -285,7 +348,11 @@ async def archive_client(
     return client
 
 
-@router.post("/{client_id}/restore", response_model=ClientResponse)
+@router.post(
+    "/{client_id}/restore",
+    response_model=ClientResponse,
+    dependencies=[_WORKSPACE_GATE],
+)
 async def restore_client(
     client_id: UUID,
     user: dict[str, Any] = Depends(get_current_user),
@@ -299,14 +366,33 @@ async def restore_client(
     return client
 
 
+def _with_effective_voice(profile: BrandProfile, client: Client) -> BrandProfileResponse:
+    """The profile, plus the one resolved answer for "what is this client's voice?".
+
+    Resolved here rather than in each screen, because doing it per screen is how
+    one client came to show three different voices at once (CF-08).
+    """
+    settings: Any = client.settings
+    prefs = (settings or {}).get("posting_prefs") if isinstance(settings, dict) else None
+    voice, source = resolve_voice(
+        profile.voice_description,
+        profile.tone_attributes,
+        prefs if isinstance(prefs, dict) else None,
+    )
+    response = BrandProfileResponse.model_validate(profile)
+    response.effective_voice = voice
+    response.voice_source = source
+    return response
+
+
 @router.get("/{client_id}/brand-profile", response_model=BrandProfileResponse)
 async def get_brand_profile(
     client_id: UUID,
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     org_id: UUID = Depends(get_org_id),
-) -> BrandProfile:
-    await _get_org_client(db, client_id, org_id)
+) -> BrandProfileResponse:
+    client = await _get_org_client(db, client_id, org_id)
     result = await db.execute(
         select(BrandProfile).where(
             BrandProfile.client_id == client_id, BrandProfile.org_id == org_id
@@ -315,7 +401,7 @@ async def get_brand_profile(
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Brand profile not found")
-    return profile
+    return _with_effective_voice(profile, client)
 
 
 @router.put("/{client_id}/brand-profile", response_model=BrandProfileResponse)
@@ -325,9 +411,9 @@ async def upsert_brand_profile(
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     org_id: UUID = Depends(get_org_id),
-) -> BrandProfile:
+) -> BrandProfileResponse:
     """Create the brand profile, or update only the fields sent if one exists."""
-    await _get_org_client(db, client_id, org_id)
+    client = await _get_org_client(db, client_id, org_id)
     result = await db.execute(
         select(BrandProfile).where(
             BrandProfile.client_id == client_id, BrandProfile.org_id == org_id
@@ -342,7 +428,7 @@ async def upsert_brand_profile(
             setattr(profile, field, value)
     await db.commit()
     await db.refresh(profile)
-    return profile
+    return _with_effective_voice(profile, client)
 
 
 @router.post("/{client_id}/brand-profile", status_code=status.HTTP_201_CREATED)

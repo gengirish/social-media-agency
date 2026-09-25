@@ -318,7 +318,7 @@ export default function CreateContentPage() {
   if (clientsLoading) return <LoadingState label="Loading your workspace…" />;
   if (clients.length === 0 || !active) {
     return (
-      <div className="mx-auto max-w-5xl py-8">
+      <div className="py-8">
         <h1 className="sr-only">Content</h1>
         <EmptyState
           icon={UserPlus}
@@ -339,10 +339,22 @@ export default function CreateContentPage() {
   const busyLabel =
     mode === "seo" ? "Researching & writing…" : mode === "compare" ? "Researching…" : mode === "scan" ? "Scanning…" : "Scripting…";
   const disabled = mode === "compare" ? compareDisabled : mode === "scan" ? scanDisabled : plainDisabled;
+  /*
+   * Why the button is off, when the reason is something the user can fix here
+   * (CF-19). "Scan niche" sat disabled with no explanation until you counted the
+   * names yourself. Quota and missing-profile already have their own banners, so
+   * they are left to those rather than repeated on the button.
+   */
+  const disabledReason =
+    !disabled || generating || atLimit || noProfile
+      ? null
+      : mode === "scan" && scanNames.length < 2
+        ? "Enter 2–5 competitor names, separated by commas."
+        : null;
   const EmptyIcon = EMPTY_ICON[mode];
 
   return (
-    <div className="mx-auto max-w-5xl py-2">
+    <div className="py-2">
       <CampaignIndicator />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Eyebrow>{AGENT[mode]}</Eyebrow>
@@ -402,7 +414,12 @@ export default function CreateContentPage() {
               className="w-[240px] rounded-md border border-line bg-panel px-3 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-muted focus:border-accent"
             />
           )}
-          <Button type="submit" disabled={disabled} className={cn(!disabled && "animate-breathe")}>
+          <Button
+            type="submit"
+            disabled={disabled}
+            title={disabledReason ?? undefined}
+            className={cn(!disabled && "animate-breathe")}
+          >
             {generating ? (
               <>
                 <Loader2 className="h-[13px] w-[13px] animate-spin" /> {busyLabel}
@@ -413,6 +430,9 @@ export default function CreateContentPage() {
               </>
             )}
           </Button>
+          {disabledReason && (
+            <span className="text-[11.5px] text-muted">{disabledReason}</span>
+          )}
           {generating && (
             <button
               type="button"

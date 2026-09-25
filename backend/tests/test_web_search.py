@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 import pytest
+from structlog.testing import capture_logs
 
 from agency.services import web_search
 
@@ -138,12 +139,19 @@ async def test_no_results_is_ok_not_unavailable(captured):
 # ---------------------------------------------------------------------------
 # The unavailable contract — never invented content
 # ---------------------------------------------------------------------------
-async def test_missing_key_is_unavailable_with_setup_hint(monkeypatch):
+async def test_missing_key_is_unavailable_and_logs_the_setup_hint(monkeypatch):
+    """CF-16: the variable to set belongs in the log, not on a user's screen."""
     monkeypatch.setattr(web_search.exa_client, "get_api_key", lambda: "")
-    out = await web_search.gather_sources("q")
+
+    with capture_logs() as logs:
+        out = await web_search.gather_sources("q")
+
     assert out["status"] == "unavailable"
-    assert "EXA_API_KEY" in out["reason"]
+    assert "EXA_API_KEY" not in out["reason"]
     assert "sources" not in out
+
+    configured = [log for log in logs if log["event"] == "web_search_exa_not_configured"]
+    assert configured and "EXA_API_KEY" in configured[0]["fix"]
 
 
 async def test_blank_query_is_unavailable(captured):

@@ -88,10 +88,18 @@ export const createKitsApi = {
     }),
   getPrfaq: (clientId: string) =>
     request<{ prfaq: Prfaq | null }>(`/api/v1/create/launch/prfaq?client_id=${encodeURIComponent(clientId)}`),
-  runPrfaq: (clientId: string, signal?: AbortSignal) =>
+  /**
+   * Run the PRFAQ stress-test. Spends one generation.
+   *
+   * `note` is what is being launched, in the user's own words — optional, asked
+   * for on the confirm step (CF-13). Without it the model had only the brand
+   * profile and filled the gap itself, which is how a run ended up quoting
+   * people who do not exist.
+   */
+  runPrfaq: (clientId: string, note = "", signal?: AbortSignal) =>
     request<{ prfaq: Prfaq }>("/api/v1/create/launch/prfaq", {
       method: "POST",
-      body: JSON.stringify({ client_id: clientId }),
+      body: JSON.stringify({ client_id: clientId, note }),
       signal,
     }),
 };

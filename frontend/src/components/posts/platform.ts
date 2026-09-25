@@ -12,21 +12,11 @@ export const QUEUE_PLATFORMS = [
   { id: "tiktok", label: "TikTok" },
 ] as const;
 
-const LABELS: Record<string, string> = {
-  linkedin: "LinkedIn",
-  twitter: "X",
-  x: "X",
-  facebook: "Facebook",
-  meta: "Meta",
-  instagram: "Instagram",
-  tiktok: "TikTok",
-  google: "Google",
-};
-
-export function platformLabel(platform: string | null | undefined): string {
-  if (!platform) return "Unknown";
-  return LABELS[platform.toLowerCase()] ?? platform;
-}
+// Channel display names live in one place for the whole app (CF-19) — this used
+// to keep a second map that named X "X" and Google Ads "Google" while other
+// screens printed the raw slug. Re-exported so the Queue and Calendar imports
+// keep working.
+export { platformLabel } from "@/lib/platforms";
 
 type Tone = { dot: string; chip: string; pill: string };
 

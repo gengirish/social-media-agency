@@ -257,7 +257,7 @@ export function CancelLink({ onClick }: { onClick: () => void }) {
 }
 
 export function QuotaFor({ quota }: { quota: ReturnType<typeof useGenerationQuota> }) {
-  return <QuotaHint used={quota.used} limit={quota.limit} noun="generations left" />;
+  return <QuotaHint used={quota.used} limit={quota.limit} />;
 }
 
 /** The banner under the controls: brand-profile gate, quota, or a failed generation. */

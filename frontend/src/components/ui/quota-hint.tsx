@@ -1,13 +1,18 @@
 import { cn } from "@/lib/utils";
 
 /**
- * "N left this month" beside a generate/publish button. Renders nothing when
+ * "N generations left this month" beside a generate button. Renders nothing when
  * the numbers are unknown — a guessed quota is an invented number.
+ *
+ * CF-19: the same quota was worded three ways across the app ("generations
+ * left", "generations left this period", "left this month"). The default below
+ * is the one wording; `noun` remains for a quota that is not generations, such
+ * as published posts.
  */
 export function QuotaHint({
   used,
   limit,
-  noun = "left this month",
+  noun = "generations left this month",
   className,
 }: {
   used: number | null | undefined;

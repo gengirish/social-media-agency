@@ -65,8 +65,70 @@ async def test_ignores_other_orgs_account_for_same_client(session_factory, tenan
     piece = await _run(session_factory, tenants["content_a"])
 
     assert published == []
-    assert piece.status == "failed"
-    assert piece.metadata_["publish_error"] == "No connected platform account"
+    # Not published, and not attributed to any account: the row belongs to org B.
+    assert piece.status != "published"
+    assert piece.metadata_["publish_blocked"]["code"] == "no_connected_account"
+
+
+# ---------------------------------------------------------------------------
+# CF-01 — nothing connected is a workspace gap, not a failed post
+# ---------------------------------------------------------------------------
+async def test_no_connected_account_returns_the_post_to_approved(
+    session_factory, tenants, published
+):
+    """It used to land in Failed, whose only action was Delete.
+
+    The post is fine; there is simply nowhere to send it — which for most orgs
+    means the platform's app credentials are not set on the server at all, so no
+    Connect button can even be pressed.
+    """
+    piece = await _run(session_factory, tenants["content_a"])
+
+    assert published == []
+    assert piece.status == "approved"
+    # The schedule is cleared, or the once-a-minute sweep picks it up forever.
+    assert piece.scheduled_at is None
+
+    blocked = piece.metadata_["publish_blocked"]
+    assert blocked["code"] == "no_connected_account"
+    assert blocked["platform"] == piece.platform
+    assert "Setup" in blocked["reason"]
+    # Nothing about this is a publish failure, so the Failed banner must stay off.
+    assert "publish_error" not in piece.metadata_
+
+
+async def test_rescheduling_clears_the_blocked_notice(session_factory, tenants, published):
+    """Otherwise a queued post keeps showing why it was blocked last time."""
+    from datetime import UTC, datetime, timedelta
+
+    await _run(session_factory, tenants["content_a"])
+
+    async with session_factory() as db:
+        await SchedulerEngine().schedule_content(
+            db, tenants["content_a"], datetime.now(UTC) + timedelta(days=1)
+        )
+
+    async with session_factory() as db:
+        piece = await db.get(ContentPiece, tenants["content_a"])
+
+    assert piece.status == "scheduled"
+    assert "publish_blocked" not in piece.metadata_
+
+
+async def test_publishing_clears_the_blocked_notice(session_factory, tenants, published):
+    """A live post must not carry a warning from an earlier blocked attempt."""
+    await _run(session_factory, tenants["content_a"])
+    await create_platform_account(session_factory, tenants["org_a"], tenants["client_a"])
+
+    async with session_factory() as db:
+        piece = await db.get(ContentPiece, tenants["content_a"])
+        piece.status = "scheduled"
+        await db.commit()
+
+    piece = await _run(session_factory, tenants["content_a"])
+
+    assert piece.status == "published"
+    assert "publish_blocked" not in piece.metadata_
 
 
 async def test_duplicate_accounts_do_not_crash(session_factory, tenants, published):

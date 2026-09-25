@@ -22,6 +22,7 @@ from agency.services.content_approval import (
     ContentGateError,
     apply_content_edit,
     approve_content_piece,
+    retry_failed_content,
 )
 from agency.services.webhook_dispatcher import EVENT_CONTENT_APPROVED, dispatch_webhook
 
@@ -536,6 +537,55 @@ async def approve_content(
         },
     )
     return response
+
+
+@router.post(
+    "/{content_id}/retry",
+    dependencies=[Depends(require_cap(Capability.CONTENT_APPROVE))],
+)
+async def retry_content(
+    content_id: UUID,
+    request: Request,
+    override: bool = Query(False, description="Retry despite moderation issues"),
+    user_id: UUID = Depends(get_current_user_id),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """Send a piece whose publish failed back to ``approved``, ready to try again (CF-06).
+
+    A ``failed`` post used to offer only Delete, so a transient failure — an expired
+    token, a platform 503 — meant rewriting the copy from scratch. This restores the
+    publishable state it was in before the attempt and clears the recorded error.
+
+    Moderation runs again: a failed piece can be edited (an edit leaves it failed),
+    so the text may not be the text that was approved.
+
+    - 200 — same body as ``/approve``.
+    - 409 ``{"code": "not_failed", "status": <current>}``.
+    - 409 ``{"code": "moderation_flagged" | "empty_content"}`` — status unchanged.
+
+    Gated on ``content.approve``, and on ``content.override`` for ``?override=true``,
+    for the same reason approval is: this is what makes a post publishable again.
+    """
+    if override:
+        await ensure_cap(Capability.CONTENT_OVERRIDE, request, user_id, org_id, db)
+
+    piece = (
+        await db.execute(
+            select(ContentPiece).where(
+                ContentPiece.id == content_id, ContentPiece.org_id == org_id
+            )
+        )
+    ).scalar_one_or_none()
+    if not piece:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
+
+    try:
+        return await retry_failed_content(
+            db, piece, org_id=org_id, override=override, user_id=user_id
+        )
+    except ContentGateError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 
 @router.post("/{content_id}/generate-image")

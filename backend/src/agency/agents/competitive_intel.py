@@ -448,10 +448,12 @@ async def run_competitive_scan(
 
     api_key = exa_client.get_api_key()
     if not api_key:
-        logger.info("competitive_exa_not_configured", competitors=names)
+        logger.info(
+            "competitive_exa_not_configured", competitors=names, fix=exa_client.SETUP_HINT
+        )
         return _unavailable(
-            "Competitive intelligence needs a retrieval source and Exa is not "
-            f"configured. {exa_client.SETUP_HINT}",
+            "Competitor research isn't available yet — web search isn't set up on "
+            "this workspace.",
             competitors=names,
             sources=[],
         )

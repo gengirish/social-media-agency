@@ -127,6 +127,8 @@ CREATE TABLE IF NOT EXISTS campaign (
     budget JSONB DEFAULT '{}',
     status VARCHAR(30) DEFAULT 'planning',
     agent_plan JSONB DEFAULT '{}',
+    -- Why the run failed, when status = 'failed': {error, error_type, agents, after, at}.
+    failure JSONB DEFAULT '{}',
     tags JSONB DEFAULT '[]',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()

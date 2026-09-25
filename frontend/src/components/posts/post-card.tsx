@@ -15,13 +15,15 @@ import {
   Loader2,
   Palette,
   PenLine,
+  RotateCcw,
   Send,
   Sparkles,
   Trash2,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { QueuePost } from "@/lib/api";
+import { adVariantOf, unusableReason, type QueuePost } from "@/lib/api";
+import { AdVariantCard } from "@/components/content/ad-variant-card";
 import {
   BRIEF_ROWS,
   PLATFORM_LIMITS,
@@ -37,7 +39,14 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
 import { platformLabel, platformTone } from "./platform";
 
-export type PostAction = "approve" | "save" | "schedule" | "publish" | "regenerate" | "brief";
+export type PostAction =
+  | "approve"
+  | "save"
+  | "schedule"
+  | "publish"
+  | "regenerate"
+  | "brief"
+  | "retry";
 
 export interface PostEdit {
   title: string;
@@ -318,6 +327,8 @@ export interface PostCardProps {
   onSchedule: (post: QueuePost) => void;
   onPublish: (post: QueuePost) => void;
   onDelete: (post: QueuePost) => void;
+  /** Send a failed post back to Approved so publishing can be tried again (CF-06). */
+  onRetry: (post: QueuePost) => void;
   onRegenerate: (post: QueuePost) => void;
   onCancelRegenerate: () => void;
   onRequestBrief: (post: QueuePost) => void;
@@ -345,6 +356,7 @@ export const PostCard = memo(function PostCard({
   onSchedule,
   onPublish,
   onDelete,
+  onRetry,
   onRegenerate,
   onCancelRegenerate,
   onRequestBrief,
@@ -368,6 +380,11 @@ export const PostCard = memo(function PostCard({
   const blocked = publishUnavailableReason(post.platform);
   const postUrl = post.metadata_?.post_url;
   const publishError = post.metadata_?.publish_error;
+  const publishBlocked = post.metadata_?.publish_blocked;
+  const ad = adVariantOf(post);
+  // Why this post cannot be approved, or null. Kept in step with the server's
+  // `empty_content_reason` — the button is hidden here, refused there.
+  const unusable = unusableReason(post);
   const anyBusy = busy !== null;
   const isDraft = post.status === "draft";
   const needsVisual = post.platform?.toLowerCase() === "instagram";
@@ -443,15 +460,29 @@ export const PostCard = memo(function PostCard({
       ) : (
         <>
           {post.title && <h3 className="mt-3 font-display text-base font-semibold text-ink">{post.title}</h3>}
-          <p
-            className={cn(
-              "mt-1.5 line-clamp-6 whitespace-pre-wrap text-sm leading-relaxed",
-              isDraft ? "text-muted" : "text-slate-700",
-              busy === "regenerate" && "animate-pulse"
-            )}
-          >
-            {post.body}
-          </p>
+          {/* An ad variant renders in its network's own fields (CF-03); only a
+              social post is one body paragraph. */}
+          {ad ? (
+            <div className="mt-2">
+              <AdVariantCard ad={ad} />
+            </div>
+          ) : (
+            <p
+              className={cn(
+                "mt-1.5 line-clamp-6 whitespace-pre-wrap text-sm leading-relaxed",
+                isDraft ? "text-muted" : "text-slate-700",
+                busy === "regenerate" && "animate-pulse"
+              )}
+            >
+              {post.body}
+            </p>
+          )}
+          {!ad && unusable !== null && (
+            <p className="mt-1.5 flex items-start gap-1.5 text-xs text-muted">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
+              {unusable} Regenerate it or delete it.
+            </p>
+          )}
           {post.hashtags?.length > 0 && (
             <div className="mt-2.5 flex flex-wrap gap-x-2 gap-y-1">
               {post.hashtags.map((tag, i) => (
@@ -509,6 +540,16 @@ export const PostCard = memo(function PostCard({
         </div>
       )}
 
+      {/* CF-01: the post is fine — the workspace was not ready for it. It sits in
+          Approved with its schedule cleared, rather than in Failed where the only
+          action used to be Delete. */}
+      {publishBlocked && post.status !== "published" && (
+        <div className="mt-3 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <p>{publishBlocked.reason}</p>
+        </div>
+      )}
+
       {!editing && post.status !== "published" && (
         <div className="mt-4 border-t border-line pt-3">
           {mayPublish && blocked && !isDraft && post.status !== "failed" && (
@@ -520,7 +561,11 @@ export const PostCard = memo(function PostCard({
           <div className="flex flex-wrap items-center gap-2">
             {isDraft && (
               <>
-                {mayApprove && (
+                {/* CF-05: an item with nothing in it is not approvable — the
+                    server refuses it with 409 empty_content, so offering the
+                    button would only produce an error. Regenerate still shows,
+                    which is the way out. */}
+                {mayApprove && unusable === null && (
                   <Button size="sm" onClick={() => onApprove(post)} disabled={anyBusy}>
                     {busy === "approve" ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -589,12 +634,25 @@ export const PostCard = memo(function PostCard({
               </>
             )}
 
-            {post.status !== "failed" && (
-              <Button variant="secondary" size="sm" onClick={() => onEditStart(post.id)} disabled={anyBusy}>
-                <PenLine className="h-3.5 w-3.5" />
-                {resumable ? "Resume edit" : "Edit"}
+            {/* CF-06: a failed post used to offer only Delete, so a transient
+                publish failure meant rewriting the copy. Retry puts it back in
+                Approved (re-moderated, since it may have been edited first), and
+                Edit is available to fix whatever the platform rejected. */}
+            {post.status === "failed" && mayApprove && (
+              <Button size="sm" onClick={() => onRetry(post)} disabled={anyBusy}>
+                {busy === "retry" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+                {busy === "retry" ? "Checking…" : "Retry"}
               </Button>
             )}
+
+            <Button variant="secondary" size="sm" onClick={() => onEditStart(post.id)} disabled={anyBusy}>
+              <PenLine className="h-3.5 w-3.5" />
+              {resumable ? "Resume edit" : "Edit"}
+            </Button>
 
             <span className="ml-auto flex items-center gap-1">
               {isDraft && (
