@@ -1392,6 +1392,37 @@ export interface NotificationItem {
 
 // --- Campaign templates ---
 
+/**
+ * The one campaign-template taxonomy (CF-14).
+ *
+ * The filter tabs listed launch / social / awareness / seasonal /
+ * thought-leadership while the seeded rows were categorised recurring / b2b /
+ * events, so "Social" and "Thought Leadership" returned nothing and three
+ * categories had no tab at all. Both ends read this list now — a card's label
+ * and the tab that finds it cannot diverge again.
+ *
+ * Mirrors `db/seed.sql`; a new category goes here and there together.
+ */
+export const TEMPLATE_CATEGORIES = [
+  { id: "launch", label: "Launch" },
+  { id: "social", label: "Social" },
+  { id: "awareness", label: "Awareness" },
+  { id: "thought-leadership", label: "Thought Leadership" },
+  { id: "seasonal", label: "Seasonal" },
+  { id: "events", label: "Events" },
+] as const;
+
+export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number]["id"];
+
+/** A category's display name. An unknown one is title-cased, never dropped. */
+export function templateCategoryLabel(category: string): string {
+  const known = TEMPLATE_CATEGORIES.find((c) => c.id === category);
+  if (known) return known.label;
+  return category
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (l) => l.toUpperCase());
+}
+
 export interface CampaignTemplateSummary {
   id: string;
   name: string;

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, type Client } from "@/lib/api";
 import { useActiveClient } from "@/lib/active-client";
 import { trackFeature } from "@/lib/analytics";
@@ -62,9 +62,12 @@ const FIELD_IDS: { key: ErrorKey; id: string }[] = [
   { key: "budgetUsd", id: "campaign-budget" },
 ];
 
-export default function NewCampaignPage() {
+function NewCampaignForm() {
   const router = useRouter();
   const { activeId } = useActiveClient();
+  // CF-14: "Use Template" sends the template id here; nothing used to read it,
+  // so the form opened blank.
+  const templateId = useSearchParams().get("template");
   const [step, setStep] = useState(1);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
@@ -73,6 +76,12 @@ export default function NewCampaignPage() {
   const [campaignName, setCampaignName] = useState("");
   const [objective, setObjective] = useState("");
   const [channels, setChannels] = useState<string[]>(["linkedin", "twitter"]);
+  // The default pair above is a suggestion, not a choice — a template may
+  // replace it, but never a selection the user actually made (CF-14). A ref,
+  // not state: it is read once inside the template effect and must not be a
+  // dependency of it, or ticking a channel would re-run the prefill.
+  const channelsTouched = useRef(false);
+  const [templateName, setTemplateName] = useState<string | null>(null);
   const [targetAudience, setTargetAudience] = useState("");
   const [keyMessages, setKeyMessages] = useState("");
   const [budgetUsd, setBudgetUsd] = useState(0);
@@ -97,7 +106,45 @@ export default function NewCampaignPage() {
     if (activeId) setClientId((current) => current || activeId);
   }, [activeId]);
 
+  /*
+   * CF-14: fill the form from the template behind ?template=<id>.
+   *
+   * "Use Template" navigated here with the id in the query string and nothing
+   * read it, so the form opened blank and the template was decorative. The
+   * template's own name, objective, channels and key messages are applied.
+   *
+   * Only empty fields are filled, so arriving with a half-typed form — or
+   * hitting the back button — does not discard what was typed. The objective is
+   * the template's `objective_template`, which carries [PRODUCT]/[AUDIENCE]
+   * placeholders on purpose: they mark what the user still has to say, and
+   * filling them in with a guess is exactly what product rule 4 forbids.
+   */
+  useEffect(() => {
+    if (!templateId) return;
+    let cancelled = false;
+    api
+      .getTemplate(templateId)
+      .then((t) => {
+        if (cancelled) return;
+        setCampaignName((current) => current || t.name);
+        setObjective((current) => current || t.objective_template || "");
+        if (t.channels?.length && !channelsTouched.current) setChannels(t.channels);
+        const messages = (t.content_directives?.key_messages ?? null) as unknown;
+        if (Array.isArray(messages) && messages.length) {
+          setKeyMessages((current) => current || messages.filter((m) => typeof m === "string").join("\n"));
+        }
+        setTemplateName(t.name);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error("That template could not be loaded — starting from a blank brief.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [templateId]);
+
   function toggleChannel(ch: string) {
+    channelsTouched.current = true;
     setChannels((prev) =>
       prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]
     );
@@ -240,6 +287,15 @@ export default function NewCampaignPage() {
       {/* Step 1: Brief */}
       {step === 1 && (
         <SectionCard key="step-1" eyebrow="The brief" bodyClassName="space-y-5">
+          {/* CF-14: say where the prefilled values came from, and that they are
+              a starting point rather than something already decided. */}
+          {templateName && (
+            <p className="rounded-lg border border-line bg-canvas/40 px-3 py-2 text-xs text-muted">
+              Started from the <span className="font-medium text-ink">{templateName}</span> template.
+              Everything below is editable — the placeholders in square brackets are for you to
+              replace.
+            </p>
+          )}
           <Field label="Client *" htmlFor="campaign-client" error={errors.clientId}>
             <Select
               id="campaign-client"
@@ -501,5 +557,17 @@ export default function NewCampaignPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/*
+ * `useSearchParams` needs a Suspense boundary or the whole route opts out of
+ * static rendering and `next build` complains.
+ */
+export default function NewCampaignPage() {
+  return (
+    <Suspense fallback={null}>
+      <NewCampaignForm />
+    </Suspense>
   );
 }
