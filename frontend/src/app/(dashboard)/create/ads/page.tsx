@@ -182,7 +182,7 @@ export default function AdsPage() {
   }
   if (!active) {
     return (
-      <div className="mx-auto max-w-5xl">
+      <div>
         <h1 className="mb-6 font-display text-2xl font-semibold text-ink">Ads</h1>
         <EmptyState
           icon={Megaphone}
@@ -203,7 +203,7 @@ export default function AdsPage() {
   const canGenerate = !generating && !atLimit && !noProfile;
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div>
       <CampaignIndicator />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Eyebrow>

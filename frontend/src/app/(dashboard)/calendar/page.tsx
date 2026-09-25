@@ -59,7 +59,10 @@ const STATUS_TONE: Record<string, { dot: string; border: string; label: string }
 };
 const toneOf = (status: string) => STATUS_TONE[status] ?? STATUS_TONE.draft;
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// CF-19: Monday-first, matching the week view and the working week this is
+// planned around. The month grid used to start on Sunday while the week view
+// started on Monday, so the same date sat in a different column in each.
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function atOf(p: CalendarPost): Date | null {
   if (!p.scheduled_at) return null;
@@ -73,9 +76,9 @@ function weekDays(anchor: Date): Date[] {
   return Array.from({ length: 7 }, (_, i) => addDays(start, i));
 }
 
-/** 6×7 Sunday-start grid, like Cadence's computeMonthGrid. */
+/** 6×7 Monday-start grid — same first day as {@link weekDays} (CF-19). */
 function monthCells(month: Date): Date[] {
-  const start = startOfWeek(startOfMonth(month), { weekStartsOn: 0 });
+  const start = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
   return Array.from({ length: 42 }, (_, i) => addDays(start, i));
 }
 

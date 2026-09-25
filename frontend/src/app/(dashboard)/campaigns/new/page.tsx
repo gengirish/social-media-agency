@@ -8,7 +8,7 @@ import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
 import { Sparkles, ArrowLeft, ArrowRight, Rocket, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { canPublish } from "@/lib/platforms";
+import { canPublish, platformLabel } from "@/lib/platforms";
 import { Button } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/panel";
 import { SectionCard } from "@/components/ui/section-card";
@@ -38,6 +38,48 @@ const AD_CHANNEL_OPTIONS = [
   { id: "meta_ads", label: "Meta Ads", emoji: "📣" },
   { id: "linkedin_ads", label: "LinkedIn Ads", emoji: "🏢" },
 ];
+
+/**
+ * The budget field's value as a number, or `null` when it is not a number.
+ *
+ * Blank is 0, not an error: leaving it empty means no budget, which is a normal
+ * answer. Rounded to whole cents so the stored figure is a real amount of money
+ * rather than a floating-point approximation of one (CF-18).
+ *
+ * The column stays a USD float — `campaign.budget` is JSONB read in several
+ * places, and moving the whole product to integer cents is a wider change than
+ * this bug warrants. Rounding here stops the artefacts the field could produce.
+ */
+/** A yyyy-mm-dd input's value as DD/MM/YYYY, or "" when unset. */
+function formatDate(raw: string): string {
+  const [y, m, d] = raw.split("-");
+  return y && m && d ? `${d}/${m}/${y}` : "";
+}
+
+/**
+ * The campaign's date range for the Review step (CF-19).
+ *
+ * Dates and audience were collected and then never shown back, so Review could
+ * not be used to check them. Either end can be blank, and `handleLaunch`
+ * substitutes today and today+30, so this states what will actually be used
+ * rather than leaving a gap. DD/MM/YYYY, per the house convention.
+ */
+function formatRange(start: string, end: string): string {
+  const from = formatDate(start);
+  const to = formatDate(end);
+  if (from && to) return `${from} – ${to}`;
+  if (from) return `${from} – 30 days later`;
+  if (to) return `Today – ${to}`;
+  return "Today – 30 days later";
+}
+
+function parseBudget(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return 0;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(value * 100) / 100;
+}
 
 /* Red ring for a control whose Field is showing an error. */
 const invalidClass = "border-red-400 hover:border-red-400 focus:border-red-500 focus:ring-red-500/20";
@@ -84,7 +126,14 @@ function NewCampaignForm() {
   const [templateName, setTemplateName] = useState<string | null>(null);
   const [targetAudience, setTargetAudience] = useState("");
   const [keyMessages, setKeyMessages] = useState("");
-  const [budgetUsd, setBudgetUsd] = useState(0);
+  /*
+   * CF-18: held as the raw string, not a number.
+   *
+   * With `useState(0)` the field rendered "0", so typing into it produced
+   * "0500". An empty field is empty — it means "no budget set", which is not the
+   * same as zero — and only becomes a number on submit.
+   */
+  const [budgetInput, setBudgetInput] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [additionalContext, setAdditionalContext] = useState("");
@@ -170,10 +219,12 @@ function NewCampaignForm() {
       setup.channels = "Pick at least one channel.";
     if (startDate && endDate && endDate < startDate)
       setup.endDate = "End date must be on or after the start date.";
-    if (!Number.isFinite(budgetUsd) || budgetUsd < 0) setup.budgetUsd = "Budget cannot be negative.";
+    const budget = parseBudget(budgetInput);
+    if (budget === null) setup.budgetUsd = "Enter a number, or leave it blank.";
+    else if (budget < 0) setup.budgetUsd = "Budget cannot be negative.";
 
     return { 1: brief, 2: setup, 3: {} };
-  }, [clientId, campaignName, objective, channels, startDate, endDate, budgetUsd]);
+  }, [clientId, campaignName, objective, channels, startDate, endDate, budgetInput]);
 
   const errors = attempted[step] ? stepErrors[step] : {};
 
@@ -194,6 +245,9 @@ function NewCampaignForm() {
       return;
     }
     setStep(target);
+    // CF-19: each step is a full card, so advancing left the user part-way down
+    // the next one with its first field off-screen.
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleLaunch() {
@@ -214,7 +268,7 @@ function NewCampaignForm() {
         channels,
         target_audience: targetAudience,
         key_messages: keyMessages.split("\n").filter(Boolean),
-        budget_usd: budgetUsd,
+        budget_usd: parseBudget(budgetInput) ?? 0,
         start_date: startDate || new Date().toISOString().split("T")[0],
         end_date: endDate || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
         additional_context: additionalContext,
@@ -482,8 +536,10 @@ function NewCampaignForm() {
               id="campaign-budget"
               type="number"
               min={0}
-              value={budgetUsd}
-              onChange={(e) => setBudgetUsd(Number(e.target.value))}
+              step="0.01"
+              inputMode="decimal"
+              value={budgetInput}
+              onChange={(e) => setBudgetInput(e.target.value)}
               placeholder="5000"
               aria-invalid={Boolean(errors.budgetUsd)}
               aria-describedby={errors.budgetUsd ? "campaign-budget-error" : undefined}
@@ -509,8 +565,10 @@ function NewCampaignForm() {
             {[
               ["Client", clients.find((c) => c.id === clientId)?.brand_name],
               ["Campaign", campaignName],
-              ["Channels", channels.join(", ")],
-              ["Budget", `$${budgetUsd.toLocaleString()}`],
+              ["Channels", channels.map(platformLabel).join(", ")],
+              ["Dates", formatRange(startDate, endDate)],
+              ["Target audience", targetAudience.trim() || "Not set"],
+              ["Budget", parseBudget(budgetInput) ? `$${parseBudget(budgetInput)!.toLocaleString()}` : "Not set"],
             ].map(([label, value]) => (
               <div key={label} className="flex justify-between gap-4 py-2.5">
                 <dt className="text-muted">{label}</dt>

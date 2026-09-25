@@ -96,7 +96,7 @@ export function AdvocacyPanel({ client, publishedCount }: { client: ClientOvervi
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <QuotaHint used={quota.used} limit={quota.limit} noun="generations left" />
+          <QuotaHint used={quota.used} limit={quota.limit} />
           <Button size="sm" onClick={() => void generate()} disabled={generating || atLimit || needsProfile}>
             {generating ? (
               <>

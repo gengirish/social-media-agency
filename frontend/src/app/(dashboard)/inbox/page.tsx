@@ -109,6 +109,9 @@ export default function InboxPage() {
     return m.type === filter;
   });
   const selected = items.find((m) => m.id === selectedId) ?? null;
+  // Whether there is anything for the narrow left column to hold (CF-19). While
+  // the first fetch is in flight the spinner lives there too, so it counts.
+  const hasList = filtered.length > 0 || (loading && !data);
   const unreadCount = items.filter((m) => !m.read && !m.handled).length;
 
   const patchItem = (id: string, patch: Partial<InboxItem>) =>
@@ -197,7 +200,16 @@ export default function InboxPage() {
 
       {data && <AccountBanners accounts={accounts} onRetry={() => void load(true)} />}
 
-      <div className="grid gap-4 min-[861px]:grid-cols-[360px_minmax(0,1fr)]">
+      {/* CF-19: the two-column split only earns its keep when there is a list to
+          sit beside a thread. With nothing to show, the 360px column squeezed the
+          empty state into a sliver — so with no messages the layout collapses to
+          one column and the empty state gets the full width. */}
+      <div
+        className={cn(
+          "grid gap-4",
+          hasList && "min-[861px]:grid-cols-[360px_minmax(0,1fr)]"
+        )}
+      >
         {/* left: message list */}
         <div>
           <div className="mb-3 flex flex-wrap gap-1.5 font-mono text-[11px]" role="group" aria-label="Filter by type">
