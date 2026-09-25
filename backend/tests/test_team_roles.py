@@ -228,3 +228,68 @@ async def test_update_is_scoped_to_the_org(
     assert result == {"error": "User not found"}
     [member] = await list_team_members(db, theirs)
     assert member["role"] == "viewer"
+
+
+# ---------------------------------------------------------------------------
+# Resend: the only route back from an invite whose email never arrived
+# ---------------------------------------------------------------------------
+async def test_resend_rotates_the_password_and_keeps_the_role(
+    session_factory: async_sessionmaker[AsyncSession],
+    db: AsyncSession,
+) -> None:
+    """A resend must issue a *new* password, not re-serve the old one.
+
+    The first password was handed to the inviter in an API response and a toast,
+    so it may already be in a log or a screenshot. It must stop working.
+    """
+    from agency.models.tables import User
+
+    org_id = await _org(session_factory)
+    result = await invite_team_member(db, org_id, "stranded@test.com", "member", "boss@test.com")
+    user_id = UUID(result["user_id"])
+    original_hash = (await db.get(User, user_id)).password_hash
+
+    resent = await team_service.reset_invite_password(db, org_id, user_id)
+
+    assert resent["status"] == "reset"
+    assert resent["email"] == "stranded@test.com"
+    assert resent["role"] == "member"
+    assert resent["temp_password"] != result["temp_password"]
+    db.expire_all()
+    assert (await db.get(User, user_id)).password_hash != original_hash
+
+
+async def test_resend_is_scoped_to_the_org(
+    session_factory: async_sessionmaker[AsyncSession],
+    db: AsyncSession,
+) -> None:
+    """No RLS in this database — this filter is the only thing stopping a
+    cross-tenant password reset, which is strictly worse than a data read."""
+    from agency.models.tables import User
+
+    mine = await _org(session_factory)
+    theirs = await _org(session_factory)
+    victim = await create_user_row(session_factory, theirs, role="viewer")
+    before = (await db.get(User, victim)).password_hash
+
+    result = await team_service.reset_invite_password(db, mine, victim)
+
+    assert result == {"error": "User not found"}
+    db.expire_all()
+    assert (await db.get(User, victim)).password_hash == before
+
+
+async def test_resend_reaches_a_user_the_invite_route_now_refuses(
+    session_factory: async_sessionmaker[AsyncSession],
+    db: AsyncSession,
+) -> None:
+    """The bug this closes: re-inviting the same address is permanently rejected."""
+    org_id = await _org(session_factory)
+    first = await invite_team_member(db, org_id, "again@test.com", "member", "boss@test.com")
+
+    retry = await invite_team_member(db, org_id, "again@test.com", "member", "boss@test.com")
+    assert retry == {"error": "User with this email already exists"}
+
+    resent = await team_service.reset_invite_password(db, org_id, UUID(first["user_id"]))
+    assert resent.get("error") is None
+    assert resent["temp_password"]

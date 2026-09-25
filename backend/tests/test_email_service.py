@@ -219,3 +219,55 @@ async def test_send_failure_is_swallowed_and_reported(
 
     assert result.sent is False
     assert "upstream 503" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# Failure reasons are read by humans, so they must not be header dumps
+# ---------------------------------------------------------------------------
+async def test_rate_limit_reason_names_the_shared_quota(
+    configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 429 is the hard-to-diagnose case: the key and sender are both fine.
+
+    The limit is organization-wide, so a bulk send from any other app on the same
+    AgentMail account starves transactional invites. The reason has to say that,
+    and must not carry the CloudFront header blob that `ApiError.__str__` renders.
+    """
+    from agentmail.core.api_error import ApiError
+
+    err = ApiError(
+        headers={"x-amz-cf-id": "noise", "via": "1.1 cloudfront"},
+        status_code=429,
+        body={
+            "code": "rate_limit_exceeded",
+            "message": "Daily send limit exceeded",
+            "limit": 100,
+            "scope": "organization",
+            "window": "daily",
+        },
+    )
+    _install(monkeypatch, fail=err)
+
+    result = await email_service.send_email(to="x@test.com", subject="s", text="t")
+
+    assert result.sent is False
+    assert "Daily send limit exceeded" in result.reason
+    assert "100 per organization" in result.reason
+    assert "same AgentMail organization" in result.reason
+    assert "cloudfront" not in result.reason.lower()
+    assert "x-amz-cf-id" not in result.reason
+
+
+async def test_forbidden_reason_points_at_the_key(
+    configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A revoked key is what `backend/.env` held while production had none."""
+    from agentmail.core.api_error import ApiError
+
+    _install(monkeypatch, fail=ApiError(status_code=403, body={"message": "Forbidden"}))
+
+    result = await email_service.send_email(to="x@test.com", subject="s", text="t")
+
+    assert result.sent is False
+    assert "403" in result.reason
+    assert "AGENTMAIL_API_KEY" in result.reason

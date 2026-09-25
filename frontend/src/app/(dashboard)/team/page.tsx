@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { api, type TeamMember } from "@/lib/api";
+import { api, type TeamInviteResponse, type TeamMember } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Eyebrow, PageHeader } from "@/components/ui/panel";
 import { SectionCard } from "@/components/ui/section-card";
@@ -42,6 +42,7 @@ export default function TeamPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("content_creator");
   const [inviting, setInviting] = useState(false);
+  const [resending, setResending] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -59,25 +60,37 @@ export default function TeamPage() {
     load();
   }, []);
 
+  // The backend sends only when AgentMail is configured and has a usable sender
+  // inbox. Trust its `email_sent` flag rather than sniffing the display copy,
+  // which is free to change wording.
+  function reportInviteResult(res: TeamInviteResponse) {
+    if (res.email_sent) {
+      toast.success(res.message);
+      return;
+    }
+    toast.warning(res.message ?? "User created, but no invitation email was sent.", {
+      description: res.temp_password ? `Temporary password: ${res.temp_password}` : undefined,
+      duration: 30000,
+    });
+  }
+
+  async function handleResend(userId: string) {
+    setResending(userId);
+    try {
+      reportInviteResult(await api.resendTeamInvite(userId));
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Resend failed");
+    } finally {
+      setResending(null);
+    }
+  }
+
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
     if (!inviteEmail.trim()) return;
     setInviting(true);
     try {
-      const res = await api.inviteTeamMember(inviteEmail.trim(), inviteRole);
-      // The backend sends only when AgentMail is configured and has a usable
-      // sender inbox. Trust its `email_sent` flag rather than sniffing the
-      // display copy, which is free to change wording.
-      if (res.email_sent) {
-        toast.success(res.message);
-      } else {
-        toast.warning(res.message ?? "User created, but no invitation email was sent.", {
-          description: res.temp_password
-            ? `Temporary password: ${res.temp_password}`
-            : undefined,
-          duration: 30000,
-        });
-      }
+      reportInviteResult(await api.inviteTeamMember(inviteEmail.trim(), inviteRole));
       setInviteEmail("");
       setShowInvite(false);
       load();
@@ -185,6 +198,17 @@ export default function TeamPage() {
                 >
                   {m.role.replace("_", " ")}
                 </span>
+                {/* Re-inviting through the invite form is impossible — the account
+                    already exists, so /team/invite 400s. This is the only route
+                    back for someone whose invitation email never arrived. */}
+                <Button
+                  variant="secondary"
+                  onClick={() => handleResend(m.id)}
+                  disabled={resending === m.id}
+                  title="Rotate the temporary password and email the invite again"
+                >
+                  {resending === m.id ? "Sending…" : "Resend invite"}
+                </Button>
               </li>
             ))
           )}

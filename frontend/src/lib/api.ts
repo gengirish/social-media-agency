@@ -390,6 +390,14 @@ export const api = {
       body: JSON.stringify({ email, role }),
     }),
 
+  /** Rotates the member's temporary password and mails the invite again. Use
+   * this when a first invite created the account but `email_sent` was false —
+   * re-POSTing /team/invite for the same address returns 400 forever. */
+  resendTeamInvite: (userId: string) =>
+    request<TeamInviteResponse>(`/api/v1/team/${userId}/resend-invite`, {
+      method: "POST",
+    }),
+
   updateTeamMemberRole: (userId: string, role: string) =>
     request<TeamMemberRoleResponse>(`/api/v1/team/${userId}/role`, {
       method: "PATCH",

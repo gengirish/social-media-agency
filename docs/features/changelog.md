@@ -4,6 +4,22 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260925 — Team invite emails never sent
+
+Invites created accounts and mailed nothing. Three independent causes, stacked, each one silent:
+
+1. **`AGENTMAIL_API_KEY` was never set as a Fly secret.** `send_email` returned `sent=False` on every invite and production logged `team_invite_email_not_sent reason='AgentMail is not configured'`. Nothing was broken in the send path — it was never reached.
+2. **The key in `backend/.env` was revoked** (403 from `inboxes.get`), so local dev failed too, and copying that key to Fly would not have fixed anything.
+3. **The AgentMail daily send limit is organization-wide** (100/day, free plan) and `alerts@intelliforge.tech` is shared with the IntelliForge Morning Briefing newsletter, whose blast exhausts the quota before any invite is attempted. 429 with a healthy key, domain and inbox.
+
+- **Fixed**: `AGENTMAIL_API_KEY`, `AGENTMAIL_FROM_EMAIL`, `AGENTMAIL_DEFAULT_DOMAIN` set as Fly secrets on `campaignforge-api`; live key restored in `backend/.env`.
+- **Added**: `POST /api/v1/team/{user_id}/resend-invite` — rotates the temporary password and re-mails the invitation. Previously a failed *email* left a real account behind and `POST /team/invite` refused that address forever ("User with this email already exists"), so an invitee whose mail never arrived was unreachable through the UI. 403 on self, tenant-scoped, and the password is rotated rather than reused because the original was already shown in a response and a toast. Surfaced as a **Resend invite** button on `/team`.
+- **Added**: `GET /api/v1/health/email` — `can_send` performs live sender-inbox resolution. `configured` only means a key string exists, which is what made the original failure invisible. Never returns key material.
+- **Changed**: `email_service._describe_send_failure` classifies AgentMail failures. `ApiError.__str__` renders every response header, and that string used to travel into the invite response and out to a user-facing toast; 429 (shared quota) and 403 (rejected key) now read as one actionable sentence, with the full exception kept in the log.
+- **Unchanged**: `send_email` still never raises and never lies. `email_sent` remains authoritative on both the invite and resend responses.
+
+---
+
 ## 260923 — Cadence full parity
 
 Every Cadence Crew prototype screen now has a CampaignForge route (branch `feat/cadence-parity`; plan and screen map in [`docs/cadence-parity-plan-260923.md`](../cadence-parity-plan-260923.md)). Where Cadence simulated something — OAuth popups, a seeded inbox, browser-side LLM calls, sending — this does it for real or says it is unavailable. Nav order stays Setup, Create, Posts (not Cadence's Setup, Posts, Create).
