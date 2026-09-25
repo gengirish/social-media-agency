@@ -172,9 +172,12 @@ async def get_trending_topics(platform: str | None = None) -> dict[str, Any]:
 
     api_key = exa_client.get_api_key()
     if not api_key:
-        logger.info("trends_exa_not_configured", platform=platform)
+        # The operator's fix goes to the log; the screen gets a plain statement
+        # that the feature is off (CF-16).
+        logger.info("trends_exa_not_configured", platform=platform, fix=SETUP_HINT)
         return _unavailable(
-            f"Trend data source (Exa) is not configured. {SETUP_HINT}",
+            "Trends aren't available yet — the trend data source isn't set up on "
+            "this workspace.",
             platform=platform,
         )
 

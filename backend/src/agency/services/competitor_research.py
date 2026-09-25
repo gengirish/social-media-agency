@@ -21,7 +21,9 @@ logger = structlog.get_logger()
 #: Documents handed to the model per competitor (Exa returns up to 6).
 SOURCES_PER_COMPETITOR = 4
 
-NO_KEY_REASON = "Web search is not configured for this workspace (EXA_API_KEY is not set)."
+# User-facing: no variable names. The operator's fix is logged where the key is
+# read (services/exa_client.py::SETUP_HINT) — CF-16.
+NO_KEY_REASON = "This isn't available yet — web search isn't set up on this workspace."
 
 
 def _public(source: dict[str, Any]) -> dict[str, Any]:
