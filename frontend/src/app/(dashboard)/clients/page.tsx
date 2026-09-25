@@ -18,8 +18,10 @@ import { SegmentedTabs } from "@/components/ui/tabs";
 const EMPTY_FORM = { brand_name: "", industry: "", description: "", website_url: "", contact_email: "" };
 type ClientForm = typeof EMPTY_FORM;
 type ClientView = "active" | "archived";
-// The fields a website read may fill. Website and email stay the user's.
-const READ_FIELDS = ["brand_name", "industry", "description"] as const;
+// The fields a website read may fill. The website URL stays the user's — it is
+// the input. The contact email comes from the page's own mailto:/contact page,
+// found in code rather than guessed by the model.
+const READ_FIELDS = ["brand_name", "industry", "description", "contact_email"] as const;
 
 export default function ClientsPage() {
   /*

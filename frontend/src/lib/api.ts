@@ -979,6 +979,7 @@ export interface BrandProfile {
   brand_name?: string;
   industry?: string;
   description?: string;
+  contact_email?: string;
   voice_description?: string;
   tone_attributes?: Record<string, number>;
   target_audience?: string;
