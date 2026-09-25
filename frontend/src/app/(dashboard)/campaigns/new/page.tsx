@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, type Client } from "@/lib/api";
+import { useActiveClient } from "@/lib/active-client";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
 import { Sparkles, ArrowLeft, ArrowRight, Rocket, Check } from "lucide-react";
@@ -63,6 +64,7 @@ const FIELD_IDS: { key: ErrorKey; id: string }[] = [
 
 export default function NewCampaignPage() {
   const router = useRouter();
+  const { activeId } = useActiveClient();
   const [step, setStep] = useState(1);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
@@ -85,6 +87,15 @@ export default function NewCampaignPage() {
   useEffect(() => {
     api.getClients().then((res) => setClients(res.items)).catch(() => {});
   }, []);
+
+  // CF-10: start on the client the top-nav switcher is pointing at. The picker
+  // opened empty, so the switcher's choice had to be made a second time here.
+  // Only seeds the empty field — it must never overwrite a deliberate pick, and
+  // `activeId` changing under a half-filled form should not move the campaign to
+  // another client.
+  useEffect(() => {
+    if (activeId) setClientId((current) => current || activeId);
+  }, [activeId]);
 
   function toggleChannel(ch: string) {
     setChannels((prev) =>

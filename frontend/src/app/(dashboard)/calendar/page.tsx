@@ -29,6 +29,7 @@ import {
   type CalendarPost,
 } from "@/lib/api-posts";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
+import { useClientScope, type ClientScope } from "@/lib/client-scope";
 import { trackFeature } from "@/lib/analytics";
 import { publishUnavailableReason } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
@@ -44,7 +45,6 @@ import { QUEUE_PLATFORMS, platformLabel, platformTone } from "@/components/posts
 import { ScheduleDialog } from "@/components/posts/schedule-dialog";
 
 type View = "month" | "week";
-type Scope = "client" | "all";
 
 /*
  * Cadence's STATUS_COLOR, extended to this app's five statuses and matched to
@@ -247,7 +247,8 @@ function DayColumn({
 export default function CalendarPage() {
   const router = useRouter();
   const { active, activeId, clients, loading: clientsLoading, refresh: refreshClients } = useActiveClient();
-  const [scope, setScope] = useState<Scope>("client");
+  // CF-10: shared with the Queue (see lib/client-scope.ts).
+  const [scope, setScope] = useClientScope();
   const [view, setView] = useState<View>("month");
   const [anchor, setAnchor] = useState(() => new Date());
   const [selectedDay, setSelectedDay] = useState(() => startOfDay(new Date()));
@@ -574,8 +575,8 @@ export default function CalendarPage() {
             <SegmentedTabs
               label="Calendar scope"
               items={[
-                { id: "client" as Scope, label: clientLabel(active) },
-                { id: "all" as Scope, label: "All clients" },
+                { id: "client" as ClientScope, label: clientLabel(active) },
+                { id: "all" as ClientScope, label: "All clients" },
               ]}
               value={scope}
               onChange={setScope}

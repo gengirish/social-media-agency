@@ -35,6 +35,7 @@ import {
 } from "@/lib/api";
 import { downloadTextFile, isAbortError, postStudioApi } from "@/lib/api-posts";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
+import { useClientScope, type ClientScope } from "@/lib/client-scope";
 import { trackFeature } from "@/lib/analytics";
 import { canPublish, publishUnavailableReason } from "@/lib/platforms";
 import { useSession } from "@/lib/session";
@@ -85,7 +86,6 @@ const EMPTY: Record<QueueStatus, { title: string; body: string }> = {
 };
 
 type Counts = Partial<Record<QueueStatus, number | null>>;
-type Scope = "client" | "all";
 interface RunResult {
   platform: string;
   ok: boolean;
@@ -120,7 +120,9 @@ export default function QueuePage() {
   const mayApprove = can("content.approve");
   const mayPublish = can("publish.write");
 
-  const [scope, setScope] = useState<Scope>("client");
+  // CF-10: shared with the Calendar, so switching between the two Posts
+  // sub-pages does not silently reset the scope.
+  const [scope, setScope] = useClientScope();
   const [tab, setTab] = useState<QueueStatus>("draft");
   const [platform, setPlatform] = useState("all");
   const [search, setSearch] = useState("");
@@ -733,8 +735,8 @@ export default function QueuePage() {
               <SegmentedTabs
                 label="Queue scope"
                 items={[
-                  { id: "client" as Scope, label: clientLabel(active) },
-                  { id: "all" as Scope, label: "All clients" },
+                  { id: "client" as ClientScope, label: clientLabel(active) },
+                  { id: "all" as ClientScope, label: "All clients" },
                 ]}
                 value={scope}
                 onChange={(s) => {
@@ -770,7 +772,10 @@ export default function QueuePage() {
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
           {/* Sidebar — Cadence's profile / channels / usage column, for the active client */}
           <aside className="space-y-5">
-            {active && (
+            {/* CF-10: under "All clients" the list spans every client, so one
+                client's profile card beside it is simply wrong. The card is for
+                the client the posts belong to. */}
+            {active && scope === "client" && (
               <ClientProfileCard
                 name={clientLabel(active)}
                 website={active.website_url}

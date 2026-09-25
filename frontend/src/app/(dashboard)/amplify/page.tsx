@@ -17,6 +17,7 @@ import {
   type SubscriptionInfo,
 } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
+import { useActiveClient } from "@/lib/active-client";
 import { foundationApi } from "@/lib/api-foundation";
 import { REPURPOSABLE_KINDS, collectRepurposeSources, type RepurposeSource } from "@/lib/api-create-content";
 import { PageHeader } from "@/components/ui/panel";
@@ -36,6 +37,7 @@ function errorMessage(err: unknown, fallback: string): string {
 
 function AmplifyWorkspace() {
   const router = useRouter();
+  const { activeId } = useActiveClient();
   const params = useSearchParams();
   const sourceParam = params.get("source");
 
@@ -92,6 +94,13 @@ function AmplifyWorkspace() {
     loadPacks();
     return () => controllerRef.current?.abort();
   }, [loadSubscription, loadPacks]);
+
+  // CF-10: start on the client the top-nav switcher is pointing at, rather than
+  // an empty picker. Seeds the empty field only, so a deep link's client (set
+  // below) and any deliberate pick both survive.
+  useEffect(() => {
+    if (activeId) setClientId((current) => current || activeId);
+  }, [activeId]);
 
   // Deep link from the queue / campaign cards: /amplify?source=<content_id>.
   useEffect(() => {
