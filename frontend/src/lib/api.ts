@@ -2113,4 +2113,39 @@ export const amplifyApi = {
       body: JSON.stringify({ atoms }),
     }),
   packs: (clientId?: string) => request<{ items: AmplifyPack[] }>(`/api/v1/amplify/packs${qs({ client_id: clientId })}`),
+  /** One pack, with the drafts it queued and a per-platform breakdown (CF-15). */
+  pack: (packId: string) => request<AmplifyPackDetail>(`/api/v1/amplify/packs/${packId}`),
 };
+
+/**
+ * What became of one platform in a pack.
+ *
+ * `not_kept` and `not_generated` are distinguishable only from the pack's
+ * counts, because atoms are never persisted — `commit` writes the kept ones to
+ * `content_piece` and the rest are gone. Where the counts cannot tell them
+ * apart, the backend says `not_kept` and `dropped_count` gives the UI enough to
+ * word it honestly.
+ */
+export type AmplifyPlatformStatus = "queued" | "not_kept" | "not_generated";
+
+export interface AmplifyPackPost {
+  id: string;
+  platform: string;
+  angle: string | null;
+  status: string;
+  title: string;
+  excerpt: string | null;
+}
+
+export interface AmplifyPackDetail {
+  id: string;
+  client_id: string;
+  platforms: string[];
+  atom_count: number;
+  committed_count: number;
+  created_at: string | null;
+  posts: AmplifyPackPost[];
+  platform_breakdown: { platform: string; status: AmplifyPlatformStatus }[];
+  dropped_count: number;
+  unqueued_platforms: string[];
+}
