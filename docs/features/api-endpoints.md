@@ -10,6 +10,7 @@ All routes are prefixed with `/api/v1`. Authentication uses `Authorization: Bear
 | GET | `/health` | No | `health` | Liveness check: `{status, service}` |
 | GET | `/health/db` | No | `health_db` | DB probe via `SELECT 1` |
 | GET | `/health/llm` | Yes | `health_llm` | Resolved provider/model/fallbacks per tier; never returns keys |
+| GET | `/health/email` | Yes | `health_email` | Whether transactional email can actually send. Read `can_send` (live sender-inbox resolution), not `configured` (key merely present) |
 
 ## Auth (Legacy)
 **Status**: [LIVE]
@@ -405,6 +406,7 @@ Every query filters on `org_id` and the org-resolved `client_id`. Tests: `tests/
 |--------|------|------|---------|---------|
 | GET | `/team` | Yes | `get_team` | List org members |
 | POST | `/team/invite` | Yes | `invite_member` | Invite user (temp password; best-effort AgentMail) |
+| POST | `/team/{user_id}/resend-invite` | Yes | `resend_member_invite` | Rotate the temp password and re-mail the invite. The only route back when the first invite's email failed — re-POSTing `/team/invite` 400s forever. 403 on self |
 | PATCH | `/team/{user_id}/role` | Yes | `patch_member_role` | Change member role |
 
 ## Magic Brief

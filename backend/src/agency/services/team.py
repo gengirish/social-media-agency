@@ -126,3 +126,37 @@ async def update_member_role(db: AsyncSession, org_id: UUID, user_id: UUID, new_
     user.role = new_role
     await db.commit()
     return {"status": "updated", "role": new_role}
+
+
+async def reset_invite_password(db: AsyncSession, org_id: UUID, user_id: UUID) -> dict:
+    """Rotate an existing member's temporary password so their invite can be re-sent.
+
+    An invite whose *email* failed still leaves a real ``User`` row behind, and
+    :func:`invite_team_member` then refuses that address forever with "User with
+    this email already exists". Without this, an invitee whose mail never went
+    out is unreachable through the UI — exactly what happened when
+    ``AGENTMAIL_API_KEY`` was missing in production: accounts were created, no
+    mail was sent, and every retry 400'd.
+
+    The password is rotated rather than reused. The original was handed to the
+    inviter in an API response and a toast, so it may already sit in a log or a
+    screenshot; a resend must not keep that one valid.
+    """
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.org_id == org_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        return {"error": "User not found"}
+
+    temp_password = str(uuid4())[:12]
+    user.password_hash = _pwd_context.hash(temp_password)
+    await db.commit()
+
+    return {
+        "status": "reset",
+        "email": user.email,
+        "role": user.role,
+        "temp_password": temp_password,
+        "user_id": str(user.id),
+    }
