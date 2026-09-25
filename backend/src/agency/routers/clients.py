@@ -16,7 +16,14 @@ from agency.models.schemas import (
     ClientResponse,
     ClientUpdate,
 )
-from agency.models.tables import BrandProfile, Client, ContentPiece, PlatformAccount
+from agency.models.tables import (
+    BrandProfile,
+    Client,
+    ContentPiece,
+    PlatformAccount,
+    Subscription,
+)
+from agency.services.billing import PLAN_CONFIG
 from agency.services.brand_context import resolve_voice
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
@@ -29,6 +36,49 @@ async def create_client(
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
+    """Create a client, within the plan's client allowance.
+
+    CF-11: the Free plan advertises "1 client" and four existed, because the
+    limit was stored on the subscription and never checked. The campaign limit
+    was enforced in `campaigns.py`; this was the matching gap.
+
+    Only **active** clients count, and only *new* ones are refused. Clients
+    already over the limit keep working — taking away access to data an org
+    already has, over a limit that was never enforced while they created it,
+    would be punishing them for our bug.
+    """
+    sub = (
+        await db.execute(select(Subscription).where(Subscription.org_id == org_id))
+    ).scalar_one_or_none()
+    plan_tier = str(sub.plan_tier) if sub else "free"
+    plan = PLAN_CONFIG.get(plan_tier, PLAN_CONFIG["free"])
+    clients_limit = int(plan.get("clients_limit", 1))
+
+    active_clients = (
+        await db.execute(
+            select(func.count(Client.id)).where(
+                Client.org_id == org_id, Client.is_active.is_(True)
+            )
+        )
+    ).scalar() or 0
+
+    if active_clients >= clients_limit:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            {
+                "code": "client_limit_reached",
+                "limit": clients_limit,
+                "current": active_clients,
+                "plan_tier": plan_tier,
+                "message": (
+                    f"The {plan_tier.title()} plan includes {clients_limit} "
+                    f"client{'' if clients_limit == 1 else 's'} and you have "
+                    f"{active_clients}. Upgrade to add another, or archive one "
+                    "you are no longer working on."
+                ),
+            },
+        )
+
     client = Client(
         org_id=org_id,
         brand_name=request.brand_name,

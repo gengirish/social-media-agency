@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useActiveClient } from "@/lib/active-client";
 import { useSession } from "@/lib/session";
 import Link from "next/link";
-import { api, type BrandProfile, type Client } from "@/lib/api";
+import { api, apiErrorCode, apiErrorMessage, type BrandProfile, type Client } from "@/lib/api";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
 import { Plus, Users, Globe, Mail, Sparkles, Loader2, X, Archive, PenLine } from "lucide-react";
@@ -31,6 +32,7 @@ export default function ClientsPage() {
    * flips to `business` on its first team invite.
    */
   const { isPersonal } = useSession();
+  const router = useRouter();
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ClientView>("active");
@@ -148,7 +150,16 @@ export default function ClientsPage() {
       if (view === "active") loadClients();
       else setView("active");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      // CF-11: the plan's client allowance is enforced on the server now, so
+      // this is a real outcome rather than an unexpected failure — say what the
+      // limit is and what can be done about it, with a route to Billing.
+      if (apiErrorCode(err) === "client_limit_reached") {
+        toast.error(apiErrorMessage(err) ?? "You've reached your plan's client limit.", {
+          action: { label: "See plans", onClick: () => router.push("/settings?tab=billing") },
+        });
+      } else {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setCreating(false);
     }

@@ -1958,6 +1958,19 @@ export function apiErrorCode(err: unknown): string | null {
   return d && typeof d === "object" && typeof d.code === "string" ? d.code : null;
 }
 
+/**
+ * `detail.message` of a structured API error, or null.
+ *
+ * The server words these for the reader — a plan limit says which plan, what the
+ * limit is and what to do about it — so showing it beats re-inventing the
+ * sentence on each screen.
+ */
+export function apiErrorMessage(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  const d = err.detail as { message?: unknown } | null;
+  return d && typeof d === "object" && typeof d.message === "string" ? d.message : null;
+}
+
 /** Issues carried by a `409 moderation_flagged`; empty for anything else. */
 export function moderationIssues(err: unknown): ModerationIssue[] {
   if (apiErrorCode(err) !== "moderation_flagged") return [];
