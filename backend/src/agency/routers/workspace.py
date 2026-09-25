@@ -13,9 +13,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.dependencies import get_current_user, get_db, get_org_id
+from agency.models.tables import BrandProfile
 from agency.services.activity import MAX_EVENTS, client_activity
 from agency.services.brand_context import get_org_client
 from agency.services.workspace_export import export_client
@@ -100,5 +102,26 @@ async def set_posting_prefs(
     merged["posting_prefs"] = prefs
     # Reassign (not mutate) so SQLAlchemy sees the JSONB change.
     client.settings = merged  # type: ignore[assignment]
+
+    # CF-08: `brand_profile.tone_attributes.register` is the older home of the
+    # same four-option picker. Leaving it behind is how one client showed
+    # "Friendly & casual" on one screen and a different register on another, so
+    # the register written here is mirrored into it. The written brand-voice
+    # guide is never touched — it outranks both (see `resolve_voice`) and is
+    # prose someone composed, not a preset to overwrite.
+    if prefs.get("voice_register"):
+        bp = (
+            await db.execute(
+                select(BrandProfile).where(
+                    BrandProfile.client_id == client.id, BrandProfile.org_id == org_id
+                )
+            )
+        ).scalar_one_or_none()
+        if bp is not None:
+            tone: Any = bp.tone_attributes
+            tone_merged = dict(tone) if isinstance(tone, dict) else {}
+            tone_merged["register"] = prefs["voice_register"]
+            bp.tone_attributes = tone_merged  # type: ignore[assignment]
+
     await db.commit()
     return {"posting_prefs": prefs}

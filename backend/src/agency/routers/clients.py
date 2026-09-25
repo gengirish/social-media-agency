@@ -17,6 +17,7 @@ from agency.models.schemas import (
     ClientUpdate,
 )
 from agency.models.tables import BrandProfile, Client, ContentPiece, PlatformAccount
+from agency.services.brand_context import resolve_voice
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
@@ -299,14 +300,33 @@ async def restore_client(
     return client
 
 
+def _with_effective_voice(profile: BrandProfile, client: Client) -> BrandProfileResponse:
+    """The profile, plus the one resolved answer for "what is this client's voice?".
+
+    Resolved here rather than in each screen, because doing it per screen is how
+    one client came to show three different voices at once (CF-08).
+    """
+    settings: Any = client.settings
+    prefs = (settings or {}).get("posting_prefs") if isinstance(settings, dict) else None
+    voice, source = resolve_voice(
+        profile.voice_description,
+        profile.tone_attributes,
+        prefs if isinstance(prefs, dict) else None,
+    )
+    response = BrandProfileResponse.model_validate(profile)
+    response.effective_voice = voice
+    response.voice_source = source
+    return response
+
+
 @router.get("/{client_id}/brand-profile", response_model=BrandProfileResponse)
 async def get_brand_profile(
     client_id: UUID,
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     org_id: UUID = Depends(get_org_id),
-) -> BrandProfile:
-    await _get_org_client(db, client_id, org_id)
+) -> BrandProfileResponse:
+    client = await _get_org_client(db, client_id, org_id)
     result = await db.execute(
         select(BrandProfile).where(
             BrandProfile.client_id == client_id, BrandProfile.org_id == org_id
@@ -315,7 +335,7 @@ async def get_brand_profile(
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Brand profile not found")
-    return profile
+    return _with_effective_voice(profile, client)
 
 
 @router.put("/{client_id}/brand-profile", response_model=BrandProfileResponse)
@@ -325,9 +345,9 @@ async def upsert_brand_profile(
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     org_id: UUID = Depends(get_org_id),
-) -> BrandProfile:
+) -> BrandProfileResponse:
     """Create the brand profile, or update only the fields sent if one exists."""
-    await _get_org_client(db, client_id, org_id)
+    client = await _get_org_client(db, client_id, org_id)
     result = await db.execute(
         select(BrandProfile).where(
             BrandProfile.client_id == client_id, BrandProfile.org_id == org_id
@@ -342,7 +362,7 @@ async def upsert_brand_profile(
             setattr(profile, field, value)
     await db.commit()
     await db.refresh(profile)
-    return profile
+    return _with_effective_voice(profile, client)
 
 
 @router.post("/{client_id}/brand-profile", status_code=status.HTTP_201_CREATED)

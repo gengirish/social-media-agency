@@ -106,6 +106,14 @@ class BrandProfileResponse(BaseModel):
     emoji_policy: str | None
     competitor_differentiation: str | None
     target_audience: str | None
+    # CF-08: the one answer to "what is this client's voice?", resolved across the
+    # three stores that can hold it (see services/brand_context.py::resolve_voice).
+    # Every screen renders this rather than picking a column, so they cannot show
+    # three different values for one client again. "" when nothing is set.
+    effective_voice: str = ""
+    #: Which store `effective_voice` came from: "guide", "register",
+    #: "tone_register", or None when there is none.
+    voice_source: str | None = None
 
     model_config = {"from_attributes": True}
 

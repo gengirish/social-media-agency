@@ -775,7 +775,10 @@ export default function QueuePage() {
                 name={clientLabel(active)}
                 website={active.website_url}
                 audience={profile?.target_audience ?? null}
-                voice={profile?.voice_description ?? null}
+                // CF-08: the resolved voice, not the raw column — this read
+                // "Not set" while Setup › Profile showed a register for the
+                // same client.
+                voice={profile?.effective_voice || null}
                 hasProfile={active.has_brand_profile}
               />
             )}

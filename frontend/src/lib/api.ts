@@ -708,6 +708,18 @@ export interface SavedBrandProfile {
   emoji_policy: string | null;
   competitor_differentiation: string | null;
   target_audience: string | null;
+  /**
+   * The one answer to "what is this client's voice?" (CF-08).
+   *
+   * Three stores can hold a voice — the written guide, Settings' posting-prefs
+   * register, and the older `tone_attributes.register` — and each screen used to
+   * read a different one, so one client showed "Friendly & casual", "Not set"
+   * and "Not configured" at the same time. Render this, never a raw column.
+   * Empty string when nothing is set.
+   */
+  effective_voice?: string;
+  /** Which store `effective_voice` came from, or null when none is set. */
+  voice_source?: "guide" | "register" | "tone_register" | null;
 }
 
 /** Mirrors `BrandProfileCreate` — every field has a server-side default. */

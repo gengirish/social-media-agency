@@ -287,8 +287,11 @@ export default function ClientDetailPage() {
         </SectionCard>
 
         <SectionCard eyebrow="Voice" title="Brand voice" delay={0.15} bodyClassName="space-y-3">
+          {/* CF-08: the resolved voice, and the same "Not set" wording the Queue
+              sidebar uses — this said "Not configured" for a client that had a
+              register picked in Settings. */}
           <p className="text-sm leading-relaxed text-ink">
-            {data.brand_voice?.voice_description || "Not configured"}
+            {profile?.effective_voice || data.brand_voice?.voice_description || "Not set"}
           </p>
           <p className="border-l-2 border-accent/60 pl-3 text-sm text-muted">
             <strong className="font-medium text-ink">Target:</strong>{" "}
