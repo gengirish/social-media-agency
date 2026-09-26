@@ -35,6 +35,7 @@ import {
 } from "@/lib/api";
 import { downloadTextFile, isAbortError, postStudioApi } from "@/lib/api-posts";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
+import { useClientScope, type ClientScope } from "@/lib/client-scope";
 import { trackFeature } from "@/lib/analytics";
 import { canPublish, publishUnavailableReason } from "@/lib/platforms";
 import { useSession } from "@/lib/session";
@@ -85,7 +86,6 @@ const EMPTY: Record<QueueStatus, { title: string; body: string }> = {
 };
 
 type Counts = Partial<Record<QueueStatus, number | null>>;
-type Scope = "client" | "all";
 interface RunResult {
   platform: string;
   ok: boolean;
@@ -120,7 +120,9 @@ export default function QueuePage() {
   const mayApprove = can("content.approve");
   const mayPublish = can("publish.write");
 
-  const [scope, setScope] = useState<Scope>("client");
+  // CF-10: shared with the Calendar, so switching between the two Posts
+  // sub-pages does not silently reset the scope.
+  const [scope, setScope] = useClientScope();
   const [tab, setTab] = useState<QueueStatus>("draft");
   const [platform, setPlatform] = useState("all");
   const [search, setSearch] = useState("");
@@ -344,6 +346,42 @@ export default function QueuePage() {
     }
   }
 
+  /**
+   * CF-06: put a failed post back in Approved so publishing can be tried again.
+   *
+   * Moderation runs again server-side — the post may have been edited to fix
+   * whatever the platform rejected — so this branches on the same codes approve
+   * does, reusing the moderation sheet rather than a bare toast.
+   */
+  async function retry(post: QueuePost, override = false) {
+    setPostBusy(post.id, "retry");
+    try {
+      const res = await postsApi.retry(post.id, override);
+      setModeration(null);
+      const mod = res.moderation?.status;
+      if (mod === "unavailable") toast.warning("Moderation check unavailable — back in Approved without it");
+      else if (override || mod === "overridden") toast.success("Back in Approved — moderation override recorded");
+      else toast.success("Back in Approved — publish it when you're ready");
+      trackFeature("post-retry", { platform: post.platform, override });
+      reload();
+      void refreshClients();
+    } catch (err) {
+      const code = apiErrorCode(err);
+      if (code === "moderation_flagged") {
+        setModeration({ post, issues: moderationIssues(err) });
+      } else if (code === "not_failed") {
+        toast.error("This post is no longer failed — refreshed the queue");
+        reload();
+      } else if (code === "empty_content") {
+        toast.error("There's nothing in this post to publish — edit it first");
+      } else {
+        toast.error(err instanceof Error ? err.message : "Could not retry this post");
+      }
+    } finally {
+      setPostBusy(post.id, null);
+    }
+  }
+
   async function saveEdit(post: QueuePost, edit: PostEdit) {
     try {
       const updated = await postsApi.edit(post.id, edit);
@@ -484,9 +522,10 @@ export default function QueuePage() {
     }
   }
 
-  const latest = useRef({ approve, saveEdit, deletePosts, regenerate, requestBrief });
-  latest.current = { approve, saveEdit, deletePosts, regenerate, requestBrief };
+  const latest = useRef({ approve, retry, saveEdit, deletePosts, regenerate, requestBrief });
+  latest.current = { approve, retry, saveEdit, deletePosts, regenerate, requestBrief };
   const onApprove = useCallback((p: QueuePost) => void latest.current.approve(p), []);
+  const onRetry = useCallback((p: QueuePost) => void latest.current.retry(p), []);
   const onEditSave = useCallback((p: QueuePost, e: PostEdit) => latest.current.saveEdit(p, e), []);
   const onDelete = useCallback((p: QueuePost) => latest.current.deletePosts([p]), []);
   const onRegenerate = useCallback((p: QueuePost) => void latest.current.regenerate(p), []);
@@ -696,8 +735,8 @@ export default function QueuePage() {
               <SegmentedTabs
                 label="Queue scope"
                 items={[
-                  { id: "client" as Scope, label: clientLabel(active) },
-                  { id: "all" as Scope, label: "All clients" },
+                  { id: "client" as ClientScope, label: clientLabel(active) },
+                  { id: "all" as ClientScope, label: "All clients" },
                 ]}
                 value={scope}
                 onChange={(s) => {
@@ -733,12 +772,18 @@ export default function QueuePage() {
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
           {/* Sidebar — Cadence's profile / channels / usage column, for the active client */}
           <aside className="space-y-5">
-            {active && (
+            {/* CF-10: under "All clients" the list spans every client, so one
+                client's profile card beside it is simply wrong. The card is for
+                the client the posts belong to. */}
+            {active && scope === "client" && (
               <ClientProfileCard
                 name={clientLabel(active)}
                 website={active.website_url}
                 audience={profile?.target_audience ?? null}
-                voice={profile?.voice_description ?? null}
+                // CF-08: the resolved voice, not the raw column — this read
+                // "Not set" while Setup › Profile showed a register for the
+                // same client.
+                voice={profile?.effective_voice || null}
                 hasProfile={active.has_brand_profile}
               />
             )}
@@ -963,6 +1008,7 @@ export default function QueuePage() {
                       onSchedule={onSchedule}
                       onPublish={onPublish}
                       onDelete={onDelete}
+                      onRetry={onRetry}
                       onRegenerate={onRegenerate}
                       onCancelRegenerate={onCancelRegenerate}
                       onRequestBrief={onRequestBrief}
@@ -1005,7 +1051,15 @@ export default function QueuePage() {
           if (moderation) setEditingId(moderation.post.id);
           setModeration(null);
         }}
-        onOverride={() => moderation && void approve(moderation.post, true)}
+        // A failed post reached this sheet through Retry, not Approve, and the
+        // approve endpoint refuses a failed piece — so the override has to go
+        // back to the same endpoint that raised the flag.
+        onOverride={() =>
+          moderation &&
+          void (moderation.post.status === "failed"
+            ? retry(moderation.post, true)
+            : approve(moderation.post, true))
+        }
       />
 
       <ScheduleDialog

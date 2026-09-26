@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, type Client } from "@/lib/api";
+import { useActiveClient } from "@/lib/active-client";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
 import { Sparkles, ArrowLeft, ArrowRight, Rocket, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { canPublish } from "@/lib/platforms";
+import { canPublish, platformLabel } from "@/lib/platforms";
 import { Button } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/panel";
 import { SectionCard } from "@/components/ui/section-card";
@@ -22,6 +23,63 @@ const CHANNEL_OPTIONS = [
   { id: "facebook", label: "Facebook", emoji: "📘" },
   { id: "tiktok", label: "TikTok", emoji: "🎵" },
 ];
+
+/**
+ * Paid ad networks, opt-in and separate from the organic channels above (CF-04).
+ *
+ * A campaign that picked LinkedIn and X came back with Google and Meta search
+ * ads nobody asked for: the Ad Copy agent defaulted to `["google", "meta"]`
+ * whatever the brief said. Writing ad copy presumes a media budget, so it is now
+ * a deliberate tick here and nothing else turns it on — see
+ * `agents/ad_copy.py::selected_ad_platforms`, which is the enforcing end.
+ */
+const AD_CHANNEL_OPTIONS = [
+  { id: "google_ads", label: "Google Ads", emoji: "🔍" },
+  { id: "meta_ads", label: "Meta Ads", emoji: "📣" },
+  { id: "linkedin_ads", label: "LinkedIn Ads", emoji: "🏢" },
+];
+
+/**
+ * The budget field's value as a number, or `null` when it is not a number.
+ *
+ * Blank is 0, not an error: leaving it empty means no budget, which is a normal
+ * answer. Rounded to whole cents so the stored figure is a real amount of money
+ * rather than a floating-point approximation of one (CF-18).
+ *
+ * The column stays a USD float — `campaign.budget` is JSONB read in several
+ * places, and moving the whole product to integer cents is a wider change than
+ * this bug warrants. Rounding here stops the artefacts the field could produce.
+ */
+/** A yyyy-mm-dd input's value as DD/MM/YYYY, or "" when unset. */
+function formatDate(raw: string): string {
+  const [y, m, d] = raw.split("-");
+  return y && m && d ? `${d}/${m}/${y}` : "";
+}
+
+/**
+ * The campaign's date range for the Review step (CF-19).
+ *
+ * Dates and audience were collected and then never shown back, so Review could
+ * not be used to check them. Either end can be blank, and `handleLaunch`
+ * substitutes today and today+30, so this states what will actually be used
+ * rather than leaving a gap. DD/MM/YYYY, per the house convention.
+ */
+function formatRange(start: string, end: string): string {
+  const from = formatDate(start);
+  const to = formatDate(end);
+  if (from && to) return `${from} – ${to}`;
+  if (from) return `${from} – 30 days later`;
+  if (to) return `Today – ${to}`;
+  return "Today – 30 days later";
+}
+
+function parseBudget(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return 0;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(value * 100) / 100;
+}
 
 /* Red ring for a control whose Field is showing an error. */
 const invalidClass = "border-red-400 hover:border-red-400 focus:border-red-500 focus:ring-red-500/20";
@@ -46,8 +104,12 @@ const FIELD_IDS: { key: ErrorKey; id: string }[] = [
   { key: "budgetUsd", id: "campaign-budget" },
 ];
 
-export default function NewCampaignPage() {
+function NewCampaignForm() {
   const router = useRouter();
+  const { activeId } = useActiveClient();
+  // CF-14: "Use Template" sends the template id here; nothing used to read it,
+  // so the form opened blank.
+  const templateId = useSearchParams().get("template");
   const [step, setStep] = useState(1);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
@@ -56,9 +118,22 @@ export default function NewCampaignPage() {
   const [campaignName, setCampaignName] = useState("");
   const [objective, setObjective] = useState("");
   const [channels, setChannels] = useState<string[]>(["linkedin", "twitter"]);
+  // The default pair above is a suggestion, not a choice — a template may
+  // replace it, but never a selection the user actually made (CF-14). A ref,
+  // not state: it is read once inside the template effect and must not be a
+  // dependency of it, or ticking a channel would re-run the prefill.
+  const channelsTouched = useRef(false);
+  const [templateName, setTemplateName] = useState<string | null>(null);
   const [targetAudience, setTargetAudience] = useState("");
   const [keyMessages, setKeyMessages] = useState("");
-  const [budgetUsd, setBudgetUsd] = useState(0);
+  /*
+   * CF-18: held as the raw string, not a number.
+   *
+   * With `useState(0)` the field rendered "0", so typing into it produced
+   * "0500". An empty field is empty — it means "no budget set", which is not the
+   * same as zero — and only becomes a number on submit.
+   */
+  const [budgetInput, setBudgetInput] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [additionalContext, setAdditionalContext] = useState("");
@@ -71,7 +146,54 @@ export default function NewCampaignPage() {
     api.getClients().then((res) => setClients(res.items)).catch(() => {});
   }, []);
 
+  // CF-10: start on the client the top-nav switcher is pointing at. The picker
+  // opened empty, so the switcher's choice had to be made a second time here.
+  // Only seeds the empty field — it must never overwrite a deliberate pick, and
+  // `activeId` changing under a half-filled form should not move the campaign to
+  // another client.
+  useEffect(() => {
+    if (activeId) setClientId((current) => current || activeId);
+  }, [activeId]);
+
+  /*
+   * CF-14: fill the form from the template behind ?template=<id>.
+   *
+   * "Use Template" navigated here with the id in the query string and nothing
+   * read it, so the form opened blank and the template was decorative. The
+   * template's own name, objective, channels and key messages are applied.
+   *
+   * Only empty fields are filled, so arriving with a half-typed form — or
+   * hitting the back button — does not discard what was typed. The objective is
+   * the template's `objective_template`, which carries [PRODUCT]/[AUDIENCE]
+   * placeholders on purpose: they mark what the user still has to say, and
+   * filling them in with a guess is exactly what product rule 4 forbids.
+   */
+  useEffect(() => {
+    if (!templateId) return;
+    let cancelled = false;
+    api
+      .getTemplate(templateId)
+      .then((t) => {
+        if (cancelled) return;
+        setCampaignName((current) => current || t.name);
+        setObjective((current) => current || t.objective_template || "");
+        if (t.channels?.length && !channelsTouched.current) setChannels(t.channels);
+        const messages = (t.content_directives?.key_messages ?? null) as unknown;
+        if (Array.isArray(messages) && messages.length) {
+          setKeyMessages((current) => current || messages.filter((m) => typeof m === "string").join("\n"));
+        }
+        setTemplateName(t.name);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error("That template could not be loaded — starting from a blank brief.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [templateId]);
+
   function toggleChannel(ch: string) {
+    channelsTouched.current = true;
     setChannels((prev) =>
       prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]
     );
@@ -90,13 +212,19 @@ export default function NewCampaignPage() {
     else if (goal.length < 10) brief.objective = "Say a little more — at least 10 characters.";
 
     const setup: Errors = {};
-    if (channels.length === 0) setup.channels = "Pick at least one channel.";
+    // Ad networks alone are not a campaign: the Content agent writes posts for
+    // the organic channels, and a brief of "Google Ads only" would produce
+    // social posts for an ad network (CF-04).
+    if (!channels.some((c) => CHANNEL_OPTIONS.some((o) => o.id === c)))
+      setup.channels = "Pick at least one channel.";
     if (startDate && endDate && endDate < startDate)
       setup.endDate = "End date must be on or after the start date.";
-    if (!Number.isFinite(budgetUsd) || budgetUsd < 0) setup.budgetUsd = "Budget cannot be negative.";
+    const budget = parseBudget(budgetInput);
+    if (budget === null) setup.budgetUsd = "Enter a number, or leave it blank.";
+    else if (budget < 0) setup.budgetUsd = "Budget cannot be negative.";
 
     return { 1: brief, 2: setup, 3: {} };
-  }, [clientId, campaignName, objective, channels, startDate, endDate, budgetUsd]);
+  }, [clientId, campaignName, objective, channels, startDate, endDate, budgetInput]);
 
   const errors = attempted[step] ? stepErrors[step] : {};
 
@@ -117,6 +245,9 @@ export default function NewCampaignPage() {
       return;
     }
     setStep(target);
+    // CF-19: each step is a full card, so advancing left the user part-way down
+    // the next one with its first field off-screen.
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleLaunch() {
@@ -137,7 +268,7 @@ export default function NewCampaignPage() {
         channels,
         target_audience: targetAudience,
         key_messages: keyMessages.split("\n").filter(Boolean),
-        budget_usd: budgetUsd,
+        budget_usd: parseBudget(budgetInput) ?? 0,
         start_date: startDate || new Date().toISOString().split("T")[0],
         end_date: endDate || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
         additional_context: additionalContext,
@@ -210,6 +341,15 @@ export default function NewCampaignPage() {
       {/* Step 1: Brief */}
       {step === 1 && (
         <SectionCard key="step-1" eyebrow="The brief" bodyClassName="space-y-5">
+          {/* CF-14: say where the prefilled values came from, and that they are
+              a starting point rather than something already decided. */}
+          {templateName && (
+            <p className="rounded-lg border border-line bg-canvas/40 px-3 py-2 text-xs text-muted">
+              Started from the <span className="font-medium text-ink">{templateName}</span> template.
+              Everything below is editable — the placeholders in square brackets are for you to
+              replace.
+            </p>
+          )}
           <Field label="Client *" htmlFor="campaign-client" error={errors.clientId}>
             <Select
               id="campaign-client"
@@ -228,6 +368,7 @@ export default function NewCampaignPage() {
           <Field label="Campaign Name *" htmlFor="campaign-name" error={errors.campaignName}>
             <Input
               id="campaign-name"
+              autoComplete="off"
               value={campaignName}
               onChange={(e) => setCampaignName(e.target.value)}
               placeholder="Q2 Product Launch Campaign"
@@ -239,6 +380,7 @@ export default function NewCampaignPage() {
           <Field label="Campaign Objective *" htmlFor="campaign-objective" error={errors.objective}>
             <Textarea
               id="campaign-objective"
+              autoComplete="off"
               value={objective}
               onChange={(e) => setObjective(e.target.value)}
               rows={3}
@@ -251,6 +393,7 @@ export default function NewCampaignPage() {
           <Field label="Target Audience" htmlFor="campaign-audience">
             <Input
               id="campaign-audience"
+              autoComplete="off"
               value={targetAudience}
               onChange={(e) => setTargetAudience(e.target.value)}
               placeholder="Tech-savvy professionals, 25-45, interested in productivity tools"
@@ -259,6 +402,7 @@ export default function NewCampaignPage() {
           <Field label="Key Messages (one per line)" htmlFor="campaign-messages">
             <Textarea
               id="campaign-messages"
+              autoComplete="off"
               value={keyMessages}
               onChange={(e) => setKeyMessages(e.target.value)}
               rows={3}
@@ -328,6 +472,48 @@ export default function NewCampaignPage() {
               </p>
             )}
           </div>
+
+          {/* CF-04: paid ads are a separate spend decision, so they are their own
+              opt-in. Nothing here is created in an ad account — only copy. */}
+          <div role="group" aria-label="Paid ads">
+            <p className="mb-2 text-xs font-medium text-muted">Paid ads (optional)</p>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {AD_CHANNEL_OPTIONS.map((ch) => {
+                const on = channels.includes(ch.id);
+                return (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleChannel(ch.id)}
+                    className={cn(
+                      "press-scale flex items-center gap-2.5 rounded-lg border p-3 text-left text-sm font-medium transition-colors duration-200",
+                      on
+                        ? "border-accent bg-accent/10 text-ink shadow-[0_0_0_1px_rgb(var(--c-accent)/0.35)]"
+                        : "border-line bg-canvas/40 text-muted hover:border-slate-300 hover:text-ink"
+                    )}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                        on ? "border-accent bg-accent text-on-accent" : "border-slate-300"
+                      )}
+                    >
+                      {on && <Check className="h-3 w-3" />}
+                    </span>
+                    <span aria-hidden className="text-base leading-none">{ch.emoji}</span>
+                    {ch.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2.5 text-xs text-muted">
+              Tick one to have the Ad Copy agent draft headline and description variants for it.
+              Leave them all off and no ad copy is written. CampaignForge never creates an ad
+              campaign or spends a budget — it writes copy for you to use.
+            </p>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Start Date" htmlFor="campaign-start">
               <Input id="campaign-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
@@ -350,8 +536,10 @@ export default function NewCampaignPage() {
               id="campaign-budget"
               type="number"
               min={0}
-              value={budgetUsd}
-              onChange={(e) => setBudgetUsd(Number(e.target.value))}
+              step="0.01"
+              inputMode="decimal"
+              value={budgetInput}
+              onChange={(e) => setBudgetInput(e.target.value)}
               placeholder="5000"
               aria-invalid={Boolean(errors.budgetUsd)}
               aria-describedby={errors.budgetUsd ? "campaign-budget-error" : undefined}
@@ -377,8 +565,10 @@ export default function NewCampaignPage() {
             {[
               ["Client", clients.find((c) => c.id === clientId)?.brand_name],
               ["Campaign", campaignName],
-              ["Channels", channels.join(", ")],
-              ["Budget", `$${budgetUsd.toLocaleString()}`],
+              ["Channels", channels.map(platformLabel).join(", ")],
+              ["Dates", formatRange(startDate, endDate)],
+              ["Target audience", targetAudience.trim() || "Not set"],
+              ["Budget", parseBudget(budgetInput) ? `$${parseBudget(budgetInput)!.toLocaleString()}` : "Not set"],
             ].map(([label, value]) => (
               <div key={label} className="flex justify-between gap-4 py-2.5">
                 <dt className="text-muted">{label}</dt>
@@ -425,5 +615,17 @@ export default function NewCampaignPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/*
+ * `useSearchParams` needs a Suspense boundary or the whole route opts out of
+ * static rendering and `next build` complains.
+ */
+export default function NewCampaignPage() {
+  return (
+    <Suspense fallback={null}>
+      <NewCampaignForm />
+    </Suspense>
   );
 }

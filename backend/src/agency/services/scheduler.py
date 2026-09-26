@@ -42,6 +42,14 @@ def _merge_metadata(piece: ContentPiece, updates: dict) -> None:
     piece.metadata_ = base
 
 
+def _clear_metadata(piece: ContentPiece, *keys: str) -> None:
+    """Drop keys from a piece's metadata. Used to retire a stale blocked notice."""
+    base = dict(piece.metadata_ or {})
+    for key in keys:
+        base.pop(key, None)
+    piece.metadata_ = base
+
+
 class SchedulerEngine:
     """Publishes content when it comes due, sleeping until then in between.
 
@@ -215,11 +223,37 @@ class SchedulerEngine:
         account = result.scalars().first()
 
         if not account:
+            # CF-01: nothing is wrong with this post, so it does not belong in
+            # Failed. Nothing is connected to publish it *to* — a workspace
+            # configuration gap, which for most orgs means the platform's app
+            # credentials are not set on the server at all and no Connect button
+            # can even be pressed. Marking it failed read as "the copy was
+            # rejected" and buried it in a tab whose only action was Delete.
+            #
+            # It goes back to Approved with the reason recorded, and its schedule
+            # is cleared so the sweep does not pick it up again every minute and
+            # rewrite the same row forever. Reschedule it once an account is
+            # connected.
             logger.warning(
                 "no_platform_account", content_id=str(piece.id), platform=piece.platform
             )
-            piece.status = "failed"
-            _merge_metadata(piece, {"publish_error": "No connected platform account"})
+            piece.status = "approved"
+            piece.scheduled_at = None
+            _merge_metadata(
+                piece,
+                {
+                    "publish_blocked": {
+                        "reason": (
+                            f"No {piece.platform} account is connected for this client, "
+                            "so this post could not go out at its scheduled time. "
+                            "Connect one under Setup › Accounts, then reschedule it."
+                        ),
+                        "code": "no_connected_account",
+                        "platform": piece.platform,
+                        "at": datetime.now(UTC).isoformat(),
+                    }
+                },
+            )
             await db.commit()
             return
 
@@ -255,6 +289,8 @@ class SchedulerEngine:
                     "post_url": pub_result.get("url"),
                 },
             )
+            # A post that went out is neither blocked nor failing.
+            _clear_metadata(piece, "publish_blocked", "publish_error")
             await billing.record_post_published(db, piece.org_id)
         else:
             piece.status = "failed"
@@ -273,6 +309,9 @@ class SchedulerEngine:
 
         piece.status = "scheduled"
         piece.scheduled_at = scheduled_at
+        # Rescheduling is the answer to "nothing was connected", so the notice
+        # must not outlive it and label a queued post as blocked.
+        _clear_metadata(piece, "publish_blocked")
         await db.commit()
         # Recompute the sleep now the queue changed.
         self.notify_scheduled()

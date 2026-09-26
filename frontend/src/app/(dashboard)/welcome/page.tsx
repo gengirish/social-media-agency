@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowRight, CheckCircle2, Home, Link2, Loader2, Lock, Search, TrendingUp, UserPlus, Wand2 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/panel";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
+import { setupApi, type OAuthPlatformStatus } from "@/lib/api-setup";
 import { cn } from "@/lib/utils";
 
 interface Step {
@@ -33,6 +34,26 @@ const HUB_LINKS = [
  */
 export default function WelcomePage() {
   const { clients, active, loading, error, refresh } = useActiveClient();
+
+  // Which platforms have app credentials on this server. `null` means "not
+  // known yet" — see `publishable` below, which treats that as the old
+  // behaviour rather than as "nothing is configured".
+  const [oauth, setOauth] = useState<Record<string, OAuthPlatformStatus> | null>(null);
+  const activeId = active?.id;
+  useEffect(() => {
+    if (!activeId) return;
+    let cancelled = false;
+    setupApi
+      .listAccounts(activeId)
+      .then((res) => !cancelled && setOauth(res.oauth))
+      .catch(() => {
+        // Leave it unknown: a failed check must not tell the user publishing is
+        // unavailable when it may be perfectly well configured.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId]);
 
   if (loading) {
     return (
@@ -77,6 +98,11 @@ export default function WelcomePage() {
   const name = clientLabel(active);
   const profileDone = active.has_brand_profile;
   const accountsDone = active.connected_accounts > 0;
+  // CF-01: with no platform app credentials on the server, every Connect button
+  // under Setup › Accounts is disabled — so "Connect your first account" is a
+  // dead end. `publishable` is false only once we have actually heard back; an
+  // unanswered or failed status check keeps the original wording.
+  const publishable = oauth === null || Object.values(oauth).some((p) => p.configured);
   const postsDone = active.total_posts > 0;
   const allDone = profileDone && accountsDone && postsDone;
   const isReturning = profileDone || accountsDone || postsDone;
@@ -96,9 +122,11 @@ export default function WelcomePage() {
     },
     {
       id: "accounts",
-      label: "Connect social accounts",
-      body: "X, LinkedIn and Facebook publish for real once connected. Nothing goes out without your approval.",
-      cta: accountsDone ? "Manage accounts" : "Connect accounts",
+      label: publishable ? "Connect social accounts" : "Publishing — coming soon",
+      body: publishable
+        ? "X, LinkedIn and Facebook publish for real once connected. Nothing goes out without your approval."
+        : "Publishing isn't switched on for this server yet, so there's nothing to connect. Everything else works — draft, review and approve posts, then copy them out to publish by hand.",
+      cta: accountsDone ? "Manage accounts" : publishable ? "Connect accounts" : "See what's available",
       href: "/setup/accounts",
       done: accountsDone,
       icon: <Link2 className="h-[15px] w-[15px]" />,
@@ -253,9 +281,15 @@ export default function WelcomePage() {
           <Link href="/setup/profile" className={cn(buttonVariants(), "animate-breathe")}>
             Start with the brand profile <ArrowRight className="h-3.5 w-3.5" />
           </Link>
-        ) : !accountsDone ? (
+        ) : !accountsDone && publishable ? (
           <Link href="/setup/accounts" className={cn(buttonVariants(), "animate-breathe")}>
             Connect your first account <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        ) : !accountsDone ? (
+          /* CF-01: with no provider configured, sending them to Setup › Accounts
+             lands on three disabled buttons. Drafting is the real next step. */
+          <Link href="/campaigns/new" className={cn(buttonVariants(), "animate-breathe")}>
+            Generate your first post <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         ) : (
           <Link href="/campaigns/new" className={cn(buttonVariants(), "animate-breathe")}>

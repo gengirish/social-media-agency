@@ -263,6 +263,7 @@ async def test_clerk_demo_org_id_that_does_not_exist_falls_back_to_a_new_owner_o
                 "publish.write",
                 "read",
                 "team.manage",
+                "workspace.manage",
             ],
         ),
         (
@@ -277,6 +278,7 @@ async def test_clerk_demo_org_id_that_does_not_exist_falls_back_to_a_new_owner_o
                 "publish.write",
                 "read",
                 "team.manage",
+                "workspace.manage",
             ],
         ),
         (
@@ -290,6 +292,7 @@ async def test_clerk_demo_org_id_that_does_not_exist_falls_back_to_a_new_owner_o
                 "publish.write",
                 "read",
                 "team.manage",
+                "workspace.manage",
             ],
         ),
         (
@@ -303,6 +306,7 @@ async def test_clerk_demo_org_id_that_does_not_exist_falls_back_to_a_new_owner_o
                 "publish.write",
                 "read",
                 "team.manage",
+                "workspace.manage",
             ],
         ),
         ("member", "business", ["campaign.run", "content.approve", "read"]),

@@ -17,6 +17,46 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.models.tables import BrandProfile, Client
 
+#: Where a client's voice can be recorded, in the order they win (CF-08).
+#:
+#: Three stores accumulated, and each screen happened to read a different one, so
+#: the same client read "Friendly & casual" on Setup › Profile, "Not set" in the
+#: Queue sidebar, "Not configured" on its detail page and blank in Settings.
+#:
+#: They are kept rather than merged because two of them mean different things: a
+#: written guide is prose the generators follow, while the register is one of four
+#: presets a user picks in a second. What was missing is a single answer to "what
+#: is this client's voice?", which :func:`resolve_voice` now is — every screen
+#: renders it, so they cannot disagree again.
+VOICE_SOURCES = ("guide", "register", "tone_register")
+
+
+def resolve_voice(
+    voice_description: str | None,
+    tone_attributes: dict[str, Any] | None,
+    posting_prefs: dict[str, Any] | None,
+) -> tuple[str, str | None]:
+    """This client's voice as one string, and which store it came from.
+
+    Precedence is most-specific-first: the written guide beats a preset, because
+    someone sat down and wrote it. Returns ``("", None)`` when nothing is set, so
+    a caller can render its own empty state rather than a made-up default.
+    """
+    guide = (voice_description or "").strip()
+    if guide:
+        return guide, "guide"
+
+    register = (posting_prefs or {}).get("voice_register")
+    if isinstance(register, str) and register.strip():
+        return register.strip(), "register"
+
+    # The oldest of the three: Setup › Profile's original picker wrote here.
+    tone_register = (tone_attributes or {}).get("register")
+    if isinstance(tone_register, str) and tone_register.strip():
+        return tone_register.strip(), "tone_register"
+
+    return "", None
+
 
 async def get_org_client(db: AsyncSession, client_id: UUID, org_id: UUID) -> Client:
     """The client, or 404 — including when it belongs to another org."""

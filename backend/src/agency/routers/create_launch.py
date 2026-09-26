@@ -54,6 +54,15 @@ class ClientRequest(BaseModel):
     client_id: UUID
 
 
+class PrfaqRequest(BaseModel):
+    client_id: UUID
+    #: What is being launched, in the user's own words (CF-13). Optional, and a
+    #: real source of facts — unlike anything the model supplies, it comes from
+    #: the person who knows. The brand profile alone does not say what the launch
+    #: *is*, which is part of why the stress-test filled that gap itself.
+    note: str = ""
+
+
 class LaunchGenerateRequest(BaseModel):
     client_id: UUID
     mode: LaunchMode
@@ -83,19 +92,24 @@ async def get_prfaq(
 
 @router.post("/prfaq")
 async def run_prfaq(
-    body: ClientRequest,
+    body: PrfaqRequest,
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ) -> dict[str, Any]:
-    """Run (or re-run) the stress-test. Replaces the previous one; charges one generation."""
+    """Run (or re-run) the stress-test. Replaces the previous one; charges one generation.
+
+    ``note`` is optional context about what is being launched. The UI asks for it
+    on the confirm step that now precedes this call (CF-13) — one click used to
+    spend a generation with no warning and no way to say what the launch was.
+    """
     client = await get_org_client(db, body.client_id, org_id)
     await require_brand_profile(db, client, org_id)
     await require_generation_quota(db, org_id)
     brand = await load_brand_context(db, client, org_id)
 
     async def produce() -> Any:
-        return await generate_prfaq(brand)
+        return await generate_prfaq(brand, body.note)
 
     prfaq = await run_generation(
         org_id=org_id, label="prfaq", produce=produce, validate=validate_prfaq

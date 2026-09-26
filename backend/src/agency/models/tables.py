@@ -226,6 +226,11 @@ class Campaign(Base):
     budget = Column(JSONB, default={})
     status = Column(String(30), default="planning")
     agent_plan = Column(JSONB, default={})
+    # Why this campaign failed, when it did: {"error", "error_type", "agents",
+    # "after", "at"}. A failed campaign used to carry no reason at all, so the
+    # list showed four "Failed" cards with nothing to act on (CF-07). Empty {}
+    # for a campaign that has not failed.
+    failure = Column(JSONB, default={})
     tags = Column(JSONB, default=[])
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

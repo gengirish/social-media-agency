@@ -730,6 +730,18 @@ export interface SavedBrandProfile {
   emoji_policy: string | null;
   competitor_differentiation: string | null;
   target_audience: string | null;
+  /**
+   * The one answer to "what is this client's voice?" (CF-08).
+   *
+   * Three stores can hold a voice — the written guide, Settings' posting-prefs
+   * register, and the older `tone_attributes.register` — and each screen used to
+   * read a different one, so one client showed "Friendly & casual", "Not set"
+   * and "Not configured" at the same time. Render this, never a raw column.
+   * Empty string when nothing is set.
+   */
+  effective_voice?: string;
+  /** Which store `effective_voice` came from, or null when none is set. */
+  voice_source?: "guide" | "register" | "tone_register" | null;
 }
 
 /** Mirrors `BrandProfileCreate` — every field has a server-side default. */
@@ -762,7 +774,72 @@ export interface Campaign {
   budget: Record<string, unknown>;
   status: string;
   agent_plan: Record<string, unknown>;
+  /**
+   * Why the run failed, when it did (CF-07). Empty `{}` otherwise, and empty for
+   * campaigns that failed before this was recorded — render
+   * {@link campaignFailureSummary}, which says so rather than inventing a reason.
+   */
+  failure?: CampaignFailure | null;
   created_at: string;
+}
+
+export interface CampaignFailure {
+  error?: string;
+  error_type?: string;
+  /**
+   * The agents the crash is attributable to. Two when a parallel pair (Strategy ∥
+   * SEO, Content ∥ Ad Copy) was in flight and either could have thrown — the
+   * backend reports both rather than guessing.
+   */
+  agents?: string[];
+  /** The last agent that finished, or null if none did. */
+  after?: string | null;
+  at?: string;
+}
+
+/** Display names for the pipeline's nodes. Mirrors AGENT_ORDER in the router. */
+const AGENT_LABELS: Record<string, string> = {
+  orchestrate: "Orchestrator",
+  strategise: "Strategy",
+  seo_research: "SEO",
+  create_content: "Content",
+  write_ads: "Ad Copy",
+  human_review: "Human Review",
+  qa_check: "QA / Brand",
+  compile_output: "Compile",
+  analytics: "Analytics",
+};
+
+export function agentLabel(agent: string): string {
+  return AGENT_LABELS[agent] ?? agent;
+}
+
+/**
+ * A one-line account of why a campaign failed, for the card and the detail page.
+ *
+ * Returns null when the campaign has not failed. A failed campaign with nothing
+ * recorded returns a sentence saying exactly that — these are the runs that
+ * failed before the reason was stored, and claiming to know more would be worse
+ * than admitting the gap.
+ */
+export function campaignFailureSummary(campaign: Campaign): string | null {
+  if (campaign.status !== "failed") return null;
+  const failure = campaign.failure;
+  if (!failure?.error) return "No reason was recorded for this failure.";
+
+  const agents = failure.agents ?? [];
+  let where: string;
+  if (agents.length === 1) {
+    where = `${agentLabel(agents[0])} failed`;
+  } else if (agents.length > 1) {
+    // Either branch could have thrown; say so instead of picking one.
+    where = `${agents.map(agentLabel).join(" or ")} failed`;
+  } else if (failure.after) {
+    where = `Failed after ${agentLabel(failure.after)}`;
+  } else {
+    where = "The run failed";
+  }
+  return `${where}: ${failure.error}`;
 }
 
 export interface CampaignListResponse {
@@ -793,6 +870,69 @@ export interface ReviewSubmittedResponse {
   decision: string;
 }
 
+/** The ad platforms the Ad Copy agent writes for. */
+export type AdPlatform = "google" | "meta" | "linkedin";
+
+/**
+ * One ad variant in the shape its network renders, from
+ * `backend/services/ad_variants.py`. Which keys of `fields` are present depends
+ * on `platform`: Google has `headlines`/`descriptions`, Meta has
+ * `primary_text`/`headline`/`description`, LinkedIn has
+ * `intro_text`/`headline`/`description`.
+ *
+ * Read this rather than `body` when rendering an ad — `body` is the same copy
+ * flattened to labelled text for the generic paths.
+ */
+export interface AdVariant {
+  platform: AdPlatform;
+  variant: number;
+  angle: string;
+  cta: string;
+  target_keyword: string;
+  notes: string;
+  fields: {
+    headlines?: string[];
+    descriptions?: string[];
+    primary_text?: string;
+    intro_text?: string;
+    headline?: string;
+    description?: string;
+  };
+  /** Per-field character limits for this network, for the over-limit hint. */
+  limits: Record<string, number>;
+  /** Required fields that came back empty. */
+  missing: string[];
+  /** True when nothing usable was generated. Such a variant is stored failed. */
+  is_empty: boolean;
+}
+
+/** `content_piece.metadata`, as the API spells it (`metadata_`). */
+export interface ContentMetadata {
+  /** Present on ad variants. */
+  ad?: AdVariant;
+  /** Why a piece is not a usable draft, set when generation fell short. */
+  generation?: {
+    status: "failed" | "incomplete";
+    reason?: string;
+    missing?: string[];
+  };
+  post_url?: string | null;
+  publish_error?: string | null;
+  /**
+   * Why a scheduled post could not go out, when the cause is the workspace
+   * rather than the post (CF-01) — today, no connected account for its platform.
+   * The post is returned to Approved with its schedule cleared, not marked
+   * Failed, and this is cleared when it publishes or is rescheduled.
+   */
+  publish_blocked?: {
+    reason: string;
+    code?: string;
+    platform?: string;
+    at?: string;
+  } | null;
+  [key: string]: unknown;
+}
+
 export interface ContentPiece {
   id: string;
   campaign_id: string | null;
@@ -806,6 +946,31 @@ export interface ContentPiece {
   ai_generated: boolean;
   performance_score: number | null;
   created_at: string;
+  metadata_?: ContentMetadata | null;
+}
+
+/** The structured ad on a piece, or null when it is not an ad variant. */
+export function adVariantOf(piece: Pick<ContentPiece, "metadata_">): AdVariant | null {
+  const ad = piece.metadata_?.ad;
+  return ad && typeof ad === "object" && ad.fields ? ad : null;
+}
+
+/**
+ * Why this piece cannot be approved, or null when it can.
+ *
+ * An ad variant the agent returned empty is stored failed rather than draft, but
+ * older rows predate that and are still drafts with nothing in them — so this
+ * checks the content, not only the status (CF-05).
+ */
+export function unusableReason(piece: Pick<ContentPiece, "metadata_" | "body">): string | null {
+  const generation = piece.metadata_?.generation;
+  if (generation?.status === "failed") {
+    return generation.reason ?? "This item was generated empty.";
+  }
+  const ad = adVariantOf(piece);
+  if (ad?.is_empty) return "The ad copy agent returned no usable copy for this variant.";
+  if (!ad && !piece.body.trim()) return "This item has no content.";
+  return null;
 }
 
 export interface ContentListResponse {
@@ -1272,6 +1437,37 @@ export interface NotificationItem {
 }
 
 // --- Campaign templates ---
+
+/**
+ * The one campaign-template taxonomy (CF-14).
+ *
+ * The filter tabs listed launch / social / awareness / seasonal /
+ * thought-leadership while the seeded rows were categorised recurring / b2b /
+ * events, so "Social" and "Thought Leadership" returned nothing and three
+ * categories had no tab at all. Both ends read this list now — a card's label
+ * and the tab that finds it cannot diverge again.
+ *
+ * Mirrors `db/seed.sql`; a new category goes here and there together.
+ */
+export const TEMPLATE_CATEGORIES = [
+  { id: "launch", label: "Launch" },
+  { id: "social", label: "Social" },
+  { id: "awareness", label: "Awareness" },
+  { id: "thought-leadership", label: "Thought Leadership" },
+  { id: "seasonal", label: "Seasonal" },
+  { id: "events", label: "Events" },
+] as const;
+
+export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number]["id"];
+
+/** A category's display name. An unknown one is title-cased, never dropped. */
+export function templateCategoryLabel(category: string): string {
+  const known = TEMPLATE_CATEGORIES.find((c) => c.id === category);
+  if (known) return known.label;
+  return category
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (l) => l.toUpperCase());
+}
 
 export interface CampaignTemplateSummary {
   id: string;
@@ -1778,11 +1974,6 @@ export type QueueStatus = "draft" | "approved" | "scheduled" | "published" | "fa
 export interface QueuePost extends ContentPiece {
   scheduled_at?: string | null;
   published_at?: string | null;
-  metadata_?: {
-    post_url?: string | null;
-    publish_error?: string | null;
-    [key: string]: unknown;
-  } | null;
 }
 
 export interface QueueListResponse {
@@ -1813,6 +2004,19 @@ export function apiErrorCode(err: unknown): string | null {
   return d && typeof d === "object" && typeof d.code === "string" ? d.code : null;
 }
 
+/**
+ * `detail.message` of a structured API error, or null.
+ *
+ * The server words these for the reader — a plan limit says which plan, what the
+ * limit is and what to do about it — so showing it beats re-inventing the
+ * sentence on each screen.
+ */
+export function apiErrorMessage(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  const d = err.detail as { message?: unknown } | null;
+  return d && typeof d === "object" && typeof d.message === "string" ? d.message : null;
+}
+
 /** Issues carried by a `409 moderation_flagged`; empty for anything else. */
 export function moderationIssues(err: unknown): ModerationIssue[] {
   if (apiErrorCode(err) !== "moderation_flagged") return [];
@@ -1841,6 +2045,17 @@ export const postsApi = {
   /** Runs moderation first. 409 `moderation_flagged` unless `override`. */
   approve: (id: string, override = false) =>
     request<ApproveResult>(`/api/v1/content/${id}/approve${override ? "?override=true" : ""}`, {
+      method: "POST",
+    }),
+
+  /**
+   * Send a post whose publish failed back to `approved`, ready to try again.
+   *
+   * Moderation runs again — a failed post can be edited, so the text may not be
+   * the text that was approved. 409 `not_failed` if it is not a failed post.
+   */
+  retry: (id: string, override = false) =>
+    request<ApproveResult>(`/api/v1/content/${id}/retry${override ? "?override=true" : ""}`, {
       method: "POST",
     }),
 
@@ -1957,4 +2172,39 @@ export const amplifyApi = {
       body: JSON.stringify({ atoms }),
     }),
   packs: (clientId?: string) => request<{ items: AmplifyPack[] }>(`/api/v1/amplify/packs${qs({ client_id: clientId })}`),
+  /** One pack, with the drafts it queued and a per-platform breakdown (CF-15). */
+  pack: (packId: string) => request<AmplifyPackDetail>(`/api/v1/amplify/packs/${packId}`),
 };
+
+/**
+ * What became of one platform in a pack.
+ *
+ * `not_kept` and `not_generated` are distinguishable only from the pack's
+ * counts, because atoms are never persisted — `commit` writes the kept ones to
+ * `content_piece` and the rest are gone. Where the counts cannot tell them
+ * apart, the backend says `not_kept` and `dropped_count` gives the UI enough to
+ * word it honestly.
+ */
+export type AmplifyPlatformStatus = "queued" | "not_kept" | "not_generated";
+
+export interface AmplifyPackPost {
+  id: string;
+  platform: string;
+  angle: string | null;
+  status: string;
+  title: string;
+  excerpt: string | null;
+}
+
+export interface AmplifyPackDetail {
+  id: string;
+  client_id: string;
+  platforms: string[];
+  atom_count: number;
+  committed_count: number;
+  created_at: string | null;
+  posts: AmplifyPackPost[];
+  platform_breakdown: { platform: string; status: AmplifyPlatformStatus }[];
+  dropped_count: number;
+  unqueued_platforms: string[];
+}

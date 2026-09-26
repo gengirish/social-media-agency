@@ -15,6 +15,7 @@ timestamped by the column that records when it happened:
 - ``profile.updated`` ← ``brand_profile.updated_at``
 - ``asset.created`` ← ``creative_asset.created_at``
 - ``pack.generated`` ← ``repurpose_pack.created_at``
+- ``prfaq.generated`` ← ``client.settings["prfaq"].generated_at``
 - ``campaign.created`` ← ``campaign.created_at``
 - anything in ``audit_log`` whose ``details.client_id`` is this client.
 
@@ -164,6 +165,21 @@ async def client_activity(
     ).scalar_one_or_none()
     if bp is not None:
         add(bp.updated_at or bp.created_at, "profile.updated", "Brand profile saved", str(bp.id))
+
+    # CF-13: a stress-test run spends a generation, and nothing recorded that it
+    # happened. Derived like everything else here — the stored critique carries
+    # its own `generated_at` (routers/create_launch.py).
+    settings: Any = client.settings
+    prfaq = settings.get("prfaq") if isinstance(settings, dict) else None
+    if isinstance(prfaq, dict):
+        # `add` drops anything `_ts` cannot parse, so a malformed timestamp is a
+        # missing entry rather than an error.
+        add(
+            prfaq.get("generated_at"),
+            "prfaq.generated",
+            "PRFAQ stress-test run (1 generation)",
+            "",
+        )
 
     assets = (
         await db.execute(

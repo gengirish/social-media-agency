@@ -482,6 +482,9 @@ async def create_content_row(
     status: str = "draft",
     body: str = "Test body",
     hashtags: list[str] | None = None,
+    content_type: str = "social_post",
+    metadata: dict | None = None,
+    media_urls: list[str] | None = None,
 ) -> UUID:
     from agency.models.tables import ContentPiece
 
@@ -490,13 +493,13 @@ async def create_content_row(
         org_id=org_id,
         client_id=client_id,
         campaign_id=campaign_id,
-        content_type="social_post",
+        content_type=content_type,
         platform=platform,
         title="Test piece",
         body=body,
         hashtags=list(hashtags or []),
-        metadata_={},
-        media_urls=[],
+        metadata_=dict(metadata or {}),
+        media_urls=list(media_urls or []),
         ai_generated=True,
         status=status,
     )

@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,8 @@ from agency.models.tables import Client, PlatformAccount
 from agency.permissions import Capability, require_cap
 from agency.services.oauth_state import InvalidOAuthStateError, sign_state, verify_state
 from agency.utils.encryption import encrypt_token
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
 
@@ -125,9 +128,18 @@ async def get_oauth_url(
     key_attr, _ = PLATFORM_CLIENT_KEYS[platform]
     client_id = getattr(settings, key_attr, "")
     if not client_id:
+        # The variable to set goes to the log, not to the person clicking Connect
+        # (CF-16). ``GET /oauth/providers`` already reports per-platform
+        # ``configured``, which is what the UI branches on.
+        logger.warning(
+            "oauth_platform_not_configured",
+            platform=platform,
+            fix=f"Set {key_attr.upper()} (and its secret) in the backend environment.",
+        )
         raise HTTPException(
             status.HTTP_501_NOT_IMPLEMENTED,
-            f"{platform} OAuth not configured. Set {key_attr.upper()} env var.",
+            f"{platform} sign-in isn't set up on this server yet — an admin needs to "
+            "add its app credentials.",
         )
 
     config = OAUTH_CONFIGS[platform]

@@ -430,3 +430,102 @@ async def list_packs(
             }
         )
     return {"items": items}
+
+
+@router.get("/packs/{pack_id}")
+async def get_pack(
+    pack_id: UUID,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+) -> dict[str, Any]:
+    """One pack, with the drafts it put in the queue, broken down per platform (CF-15).
+
+    A history row could not be opened, so "2 generated · 2 queued" across five
+    platforms was the whole story — there was no way to see which platforms
+    actually produced anything.
+
+    What can honestly be shown is bounded by what is stored. Atoms live only in
+    the preview response: ``commit`` writes the kept ones to ``content_piece``
+    and the rest are never persisted (see ``models/tables.py::RepurposePack``).
+    So a platform falls into one of three states, and the one that cannot be
+    distinguished is reported as such rather than guessed:
+
+    - ``queued``       — a draft exists for it, and is linked here.
+    - ``not_kept``     — the pack committed fewer drafts than it generated, so
+                         something for this platform was dropped at review.
+    - ``not_generated``— the pack generated fewer atoms than it had platforms,
+                         so the model never produced one for it.
+    """
+    pack = (
+        await db.execute(
+            select(RepurposePack).where(
+                RepurposePack.id == pack_id, RepurposePack.org_id == org_id
+            )
+        )
+    ).scalar_one_or_none()
+    if pack is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Pack not found")
+
+    # The drafts this pack committed. `commit` stamps each one with the pack id.
+    pieces = (
+        (
+            await db.execute(
+                select(ContentPiece)
+                .where(
+                    ContentPiece.org_id == org_id,
+                    ContentPiece.metadata_["amplify_pack_id"].astext == str(pack_id),
+                )
+                .order_by(ContentPiece.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    posts = [
+        {
+            "id": str(p.id),
+            "platform": p.platform,
+            "angle": (dict(p.metadata_ or {})).get("angle"),
+            "status": p.status,
+            "title": p.title,
+            "excerpt": (p.body or "").strip().replace("\n", " ")[:160] or None,
+        }
+        for p in pieces
+    ]
+
+    queued_platforms = {str(p.platform) for p in pieces}
+    # `pack.platforms` is a JSONB column; mypy reads the classic Column(...)
+    # declaration as Column[Any], so the runtime list is narrowed explicitly.
+    raw_platforms: Any = pack.platforms
+    platforms: list[str] = [str(p) for p in raw_platforms] if raw_platforms else []
+    # Atoms generated but not kept, spread over the platforms with no draft. The
+    # pack does not record which platform each dropped atom was for.
+    dropped = max((pack.atom_count or 0) - (pack.committed_count or 0), 0)
+    unqueued = [p for p in platforms if p not in queued_platforms]
+
+    breakdown = []
+    for platform in platforms:
+        if platform in queued_platforms:
+            state = "queued"
+        elif dropped > 0:
+            state = "not_kept"
+        else:
+            state = "not_generated"
+        breakdown.append({"platform": platform, "status": state})
+
+    return {
+        "id": str(pack.id),
+        "client_id": str(pack.client_id),
+        "platforms": platforms,
+        "atom_count": pack.atom_count,
+        "committed_count": pack.committed_count,
+        "created_at": pack.created_at.isoformat() if pack.created_at else None,
+        "posts": posts,
+        "platform_breakdown": breakdown,
+        # True when some platforms have no draft and the reason is ambiguous, so
+        # the UI can say "not kept or not generated" instead of picking one.
+        "dropped_count": dropped,
+        "unqueued_platforms": unqueued,
+    }

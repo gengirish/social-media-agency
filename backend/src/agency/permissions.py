@@ -55,6 +55,11 @@ class Capability(StrEnum):
     OAUTH_CONNECT = "oauth.connect"
     TEAM_MANAGE = "team.manage"
     BILLING_MANAGE = "billing.manage"
+    #: Change the shape of the workspace itself rather than the work in it:
+    #: archive or restore a client, mint or revoke an API key, edit workspace
+    #: settings (CF-17). Each of these affects everyone in the org and none is
+    #: part of doing the marketing work, which is what ``member`` is for.
+    WORKSPACE_MANAGE = "workspace.manage"
 
 
 Role = Literal["owner", "admin", "member", "viewer"]
@@ -77,6 +82,7 @@ CAPS: dict[Role, frozenset[Capability]] = {
             Capability.OAUTH_CONNECT,
             Capability.TEAM_MANAGE,
             Capability.BILLING_MANAGE,
+            Capability.WORKSPACE_MANAGE,
         }
     ),
     "admin": frozenset(
@@ -88,6 +94,7 @@ CAPS: dict[Role, frozenset[Capability]] = {
             Capability.CONTENT_OVERRIDE,
             Capability.OAUTH_CONNECT,
             Capability.TEAM_MANAGE,
+            Capability.WORKSPACE_MANAGE,
         }
     ),
     "member": frozenset(

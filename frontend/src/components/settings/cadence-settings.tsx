@@ -28,7 +28,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { api, type Client } from "@/lib/api";
+import { api, type Client, type SavedBrandProfile } from "@/lib/api";
 import type { ClientOverview } from "@/lib/api-foundation";
 import {
   CADENCE_OPTIONS,
@@ -131,6 +131,11 @@ export function PostingTab({ client }: { client: ClientOverview }) {
   const [error, setError] = useState<"load" | "save" | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // CF-08: this screen showed no register selected while Setup › Profile showed
+  // one, because a written brand-voice guide outranks the register and lives in
+  // a different store. Showing what is actually in force stops the two reading
+  // as a contradiction.
+  const [profile, setProfile] = useState<SavedBrandProfile | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -142,6 +147,12 @@ export function PostingTab({ client }: { client: ClientOverview }) {
     } finally {
       setLoading(false);
     }
+    // A client with no brand profile 404s here; that is not an error for this
+    // panel, it just means there is no guide to outrank the register.
+    api
+      .getBrandProfile(client.id)
+      .then(setProfile)
+      .catch(() => setProfile(null));
   }, [client.id]);
 
   useEffect(() => {
@@ -210,6 +221,21 @@ export function PostingTab({ client }: { client: ClientOverview }) {
                   );
                 })}
               </div>
+              {profile?.effective_voice && (
+                <p className="mt-2 text-[11.5px] leading-relaxed text-muted">
+                  {profile.voice_source === "guide" ? (
+                    <>
+                      In force right now: this client&apos;s written{" "}
+                      <Link href="/setup/profile" className="underline hover:text-ink">
+                        brand voice guide
+                      </Link>
+                      , which the generators follow instead of the register above.
+                    </>
+                  ) : (
+                    <>In force right now: {profile.effective_voice}.</>
+                  )}
+                </p>
+              )}
             </div>
 
             <div>

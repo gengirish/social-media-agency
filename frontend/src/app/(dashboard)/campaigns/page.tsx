@@ -2,29 +2,55 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, type Campaign, type Client } from "@/lib/api";
+import { api, campaignFailureSummary, type Campaign, type Client } from "@/lib/api";
+import { platformLabel } from "@/lib/platforms";
+import { clientLabel, useActiveClient } from "@/lib/active-client";
+import { useClientScope, type ClientScope } from "@/lib/client-scope";
+import { useSession } from "@/lib/session";
 import { toast } from "sonner";
-import { Plus, Megaphone, ArrowUpRight } from "lucide-react";
+import { Plus, Megaphone, ArrowUpRight, AlertTriangle } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/panel";
 import { EmptyState, LoadingState } from "@/components/ui/empty-state";
-import { Tag } from "@/components/ui/tabs";
+import { SegmentedTabs, Tag } from "@/components/ui/tabs";
 import { CampaignStatusBadge } from "@/components/ui/campaign-status";
 
 export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
+  // CF-10: this listed every client's campaigns whatever the top-nav switcher
+  // said, which is the one screen in Create that ignored it. Same scope store
+  // as the Queue and Calendar, so the choice carries across.
+  const { active, activeId, loading: clientsLoading } = useActiveClient();
+  const { isPersonal } = useSession();
+  const [scope, setScope] = useClientScope();
+  // A personal account has exactly one client: no "all" to scope to.
+  const clientId = scope === "client" || isPersonal ? activeId : null;
 
   useEffect(() => {
-    Promise.all([api.getCampaigns(), api.getClientsForLookup()])
+    // Wait for the switcher — firing with a null id would fetch every client's
+    // campaigns and then replace them a moment later.
+    if (clientsLoading) return;
+    if (scope === "client" && !isPersonal && !activeId) {
+      setCampaigns([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([api.getCampaigns(clientId ?? undefined), api.getClientsForLookup()])
       .then(([c, cl]) => {
+        if (cancelled) return;
         setCampaigns(c.items);
         setClients(cl);
       })
-      .catch((err) => toast.error(err.message))
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((err) => !cancelled && toast.error(err.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, scope, activeId, isPersonal, clientsLoading]);
 
   if (loading) {
     return <LoadingState label="Loading campaigns" />;
@@ -37,10 +63,23 @@ export default function CampaignsPage() {
         title="Campaigns"
         description="Launch AI-powered marketing campaigns"
         actions={
-          <Link href="/campaigns/new" className={buttonVariants()}>
-            <Plus className="h-4 w-4" />
-            New Campaign
-          </Link>
+          <>
+            {!isPersonal && (
+              <SegmentedTabs
+                label="Campaign scope"
+                items={[
+                  { id: "client" as ClientScope, label: clientLabel(active) },
+                  { id: "all" as ClientScope, label: "All clients" },
+                ]}
+                value={scope}
+                onChange={setScope}
+              />
+            )}
+            <Link href="/campaigns/new" className={buttonVariants()}>
+              <Plus className="h-4 w-4" />
+              New Campaign
+            </Link>
+          </>
         }
       />
 
@@ -80,10 +119,19 @@ export default function CampaignsPage() {
 
                 <p className="mt-3 line-clamp-2 flex-1 text-sm text-muted">{campaign.objective}</p>
 
+                {/* CF-07: a short reason on the card, so a list of failures is
+                    something to act on rather than four identical red badges. */}
+                {campaignFailureSummary(campaign) && (
+                  <p className="mt-2 line-clamp-2 flex items-start gap-1.5 text-xs text-red-700">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                    {campaignFailureSummary(campaign)}
+                  </p>
+                )}
+
                 <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3">
                   <div className="flex flex-wrap gap-1.5">
                     {campaign.channels.map((ch) => (
-                      <Tag key={ch}>{ch}</Tag>
+                      <Tag key={ch}>{platformLabel(ch)}</Tag>
                     ))}
                   </div>
                   <ArrowUpRight className="h-4 w-4 shrink-0 text-muted transition-[color,transform] group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-accent-text" />

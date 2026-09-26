@@ -132,6 +132,10 @@ async def publish_now(
             {
                 "post_id": pub_result.get("post_id"),
                 "post_url": pub_result.get("url"),
+                # A post that went out is no longer blocked or failing. Leaving
+                # either behind would label a live post with a stale warning.
+                "publish_blocked": None,
+                "publish_error": None,
             },
         )
         await billing.record_post_published(db, org_id)

@@ -155,13 +155,17 @@ export default function TeamPage() {
         </form>
       )}
 
-      {/* `services/team.py::check_permission` exists but no route calls it, so a
-          role badge is a label, not a restriction. Say so rather than let the
-          badge imply enforced access control. */}
-      <Notice tone="warning">
-        <span className="font-medium">Roles are not enforced yet.</span> Every member of this
-        organization can currently read and change everything in it — the role shown below is a
-        label only. Invite people accordingly.
+      {/* CF-17: this said roles were not enforced, which stopped being true. The
+          gate is `require_cap` on the routers, driven by the matrix in
+          `backend/permissions.py` — the role is read from the database on every
+          gated request, so a demotion takes effect immediately. Keep this summary
+          in step with that matrix. */}
+      <Notice tone="info">
+        <span className="font-medium">What each role can do.</span> Everyone can see the
+        workspace and draft content. <strong>Member</strong> adds running campaigns and approving
+        posts. <strong>Admin</strong> adds publishing, connecting social accounts, managing the
+        team, and workspace administration — API keys, archiving clients, posting preferences.
+        <strong> Owner</strong> adds billing. A <strong>viewer</strong> can only read.
       </Notice>
 
       <div className="overflow-hidden rounded-xl border border-line bg-panel/70 shadow-soft backdrop-blur-xl">

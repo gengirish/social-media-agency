@@ -24,7 +24,12 @@ PLAN_CONFIG = {
         # tier's packs roughly cover its publishing allowance with room to drop
         # atoms at review. Mirrored in db/migrations/260921_amplify.sql.
         "generations_limit": 10,
-        "features": ["1 client", "5 campaigns/mo", "No publishing"],
+        # CF-11: this said "No publishing" beside a "Published posts 0/30" meter.
+        # The meter was right and the feature line was wrong — nothing gates
+        # publishing by plan, and `posts_limit` above is 30, so a free org can
+        # and does publish. Blocking it to match the copy would take away a
+        # capability real orgs are using; the copy is what was untrue.
+        "features": ["1 client", "5 campaigns/mo", "30 published posts/mo"],
     },
     "starter": {
         "price_id": _s.stripe_price_starter or "price_starter",

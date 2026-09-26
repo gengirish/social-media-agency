@@ -46,12 +46,52 @@ def _brand(brand: dict[str, Any], *, with_campaign: bool = True) -> str:
     return f"## Brand\n{brand_prompt_block({**brand, 'setup': {}})}"
 
 
-def build_prfaq_prompt(brand: dict[str, Any]) -> str:
+#: CF-13 — the stress-test invented people and places.
+#:
+#: A run produced quotes attributed to "co-founder Ananya Rao" and "columnist
+#: Rohan Mehta", neither of whom exists, and placed the company in the wrong
+#: city. The prompt asked the model to write "as if a real tech/industry outlet
+#: wrote about it", which is an invitation to invent the outlet, the journalist
+#: and the executive being quoted.
+#:
+#: A PRFAQ is a draft a human will fill in, so placeholders are the correct
+#: output. Product rule 4: real data or an explicit gap, never a plausible
+#: invention — and an invented name is worse than most, because it reads as
+#: verified and could be published as if it were.
+_NO_INVENTED_FACTS = (
+    "\n\n## Hard rules on facts\n"
+    "This is a draft for a human to complete, not a finished release.\n"
+    "- NEVER invent a person. No named founders, executives, customers, "
+    "analysts or journalists. Use bracketed placeholders instead: "
+    "[Spokesperson name, title], [Customer name, company], [Publication].\n"
+    "- NEVER invent a location, founding date, headcount, funding round, "
+    "customer count, revenue figure or growth statistic. If the brand context "
+    "above does not state it, use a placeholder like [Location] or "
+    "[Metric] — do not guess, and do not pick a plausible-sounding value.\n"
+    "- Quotes are placeholders too: attribute them to [Spokesperson name, "
+    "title], never to a name you have made up.\n"
+    "- Everything you state as fact about this brand must come from the brand "
+    "context above. Anything else is a placeholder.\n"
+)
+
+
+def build_prfaq_prompt(brand: dict[str, Any], note: str = "") -> str:
+    """The stress-test prompt.
+
+    ``note`` is the optional launch note from the confirm step (CF-13): what is
+    actually being launched, which the brand profile alone does not say. It is
+    the user's own words about their own product, so unlike anything the model
+    would otherwise supply it is a legitimate source of facts.
+    """
+    context = f"\n\n## What is being launched\n{note.strip()}\n" if note.strip() else ""
     return (
-        f"{_brand(brand, with_campaign=False)}\n\n"
+        f"{_brand(brand, with_campaign=False)}"
+        f"{context}"
+        f"{_NO_INVENTED_FACTS}\n"
         'You are running an Amazon-style "Working Backwards" PRFAQ stress-test for this brand.\n\n'
-        "Write the press release exactly as if this product already launched and got covered — "
-        "imagine a real tech/industry outlet wrote about it. Then write a customer FAQ (3 "
+        "Write the press release in the form a launch story would take, using the "
+        "placeholders above wherever a name, figure or place would go. Then write a customer "
+        "FAQ (3 "
         "questions "
         "a genuinely skeptical customer would ask) and an internal FAQ (3 tough questions a "
         "co-founder or investor would ask about feasibility, market size, or defensibility).\n\n"
@@ -143,9 +183,9 @@ async def _call(llm: Any, prompt: str) -> Any:
     return parse_llm_json(llm_text(response))
 
 
-async def generate_prfaq(brand: dict[str, Any]) -> Any:
+async def generate_prfaq(brand: dict[str, Any], note: str = "") -> Any:
     llm = get_brain_llm()  # type: ignore[no-untyped-call]  # untyped getter in llm_provider
-    return await _call(llm, build_prfaq_prompt(brand))
+    return await _call(llm, build_prfaq_prompt(brand, note))
 
 
 async def generate_launch_kit(brand: dict[str, Any], prfaq: dict[str, Any] | None) -> Any:
