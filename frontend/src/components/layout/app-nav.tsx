@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, type ComponentType } from "react";
 import { UserButton } from "@clerk/nextjs";
-import { CheckCircle2, Inbox, ListChecks, Menu, Settings, Sparkles, TrendingUp, Wand2, X } from "lucide-react";
+import { CheckCircle2, Inbox, ListChecks, Megaphone, Menu, Settings, Sparkles, TrendingUp, Wand2, X } from "lucide-react";
 import { NotificationsBell } from "@/components/notifications-bell";
 import { ThemeToggle, useTheme } from "@/components/theme";
 import { clerkVariables } from "@/lib/clerk-appearance";
@@ -26,6 +26,7 @@ const ICONS: Record<NavIconName, ComponentType<{ className?: string }>> = {
   setup: Sparkles,
   posts: ListChecks,
   create: Wand2,
+  ads: Megaphone,
   inbox: Inbox,
   insights: TrendingUp,
   settings: Settings,

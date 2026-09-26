@@ -102,6 +102,12 @@ class Organization(Base):
     # capabilities for 'personal'. Every new org starts personal and flips one-way to
     # business on the first team invite or growth-tier purchase.
     account_type = Column(String(20), nullable=False, default="personal", server_default="personal")
+    # How this workspace describes itself: 'product_owner' | 'freelancer' | 'organization'.
+    # Presentation only -- it reshapes the pricing page (which tiers are offered, in what
+    # order, which one is recommended) and nothing else. It grants no capability, changes
+    # no limit and is NOT a plan tier; the subscription row remains the only source of
+    # truth for what an org may do. NULL = never chosen, which shows the full plan grid.
+    workspace_profile = Column(String(24))
     domain = Column(String(255))
     settings = Column(JSONB, default={})
     agentmail_inbox_id = Column(String(255))

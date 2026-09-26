@@ -32,7 +32,7 @@ RootLayout (server) — src/app/layout.tsx
 <!-- verified: 260923 -->
 **Active client.** `ActiveClientProvider` loads `GET /clients/overview` and holds the active client — CampaignForge's version of Cadence's product switcher. Every Create / Posts / Inbox / Insights screen and the client-scoped Settings tabs read `useActiveClient()`; screens call `refresh()` after anything that changes a client's counts. The chosen id is kept in `localStorage` (`cf-active-client`) as a convenience only and re-validated against the org's clients on every load, so a stale or foreign id falls back silently.
 
-**Shell behaviours** (`components/layout/shell-extras.tsx`): number keys `1`–`6` jump to the nav groups in order (Setup, Create, Posts, Inbox, Insights, Settings) and `?` opens the shortcut list — both disabled while typing, with a modifier key held, or with any dialog open. A group pill returns to the last sub-tab visited in that group (`sessionStorage` `cf-last-visited`, per tab).
+**Shell behaviours** (`components/layout/shell-extras.tsx`): number keys `1`–`7` jump to the nav groups in order (Setup, Create, Ads, Posts, Inbox, Insights, Settings) — the binding is by index over the *visible* groups, so it follows `NAV_GROUPS` automatically and `?` opens the shortcut list — both disabled while typing, with a modifier key held, or with any dialog open. A group pill returns to the last sub-tab visited in that group (`sessionStorage` `cf-last-visited`, per tab).
 
 The **left sidebar is gone** (260921). It listed 9 flat links; navigation is now the grouped top bar below. AppNav is rendered inside a `Suspense` boundary because it reads `?tab=` via `useSearchParams`; the fallback renders the same bar path-only.
 
@@ -45,12 +45,14 @@ Defined as data in `src/lib/navigation.ts` (`NAV_GROUPS`) and resolved by `resol
 | # | Group | Sub-tabs → route |
 |---|---|---|
 | 1 | **Setup** | Profile `/setup/profile` · Clients `/clients` · Accounts `/setup/accounts` |
-| 2 | **Create** | Campaigns `/campaigns` · Content `/create/content` · Email `/create/email` · Launch `/create/launch` · Amplify `/amplify` · Ads `/create/ads` · Templates `/templates` |
-| 3 | **Posts** | Queue `/content` · Calendar `/calendar` |
-| 4 | **Inbox** | Inbox `/inbox` |
-| 5 | **Insights** | Analytics `/analytics` |
-| 6 | **Settings** | Workspace `/settings` · Team `/team` · Billing `/pricing` |
+| 2 | **Create** | Campaigns `/campaigns` · Content `/create/content` · Email `/create/email` · Launch `/create/launch` · Amplify `/amplify` |
+| 3 | **Ads** | Ads `/create/ads` · Templates `/templates` |
+| 4 | **Posts** | Queue `/content` · Calendar `/calendar` |
+| 5 | **Inbox** | Inbox `/inbox` |
+| 6 | **Insights** | Analytics `/analytics` |
+| 7 | **Settings** | Workspace `/settings` · Team `/team` · Billing `/pricing` |
 
+- **Ads** became its own group (260925), moving Ads and Templates out of Create. Note that `/templates` holds **campaign** templates, not ad creatives — launching one routes to `/campaigns/new`. It sits under Ads by request; nothing ads-specific was added to it.
 - Group order is also the keyboard-shortcut order. It deliberately differs from Cadence's (Setup, Posts, Create): Create comes before Posts because the Queue is empty until something has been created (commit 70a67a9).
 - A group pill links to the last-visited tab in that group, else its first tab. Sub-tabs render only when the active group has more than one.
 - Setup › Accounts moved from `/settings?tab=platforms` to its own route `/setup/accounts` (260923). `/settings?tab=platforms` still works — it now resolves to the Settings **Accounts** tab, which links to Setup › Accounts.
@@ -154,6 +156,7 @@ H1 is **"Queue"**. Every post waits here for a person. Rebuilt 260923 as Cadence
 - **Filters**: platform (`PlatformFilterRow`) and free-text search (`SearchInput`) over title, body and hashtags.
 - **Generate posts** (`GeneratePostsModal`): one or more platforms + optional context note (≤280) → one `POST /content/generate` per platform, each a Pending draft costing 1 generation. Cancel aborts; the server discards a result whose caller has gone and charges nothing. After a run, **Download report** saves a plain-text run report (`run-report-download`).
 - **Pending card**: inline edit that **autosaves** (debounced `PATCH`, a draft stays a draft); **Regenerate** in place (`POST /content/{id}/regenerate`); **Creative brief** for a designer (`POST /content/{id}/creative-brief`, shown on the card — no image is generated); **Approve** → `POST /content/{id}/approve`, where a 409 `moderation_flagged` opens `ModerationWarning` (edit primary, **Approve anyway** secondary).
+- **Visual generation is not wired up in the Queue.** Beside the creative brief, Instagram cards show **Create image** and **Short video** as disabled buttons tagged "Soon" (`ComingSoonAction` in `post-card.tsx`). Worth knowing before picking that up: `POST /content/{id}/generate-image` already exists and works (`services/image_generation.py`, fal.ai, live when `FAL_API_KEY` is set — it appends to `content_piece.media_urls`). What is missing is the UI, quota accounting, and any rendering of `media_urls` on the card. Short-video generation has no backend at all.
 - **Approved / Scheduled cards**: edits are **not** autosaved — saving text sends the post back to Pending, so the edit is held on this device (`localStorage`) until an explicit "Save & send back to Pending". **Schedule** / **Reschedule** (`ScheduleDialog`), **Publish now** (`PublishConfirm`). Overdue scheduled posts get an overdue label. Instagram/TikTok: Schedule and Publish now disabled with the reason (`lib/platforms.ts`).
 - **Published cards**: published time + link to the live post when `metadata_.post_url` exists. Cannot be deleted (server 409 `published_locked`).
 - **Failed cards**: the platform's `metadata_.publish_error`, or "The platform did not return a reason." Still **no retry action**.
@@ -215,13 +218,18 @@ Workspace-wide tabs that predate the port:
 
 Not replicated from Cadence: **Reset workspace data** (destructive, and a workspace here holds many clients).
 
-### Templates `/templates` — Create › Templates
+### Templates `/templates` — Ads › Templates
 **File**: `src/app/(dashboard)/templates/page.tsx` | **Client**
-H1 "Campaign Templates". Category filter, template cards, **Use Template** launch flow.
+H1 "Campaign Templates". Category filter, template cards, **Use Template** launch flow. Despite living under Ads, these are `campaign_template` rows and **Use Template** routes to `/campaigns/new` — there is no ad-creative template library.
 
 ### Pricing `/pricing` — Settings › Billing
 **File**: `src/app/(dashboard)/pricing/page.tsx` | **Client**
-4-tier pricing display, current plan badge, upgrade via Stripe Checkout. Plan copy is hardcoded in the page.
+A **workspace-profile picker** (Product owner / Freelancer / Agency) above the plan grid, then the plans that profile is offered — 2–4 of Free, Starter, Growth, Agency — with the recommended one highlighted, a current-plan badge, and upgrade via Stripe Checkout.
+
+- The set and order of plans comes from `GET /billing/plans`; only the per-tier name/price/subtitle copy is hardcoded (`TIER_COPY`, a lookup keyed by tier, not the list).
+- **A profile never changes a price.** All profiles bill against the same `PLAN_CONFIG` amounts and Stripe price IDs — see [billing.md › Workspace profile](billing.md#workspace-profile-pricing-shaping).
+- Your current plan is always shown even when the profile would not offer it; an unset or unrecognised profile shows the full four-tier grid.
+- The picker needs `billing.manage`; without it the cards are disabled and the footnote says to ask a billing admin.
 
 ### Team `/team` — Settings › Team
 **File**: `src/app/(dashboard)/team/page.tsx` | **Client**

@@ -4,6 +4,18 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260925 — Workspace profile shapes pricing; Ads gets its own nav group
+
+- **Added**: `organization.workspace_profile` (`product_owner` | `freelancer` | `organization`, nullable) and `WORKSPACE_PROFILES` in `services/billing.py`. `/pricing` now opens with a "Which of these are you?" picker; choosing one filters and reorders the plan grid and marks one tier "Best for you". **Prices are untouched** — all profiles bill against the same four `PLAN_CONFIG` amounts and the same Stripe price IDs, so no new Stripe products were created. Endpoints: `GET`/`PUT /api/v1/billing/workspace-profile` (`PUT` needs `billing.manage`), and `GET /billing/plans` now returns the shaped list plus `all_plans`, `profile` and `profiles`.
+  - Deliberately **not** `organization.account_type`: that is a one-way flip driving `permissions.py`, and merging them would let a pricing-page click move someone's permissions. The profile grants nothing.
+  - Two fail-open invariants, both tested in `tests/test_workspace_profile.py`: the org's current tier is always shown even when its profile would not offer it, and an unrecognised stored value falls back to the full grid.
+  - **Needs `db/migrations/260925_workspace_profile.sql` run on Neon** before deploy — without it `/billing/plans` fails with `UndefinedColumn` and the pricing page cannot load.
+- **Changed**: **Ads** is now its own top-level nav group (position 3, keyboard `3`), holding Ads `/create/ads` and Templates `/templates`, both moved out of Create. Shortcuts are `1`–`7`; the binding was already by index over the visible groups, so nothing else changed. Note `/templates` still holds **campaign** templates — **Use Template** routes to `/campaigns/new`. It sits under Ads by request; no ad-creative template library exists.
+- **Changed**: the three looping UI animations were slowed — `breathe` 3s → 5s (the glow on primary CTAs), `pulse-dot` 1.5s → 2.4s (live status dots, intake cursor), `ring-pulse` 1.8s → 3s (connected-account ring). Single-source edits in `tailwind.config.ts`.
+- **Added**: **Create image** and **Short video** on Instagram Queue cards, beside **Get creative brief**, both disabled and tagged "Soon". Image generation does already exist server-side (`POST /content/{id}/generate-image`, fal.ai, live with `FAL_API_KEY`); what it lacks is UI, quota accounting and any rendering of `media_urls` on the card. Short-video generation has no backend.
+
+---
+
 ## 260925 — Team invite emails never sent
 
 Invites created accounts and mailed nothing. Three independent causes, stacked, each one silent:

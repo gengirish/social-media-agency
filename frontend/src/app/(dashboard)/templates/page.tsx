@@ -20,9 +20,16 @@ interface Template {
   is_public: boolean;
 }
 
-// CF-14: one taxonomy, shared with the card labels and db/seed.sql. The tabs
-// used to list categories no template had, so "Social" and "Thought Leadership"
-// always came back empty, while Recurring, B2B and Events had no tab at all.
+/*
+ * NOTE ON PLACEMENT: this tab lives in the **Ads** nav group (260925, by request),
+ * but these are CAMPAIGN templates (`campaign_template` rows) -- Use Template fills
+ * the campaign form and routes to /campaigns/new, not the Ads generator. Nothing
+ * ads-specific was invented for it; there is no ad-creative template library.
+ *
+ * CF-14: one taxonomy, shared with the card labels and db/seed.sql. The tabs
+ * used to list categories no template had, so "Social" and "Thought Leadership"
+ * always came back empty, while Recurring, B2B and Events had no tab at all.
+ */
 const CATEGORIES = ["all", ...TEMPLATE_CATEGORIES.map((c) => c.id)];
 
 export default function TemplatesPage() {
@@ -61,7 +68,7 @@ export default function TemplatesPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        eyebrow="Create"
+        eyebrow="Ads"
         title="Campaign Templates"
         description="Start faster with pre-built campaign templates"
       />

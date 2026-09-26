@@ -12,6 +12,12 @@ PostgreSQL (Neon serverless) via SQLAlchemy async. **24 tables** (23 without pgv
 > 3. `db/migrations/260923_inbox.sql` — creates `inbox_item_state`. Without it `/api/v1/inbox` fails with `UndefinedTable`.
 >
 > All three are additive and safe to re-run (`IF NOT EXISTS`). `db/init.sql` already carries them for fresh databases.
+>
+> ### Pending Neon migration (260925)
+>
+> 4. `db/migrations/260925_workspace_profile.sql` — adds `organization.workspace_profile`
+>    (nullable, CHECK-constrained). Without it `GET /api/v1/billing/plans` fails with
+>    `UndefinedColumn` and the pricing page cannot load. Independent of 1–3.
 
 **File**: `backend/src/agency/models/tables.py`
 
