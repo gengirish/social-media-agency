@@ -8,7 +8,8 @@
  *
  * Deliberately not ported: Cadence's "Reset this product's data" (destructive,
  * and there is no undo on the server) and its simulated connect/upgrade flows —
- * Accounts links to the real OAuth screen, Plan links to the real Stripe pricing.
+ * Accounts links to the real OAuth screen, Plan links to the real pricing page
+ * and to the Dodo Payments customer portal.
  */
 
 import { useCallback, useEffect, useState, type ComponentType } from "react";
@@ -16,6 +17,7 @@ import Link from "next/link";
 import {
   AlertTriangle,
   CheckCircle2,
+  CreditCard,
   FileText,
   Layers,
   Link2,
@@ -28,7 +30,13 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { api, type Client, type SavedBrandProfile } from "@/lib/api";
+import {
+  api,
+  apiErrorStatus,
+  type Client,
+  type SavedBrandProfile,
+  type SubscriptionStatus,
+} from "@/lib/api";
 import type { ClientOverview } from "@/lib/api-foundation";
 import {
   CADENCE_OPTIONS,
@@ -287,7 +295,9 @@ export function PostingTab({ client }: { client: ClientOverview }) {
 
 interface Usage {
   plan_tier: string;
-  status?: string;
+  status?: SubscriptionStatus;
+  /** Whether a Dodo customer portal exists for this org. See `hasPortal` below. */
+  has_billing_customer?: boolean;
   generations_used?: number;
   generations_limit?: number;
   posts_used?: number;
@@ -295,9 +305,25 @@ interface Usage {
   features?: string[];
 }
 
+/*
+ * Recoverable payment states. Dodo keeps retrying and the plan is still live, so
+ * this is the one problem the customer can fix without talking to us — as long as
+ * they can see it. Everything else (cancelled, expired, failed) is either already
+ * settled or not actionable from here.
+ */
+const PAYMENT_FAILED_STATUSES = ["on_hold", "past_due"];
+
 export function PlanTab() {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [error, setError] = useState(false);
+  const [portalBusy, setPortalBusy] = useState(false);
+  const [portalError, setPortalError] = useState(false);
+  /*
+   * A 409 means this org has no Dodo customer at all (it never checked out), so
+   * there is nothing to manage. Hide the entry point instead of leaving a button
+   * that can only fail.
+   */
+  const [portalUnavailable, setPortalUnavailable] = useState(false);
 
   const load = useCallback(() => {
     setError(false);
@@ -309,13 +335,43 @@ export function PlanTab() {
 
   useEffect(load, [load]);
 
+  const openPortal = useCallback(async () => {
+    setPortalBusy(true);
+    setPortalError(false);
+    try {
+      const { portal_url } = await api.createPortalSession();
+      if (!portal_url) throw new Error("no portal url");
+      window.location.href = portal_url;
+    } catch (err) {
+      if (apiErrorStatus(err) === 409) setPortalUnavailable(true);
+      else setPortalError(true);
+      setPortalBusy(false);
+    }
+  }, []);
+
   if (error) return <ErrorBanner message="Couldn't load your plan." onRetry={load} />;
   if (!usage) return <LoadingState className="h-40" />;
 
   const genKnown = usage.generations_used != null && usage.generations_limit != null;
+  // Free workspaces have never been billed, so they have no portal to open.
+  // The server says whether a portal exists; the tier is only a fallback for a
+  // response predating that field. Gating on the tier alone hid the button from
+  // orgs that cancelled down to free but still have a customer id.
+  const hasPortal =
+    usage.has_billing_customer ?? usage.plan_tier !== "free";
+  const canManageBilling = hasPortal && !portalUnavailable;
+  const paymentFailed = usage.status != null && PAYMENT_FAILED_STATUSES.includes(usage.status);
+
   return (
     <SectionCard eyebrow="Plan & usage" title={`${usage.plan_tier.charAt(0).toUpperCase()}${usage.plan_tier.slice(1)} plan`}>
-      <div className="mb-4 rounded-xl border border-line bg-canvas/40 p-5">
+      {paymentFailed && (
+        <ErrorBanner
+          message="Your last payment failed — update your card to keep publishing."
+          onRetry={canManageBilling ? () => void openPortal() : undefined}
+          retryLabel="Update payment method"
+        />
+      )}
+      <div className={cn("mb-4 rounded-xl border border-line bg-canvas/40 p-5", paymentFailed && "mt-3")}>
         {genKnown ? (
           <>
             <div className="flex items-baseline gap-2">
@@ -347,9 +403,23 @@ export function PlanTab() {
           ))}
         </ul>
       )}
-      <Link href="/pricing" className={cn(buttonVariants({ variant: "secondary" }), "mt-5")}>
-        Compare plans
-      </Link>
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <Link href="/pricing" className={cn(buttonVariants({ variant: "secondary" }))}>
+          Compare plans
+        </Link>
+        {canManageBilling && (
+          <Button variant="secondary" onClick={() => void openPortal()} disabled={portalBusy}>
+            {portalBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+            Manage billing
+          </Button>
+        )}
+      </div>
+      {canManageBilling && (
+        <p className="mt-2 text-[11.5px] leading-relaxed text-muted">
+          Card details, invoices and plan changes are handled in the Dodo Payments portal.
+        </p>
+      )}
+      {portalError && <ErrorBanner message="Couldn't open the billing portal." onRetry={() => void openPortal()} />}
     </SectionCard>
   );
 }

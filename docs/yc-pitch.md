@@ -86,7 +86,7 @@ Single-prompt tools can't replicate this feedback loop.
 
 - **Campaign Pipeline** — Brief → Orchestrator → [Strategy ∥ SEO] → [Content ∥ Ads] → Human Review → QA → Analytics → Publish
 - **Real-time SSE streaming** — Watch each agent work live in the dashboard
-- **Stripe billing** — 4 tiers with campaign quota enforcement
+- **Subscription billing (Dodo Payments)** — 4 tiers, with campaign, post and generation quotas enforced in the product today. The metering is live; the payment rail is built and tested but **not yet switched on in production** — no keys are provisioned and no customer has been charged. We have not tried to sell yet
 - **OAuth platform connections** — X, LinkedIn, Meta
 - **White-label client portal** — Agencies rebrand as their own
 - **Template marketplace** — Community campaign templates (fork, publish, launch)
@@ -158,7 +158,7 @@ A re-meter to client workspaces with unlimited seats is queued as P1-7 in the ha
 | AI Brain | Claude Sonnet (orchestrator, QA) | Anthropic |
 | AI Workers | Gemini 2.5 Flash (content, strategy) | Google |
 | LLM resilience | 6 providers with per-tier automatic failover | — |
-| Payments | Stripe (subscriptions + signature-verified webhooks) | — |
+| Payments | Dodo Payments — merchant of record; subscriptions, customer portal, signature-verified idempotent webhooks. Built and tested, **not yet enabled in production** | — |
 | Email | AgentMail | — |
 | Images | fal.ai (flux/schnell) | — |
 | CI/CD | GitHub Actions, Playwright E2E | — |

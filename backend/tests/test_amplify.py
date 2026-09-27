@@ -443,18 +443,46 @@ async def test_subscription_endpoint_reports_generations(client, org, session_fa
     assert data["generations_limit"] == 50  # starter
 
 
-async def test_invoice_paid_resets_generations(db, session_factory):
-    from agency.services.billing import billing
+async def test_subscription_renewed_resets_generations(db, session_factory):
+    """Dodo emits no ``invoice.paid`` — ``subscription.renewed`` is the only
+    signal that a new billing period has been paid for.
+
+    Miss it and every paying org's Amplify quota never resets: they pay and then
+    402 for the rest of the year. This is the single worst failure mode in the
+    Stripe -> Dodo swap, so the event is driven through ``handle_webhook`` end to
+    end (claim included) rather than by calling the handler directly.
+    """
+    from agency.services.billing import PLAN_CONFIG, billing
 
     org_id = await create_org(session_factory)
     await create_subscription(
-        session_factory, org_id, generations_used=7, stripe_customer_id="cus_amp"
+        session_factory,
+        org_id,
+        plan_tier="starter",
+        generations_used=7,
+        billing_customer_id="cus_amp",
     )
     result = await billing.handle_webhook(
-        db, {"type": "invoice.paid", "data": {"object": {"customer": "cus_amp"}}}
+        db,
+        {
+            "type": "subscription.renewed",
+            "data": {
+                "subscription_id": "sub_amp",
+                "product_id": PLAN_CONFIG["starter"]["product_id"],
+                "customer": {"customer_id": "cus_amp"},
+                "metadata": {"org_id": str(org_id)},
+                "status": "active",
+            },
+        },
+        "wh_amp_renewed",
     )
     assert result["status"] == "usage_reset"
-    assert (await _sub(session_factory, org_id)).generations_used == 0
+
+    sub = await _sub(session_factory, org_id)
+    assert sub.generations_used == 0
+    # The renewal pays for the same plan — it must not re-tier or re-limit.
+    assert sub.plan_tier == "starter"
+    assert sub.generations_limit == PLAN_CONFIG["starter"]["generations_limit"]
 
 
 def test_every_tier_has_a_generation_limit():

@@ -1,5 +1,11 @@
 # CampaignForge AI — Competitive Analysis & GTM
 
+> **Pricing superseded 260926.** Paid tiers are now $20 / $36 / $168 (20% under
+> Metricool's USD monthly list, anchored on brand-count parity). The analysis below
+> reasons about the previous $49 / $149 / $399 ladder and has NOT been re-run against
+> the new numbers. Its conclusions about segment and price floor should be re-read with
+> that in mind -- see the PLAN_CONFIG comment in services/billing.py for the anchor.
+
 <!-- created: 260817 -->
 
 **Bottom line:** the product was built for agencies, the pricing was built for agencies, and the homepage attacks agencies. Fixing that contradiction is the highest-leverage GTM move available and costs nothing but a rewrite.
@@ -164,7 +170,7 @@ Capital is real but concentrating on category leaders with a defined buyer, not 
 1. ~~Which plan limits are authoritative?~~ **Resolved 260817:** `billing.py` is authoritative; `yc-pitch.md` §8 corrected to match. Pricing page and feature docs were already in sync.
 2. Any design partners already lined up, or does recruiting start from zero?
 3. Is the export-first wedge acceptable, or must Instagram publishing (P1-2) ship before selling?
-4. Stripe or Razorpay as the launch rail? The proposed re-metering (P1-7) touches whichever it is.
+4. ~~Stripe or Razorpay as the launch rail?~~ **Resolved 260925: Dodo Payments**, replacing Stripe outright — merchant of record, so VAT/GST, invoices and receipts are theirs. The proposed re-metering (P1-7) now means re-pricing the three Dodo products, which is dashboard work plus the `DODO_PRODUCT_*` ids and `PLAN_CONFIG` display amounts kept in step.
 5. Does dropping Agency from $399 to $349 conflict with any price already quoted? P1-7 is blocked on this.
 6. No competitor churn, CAC or conversion benchmarks are included — none were verifiable from a public source. Those need a paid data source or partner interviews, not an estimate.
 

@@ -63,7 +63,7 @@ Defined as data in `src/lib/navigation.ts` (`NAV_GROUPS`) and resolved by `resol
 
 ### Root `/` — Marketing Landing Page
 **File**: `src/app/page.tsx` | **Server Component**
-Public marketing site in the Cadence look. Static markup with two client islands: `AuthCta` (session-aware buttons) and `ThemeToggle`. Sections: hero, How it works, the 7-agent pipeline, features, pricing (monthly only — no annual toggle, because there are no annual Stripe prices), closing CTA.
+Public marketing site in the Cadence look. Static markup with two client islands: `AuthCta` (session-aware buttons) and `ThemeToggle`. Sections: hero, How it works, the 7-agent pipeline, features, pricing (monthly only — no annual toggle, because there are no annual Dodo products), closing CTA.
 
 The placeholder logo strip and testimonials flagged in the 260817 stub audit are **gone**.
 
@@ -207,7 +207,7 @@ Cadence tabs, per **active client**:
 - **Client profile** (`profile`): client details and brand-profile status, with links to edit the client and the brand profile
 - **Connected accounts** (`accounts`): summary + link to Setup › Accounts (the real OAuth screen; not duplicated)
 - **Posting preferences** (`posting`): voice register (4 Cadence options) and cadence (3 / 5 / 7 / 14 posts a week) → `PUT /workspace/posting-prefs`; fed to every generator
-- **Plan & usage** (`plan`): AI generations and published posts used vs limit, with an upgrade link (workspace-wide)
+- **Plan & usage** (`plan`): AI generations and published posts used vs limit, with an upgrade link (workspace-wide). <!-- verified: 260925 --> Also a **Manage billing** button (`POST /billing/portal` → the Dodo customer portal, where cancelling, card changes and invoices live) and an `on_hold` banner when the last renewal payment failed — the one billing state a customer can fix themselves. Both are inert until Dodo is provisioned in production
 - **Activity log** (`activity`): last 50 events derived from real rows (`GET /workspace/activity`)
 - **Export** (`export`): download everything stored for the client as JSON (`GET /workspace/export`; analytics `settings-export`)
 
@@ -224,10 +224,10 @@ H1 "Campaign Templates". Category filter, template cards, **Use Template** launc
 
 ### Pricing `/pricing` — Settings › Billing
 **File**: `src/app/(dashboard)/pricing/page.tsx` | **Client**
-A **workspace-profile picker** (Product owner / Freelancer / Agency) above the plan grid, then the plans that profile is offered — 2–4 of Free, Starter, Growth, Agency — with the recommended one highlighted, a current-plan badge, and upgrade via Stripe Checkout.
+A **workspace-profile picker** (Product owner / Freelancer / Agency) above the plan grid, then the plans that profile is offered — 2–4 of Free, Starter, Growth, Agency — with the recommended one highlighted, a current-plan badge, and upgrade via Dodo Payments checkout.
 
 - The set and order of plans comes from `GET /billing/plans`; only the per-tier name/price/subtitle copy is hardcoded (`TIER_COPY`, a lookup keyed by tier, not the list).
-- **A profile never changes a price.** All profiles bill against the same `PLAN_CONFIG` amounts and Stripe price IDs — see [billing.md › Workspace profile](billing.md#workspace-profile-pricing-shaping).
+- **A profile never changes a price.** All profiles bill against the same `PLAN_CONFIG` amounts and Dodo product IDs — see [billing.md › Workspace profile](billing.md#workspace-profile-pricing-shaping).
 - Your current plan is always shown even when the profile would not offer it; an unset or unrecognised profile shows the full four-tier grid.
 - The picker needs `billing.manage`; without it the cards are disabled and the footnote says to ask a billing admin.
 

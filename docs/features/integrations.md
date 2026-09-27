@@ -28,11 +28,23 @@ Publishing is triggered via `POST /api/v1/publishing/{content_id}/publish` or au
 
 **Metrics caveat:** the live analytics path still runs through `services/analytics_fetcher.py`, which persists all-zero snapshots. `services/platform_metrics.py` holds the real fetchers but has no callers yet — "Meta (Facebook & Instagram)" as a headline capability claim currently overstates Instagram on both publish and metrics.
 
-## Stripe
-**Status**: [LIVE]
+## Dodo Payments
+**Status**: [IN PROGRESS] — implemented, **not yet live**
 **File**: `backend/src/agency/services/billing.py`
 
-Checkout sessions, webhook processing, subscription lifecycle. See [billing.md](billing.md).
+Checkout sessions, customer portal, signature-verified webhooks, subscription lifecycle.
+Replaced Stripe outright on 260925 — there is no second provider. See [billing.md](billing.md).
+
+Dodo is **merchant of record**: VAT/GST, invoices and receipts are theirs, not ours.
+
+**Nothing is provisioned in production.** No `DODO_*` secret is set on Fly and no live
+catalogue exists, so no checkout can complete today — the same was true of the Stripe path
+it replaced. Dependency: `dodopayments[webhooks]>=1.117.0` (the extra is what makes
+signature verification importable), used through the **async** client.
+
+Env vars: `DODO_API_KEY`, `DODO_WEBHOOK_KEY`, `DODO_ENVIRONMENT` (`test_mode` | `live_mode`,
+defaults to `test_mode`), `DODO_PRODUCT_STARTER`, `DODO_PRODUCT_GROWTH`,
+`DODO_PRODUCT_AGENCY`.
 
 ## AgentMail
 **Status**: [LIVE]

@@ -259,7 +259,7 @@ Every agent: add `Depends(require_cap(...))` to the listed routes, add the test 
 | 2A | `routers/oauth.py` | `GET /{platform}/authorize`, `POST /{platform}/callback`, `DELETE /{platform}/{account_id}` → `oauth.connect` | `tests/test_gate_oauth.py` |
 | 2B | `routers/publishing.py` | `POST /{content_id}/publish` (`publish_now`, line 49), `POST /{content_id}/schedule` (line 148) → `publish.write` | `tests/test_gate_publishing.py` |
 | 2C | `routers/content.py` | `POST /{content_id}/approve` (line 466) → `content.approve`; the `?override=true` branch → `content.override`, checked **inside** the handler after the flag is read | `tests/test_gate_content.py` |
-| 2D | `routers/team.py` + `routers/billing.py` | `POST /team/invite`, `PATCH /team/{user_id}/role` → `team.manage`; `POST /billing/checkout` → `billing.manage`. `POST /billing/webhook` is Stripe-authenticated — **leave it ungated** | `tests/test_gate_team_billing.py` |
+| 2D | `routers/team.py` + `routers/billing.py` | `POST /team/invite`, `PATCH /team/{user_id}/role` → `team.manage`; `POST /billing/checkout` and (since 260925) `POST /billing/portal` → `billing.manage`. `POST /billing/webhook` is provider-authenticated — Dodo's Standard Webhooks signature since 260925, Stripe's before — **leave it ungated** | `tests/test_gate_team_billing.py` |
 | 2E | `routers/campaigns.py` + `routers/amplify.py` | `POST /campaigns`, `POST /{campaign_id}/rerun` (line 208), `POST /campaigns/autonomous`, `PATCH /{campaign_id}/review` → `campaign.run`; `POST /amplify/preview`, `POST /amplify/{pack_id}/commit` → `campaign.run` | `tests/test_gate_campaigns.py` |
 
 Notes for **2C**: the override branch must 403 for `member` while the plain approve succeeds —

@@ -1,18 +1,20 @@
 # Feature Documentation
-<!-- verified: 260923 -->
+<!-- verified: 260925 -->
 
 Living documentation of all platform features. Updated whenever the codebase changes.
 
 ## Quick Stats
 - **API Endpoints**: 133 across 35 routers (all mounted under `/api/v1`) — 260923 added 10 routers / 42 endpoints
-- **Database Tables**: 24 (`creative_asset`, `inbox_item_state` added 260923)
+- **Database Tables**: 25 (`creative_asset`, `inbox_item_state` added 260923; `billing_webhook_event` added 260925)
 - **Services**: 44 modules in `services/`
 - **Background Workers**: 3 asyncio tasks (no Celery; there is no `workers/` package)
 - **Frontend Pages**: 26 `page.tsx` files
 - **Frontend Components**: 15 `ui/` primitive files + feature folders (`layout/`, `posts/`, `amplify/`, `clients/`, `setup/`, `create-content/`, `create-kits/`, `ads/`, `inbox/`, `insights/`, `settings/`, `agents/`, `landing/`) + app-level components; lib modules incl. 8 per-feature `api-*.ts` wrappers and `active-client.tsx`
-- **Platform Integrations**: 8 (Clerk, Stripe, AgentMail, Social publishing + Inbox reading, LLM, fal.ai, Slack, Exa)
+- **Platform Integrations**: 8 (Clerk, Dodo Payments, AgentMail, Social publishing + Inbox reading, LLM, fal.ai, Slack, Exa)
 - **LangGraph Nodes**: 9 (7 LLM agents + `human_review` + `compile_output`)
 - **Agent Modules**: 19 (7 graph agents + 12 standalone: `autonomous_operator`, `competitive_intel`, `video_script`, `amplify`, and 260923's `post_writer`, `setup_profile`, `create_content`, `lifecycle_email`, `launch_pr`, `ads`, `advocacy`, `inbox_reply`)
+
+> **Before deploying the Dodo Payments swap (260925):** run `db/migrations/260925_dodo_billing.sql` by hand on Neon, and set `DODO_API_KEY`, `DODO_WEBHOOK_KEY`, `DODO_ENVIRONMENT`, `DODO_PRODUCT_STARTER`, `DODO_PRODUCT_GROWTH`, `DODO_PRODUCT_AGENCY` and `FRONTEND_URL` as Fly secrets. Until then **billing is implemented but not live** — no checkout can complete. The five `STRIPE_*` vars are gone.
 
 > **Before deploying `feat/cadence-parity`:** run `db/migrations/260923_creative_asset.sql`, then `260923_amplify_asset_source.sql`, then `260923_inbox.sql` by hand on Neon ([database-schema.md](database-schema.md#database-schema)). New optional env vars: `LINKEDIN_INBOX_SCOPE` (blank until the LinkedIn app is approved for comment reading), `LINKEDIN_API_VERSION` (default `202608`) — both in `.env.example` / `backend/.env.example`.
 
@@ -21,15 +23,15 @@ Living documentation of all platform features. Updated whenever the codebase cha
 | Document | Description | Last Updated |
 |----------|-------------|-------------|
 | [api-endpoints.md](api-endpoints.md) | All 133 REST API endpoints, approval gate, Amplify, generator contract, Setup, Post Studio, Create, Inbox, Insights, Workspace, OAuth | 260923 |
-| [database-schema.md](database-schema.md) | 24 tables, columns, relationships, pending Neon migrations | 260923 |
+| [database-schema.md](database-schema.md) | 25 tables, columns, relationships, pending Neon migrations | 260925 |
 | [services.md](services.md) | Business logic services, moderation, shared generator services, inbox, insights | 260923 |
 | [workers.md](workers.md) | Asyncio background tasks | 260817 |
-| [integrations.md](integrations.md) | Social publishing + Inbox reading, Stripe, Clerk, AgentMail, LLM, fal.ai, Slack, Exa | 260923 |
+| [integrations.md](integrations.md) | Social publishing + Inbox reading, Dodo Payments, Clerk, AgentMail, LLM, fal.ai, Slack, Exa | 260925 |
 | [websocket.md](websocket.md) | SSE real-time agent streaming (no WebSocket) | 260921 |
 | [frontend-pages.md](frontend-pages.md) | 26 UI pages, top-nav IA + shortcuts, active client, Welcome, Setup, Create, Queue/Calendar, Inbox, Insights, Settings | 260923 |
 | [frontend-components.md](frontend-components.md) | Design system, `ui/` primitives, shell, feature components, lib + `api-*` modules | 260923 |
 | [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, roles, multi-tenancy, portal, OAuth state | 260923 |
-| [billing.md](billing.md) | Stripe billing, 4 plan tiers, shared generation quota | 260923 |
+| [billing.md](billing.md) | Dodo Payments billing (implemented, not yet live), 4 plan tiers, shared generation quota | 260925 |
 | [changelog.md](changelog.md) | Chronological change log | 260923 |
 
 ## Feature Honesty
@@ -42,6 +44,7 @@ Remaining gaps — all surfaced honestly to the user:
 
 | Feature | Where | Reality | How the user is told |
 |---------|-------|---------|----------------------|
+| Paid plans / checkout | `services/billing.py`, `/pricing` | Dodo Payments is implemented in code but **no `DODO_*` secret is set in production** and no live catalogue exists — nobody has ever checked out, on Dodo or on the Stripe path before it | Not flagged in the UI: upgrade buttons are live and would fail at the Dodo call. Fix before inviting beta users to pay |
 | Instagram publishing | `services/publishing.py` (T2.1) | Not implemented | Publish button replaced by "Publishing unavailable" badge; API returns `success: false` |
 | TikTok publishing | no publisher exists | Not implemented | "draft only" badge on channel picker and repurpose targets |
 | Instagram metrics | `services/platform_metrics.py` (T2.2) | Returns `unavailable` | Content analytics shows the unavailable reason |

@@ -8,8 +8,9 @@ Three things are under test, and they are not independent:
 2. **`billing.manage` on checkout — owner only.** `admin` holds `team.manage`
    but not `billing.manage`; the admin row is the one that proves the matrix is
    actually consulted rather than a coarse "is staff" check. `POST
-   /billing/webhook` stays ungated: Stripe authenticates with a signature and
-   sends no user, so a gate there would strand every subscription change.
+   /billing/webhook` stays ungated: Dodo authenticates with a Standard Webhooks
+   signature and sends no user, so a gate there would strand every subscription
+   change.
 3. **The account-type flip.** A new org is `personal`; the first successful
    invite makes it `business`, one way, in the invite's own transaction. The
    round trip is asserted end-to-end in
@@ -30,7 +31,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-import stripe
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -277,21 +277,23 @@ async def test_owner_can_start_checkout(
     session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stripe is stubbed — what is asserted is that the request reaches it."""
+    """Dodo is stubbed — what is asserted is that the request reaches it."""
+    from agency.services.billing import billing as billing_service
+
     org_id = await create_org(session_factory, "Payer")
     await create_subscription(session_factory, org_id, plan_tier="free")
     headers = await auth_for(session_factory, org_id, "owner")
 
+    async def _create_session(**kwargs: Any) -> Any:
+        return types.SimpleNamespace(
+            session_id="cs_test", checkout_url="https://dodo.test/c/cs_test"
+        )
+
     monkeypatch.setattr(
-        stripe.Customer,
-        "create",
-        lambda **kwargs: types.SimpleNamespace(id="cus_test"),
-    )
-    monkeypatch.setattr(
-        stripe.checkout.Session,
-        "create",
-        lambda **kwargs: types.SimpleNamespace(
-            id="cs_test", url="https://stripe.test/checkout/cs_test"
+        billing_service,
+        "client",
+        lambda: types.SimpleNamespace(
+            checkout_sessions=types.SimpleNamespace(create=_create_session)
         ),
     )
 
@@ -300,52 +302,80 @@ async def test_owner_can_start_checkout(
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["checkout_url"] == "https://stripe.test/checkout/cs_test"
+    assert response.json()["checkout_url"] == "https://dodo.test/c/cs_test"
 
 
 # ---------------------------------------------------------------------------
 # POST /billing/webhook  →  ungated, on purpose
 # ---------------------------------------------------------------------------
-async def test_stripe_webhook_works_with_no_user_at_all(
+def _stub_dodo_webhook(
+    monkeypatch: pytest.MonkeyPatch, event: dict[str, Any] | None, *, raises: bool = False
+) -> None:
+    """Point the ungated route at a fake Dodo client and a configured key.
+
+    ``unwrap`` is sync even on the async client (it is pure HMAC, no I/O), so
+    the stub is a plain function — awaiting it would raise on a ``str``.
+    """
+    from agency.config import get_settings
+    from agency.routers import billing as billing_router
+    from agency.services.billing import billing as billing_service
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "dodo_webhook_key", "whsec_test", raising=False)
+    monkeypatch.setattr(billing_router, "get_settings", lambda: settings)
+
+    def _unwrap(payload: str, *, headers: dict[str, str], key: str) -> Any:
+        if raises:
+            raise ValueError("signature mismatch")
+        return types.SimpleNamespace(model_dump=lambda mode="json": event)
+
+    monkeypatch.setattr(
+        billing_service,
+        "client",
+        lambda: types.SimpleNamespace(webhooks=types.SimpleNamespace(unwrap=_unwrap)),
+    )
+
+
+_SIGNED_HEADERS = {
+    "webhook-id": "msg_gate_test",
+    "webhook-signature": "v1,deadbeef",
+    "webhook-timestamp": "1790000000",
+}
+
+
+async def test_dodo_webhook_works_with_no_user_at_all(
     client: AsyncClient,
     session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No Authorization header, no org on the request — and it must still land.
 
-    Stripe does not send a bearer token; it signs the body. Gating this route
-    would 403 every callback and silently strand every subscription change, so
-    the test sends nothing but a signature header.
+    Dodo does not send a bearer token; it signs the body with the Standard
+    Webhooks headers. Gating this route would 403 every callback and silently
+    strand every subscription change, so the test sends nothing but signature
+    headers.
     """
-    from agency.config import get_settings
-    from agency.routers import billing as billing_router
     from agency.services.billing import PLAN_CONFIG
 
     org_id = await create_org(session_factory, "Webhooked")
     await create_subscription(session_factory, org_id, plan_tier="free")
 
-    settings = get_settings()
-    monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_test", raising=False)
-    monkeypatch.setattr(billing_router, "get_settings", lambda: settings)
-    monkeypatch.setattr(
-        stripe.Webhook,
-        "construct_event",
-        lambda payload, sig, secret: {
-            "type": "checkout.session.completed",
+    _stub_dodo_webhook(
+        monkeypatch,
+        {
+            "type": "subscription.active",
             "data": {
-                "object": {
-                    "metadata": {"org_id": str(org_id), "plan_tier": "growth"},
-                    "subscription": "sub_hook",
-                    "customer": "cus_hook",
-                }
+                "metadata": {"org_id": str(org_id), "plan_tier": "growth"},
+                "product_id": PLAN_CONFIG["growth"]["product_id"],
+                "subscription_id": "sub_hook",
+                "customer": {"customer_id": "cus_hook"},
+                "status": "active",
             },
         },
     )
 
     response = await client.post(
-        "/api/v1/billing/webhook",
-        content=b"{}",
-        headers={"stripe-signature": "t=1,v1=deadbeef"},
+        "/api/v1/billing/webhook", content=b"{}", headers=_SIGNED_HEADERS
     )
 
     assert response.status_code == 200, response.text
@@ -363,6 +393,61 @@ async def test_stripe_webhook_works_with_no_user_at_all(
         ).scalar_one()
         assert sub.plan_tier == "growth"
         assert sub.clients_limit == PLAN_CONFIG["growth"]["clients_limit"]
+
+
+async def test_bad_webhook_signature_is_401_and_writes_nothing(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The route is ungated, so the signature *is* the authentication.
+
+    401 rather than a retryable 5xx, no detail about which part failed, and — the
+    part that matters — no entitlement change and no idempotency claim, so a
+    forged body cannot upgrade an org or burn a real delivery's ``webhook-id``.
+    """
+    from sqlalchemy import func, select
+
+    from agency.models.tables import BillingWebhookEvent, Subscription
+
+    org_id = await create_org(session_factory, "Forged")
+    await create_subscription(session_factory, org_id, plan_tier="free")
+
+    _stub_dodo_webhook(monkeypatch, None, raises=True)
+
+    response = await client.post(
+        "/api/v1/billing/webhook",
+        content=b'{"type": "subscription.active"}',
+        headers=_SIGNED_HEADERS,
+    )
+
+    assert response.status_code == 401, response.text
+
+    async with session_factory() as session:
+        sub = (
+            await session.execute(
+                select(Subscription).where(Subscription.org_id == org_id)
+            )
+        ).scalar_one()
+        assert sub.plan_tier == "free"
+        claims = (
+            await session.execute(select(func.count()).select_from(BillingWebhookEvent))
+        ).scalar_one()
+        assert claims == 0
+
+
+async def test_webhook_without_signature_headers_is_rejected(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing headers must not fall through to an unverified body."""
+    _stub_dodo_webhook(monkeypatch, {"type": "subscription.active", "data": {}})
+
+    response = await client.post("/api/v1/billing/webhook", content=b"{}")
+
+    assert response.status_code == 400, response.text
+
 
 
 # ---------------------------------------------------------------------------

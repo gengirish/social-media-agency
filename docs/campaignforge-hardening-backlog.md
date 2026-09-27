@@ -1,5 +1,11 @@
 # CampaignForge AI — Pre-Launch Hardening Backlog
 
+> **Pricing superseded 260926.** Paid tiers are now $20 / $36 / $168 (20% under
+> Metricool's USD monthly list, anchored on brand-count parity). The analysis below
+> reasons about the previous $49 / $149 / $399 ladder and has NOT been re-run against
+> the new numbers. Its conclusions about segment and price floor should be re-read with
+> that in mind -- see the PLAN_CONFIG comment in services/billing.py for the anchor.
+
 <!-- created: 260701 -->
 
 **Goal:** Move CampaignForge from "impressive MVP skeleton" to "sellable, trustworthy SaaS."
@@ -7,7 +13,7 @@
 **Sequencing rule:** Do P0 before charging anyone. P1 before public launch. P2 = post-launch.
 
 ## Verdict recap
-- **Real & working:** LangGraph 7-agent pipeline, LLM routing, content generation, X/LinkedIn/FB publishing, Stripe billing, fal.ai images, SSE dashboard, multi-tenant + Clerk.
+- **Real & working:** LangGraph 7-agent pipeline, LLM routing, content generation, X/LinkedIn/FB publishing, subscription billing (Stripe then; **Dodo Payments since 260925**, and never provisioned in production under either), fal.ai images, SSE dashboard, multi-tenant + Clerk.
 - **Hollow:** analytics metrics (returns zeros), trends (hardcoded), RAG (keyword not vector), Instagram publish, webhooks, competitive intel, landing-page social proof.
 - **Biggest risk:** ~3 test files for 83 endpoints / 20 services.
 
@@ -28,15 +34,16 @@ Legend — Effort: S ≤1d · M 2–4d · L 1–2wk. Impact: 🔴 critical · �
 ### P0-2 · Test the money + tenancy paths 🔴 · L
 **Problem:** Near-zero coverage on billing, quota, and tenant isolation — the paths where bugs = lost revenue or cross-tenant data leaks.
 **Do:**
-- Stripe webhook handlers (checkout.completed, invoice.paid, subscription.deleted/updated) with signature verification.
+- Billing webhook handlers with signature verification. **Retargeted 260925** to Dodo Payments: `subscription.active` / `.renewed` / `.plan_changed` / `.cancelled` / `.expired` / `.failed`, `refund.succeeded`, `dispute.lost` — plus the two guards the Stripe path never had (a redelivered `subscription.renewed` must reset usage once; an out-of-order `subscription.active` must not resurrect a cancelled plan).
 - Quota enforcement (402 on limit) + usage reset on new period.
 - Tenant isolation middleware: assert org A can never read org B's clients/content/campaigns.
 **Acceptance:** ≥40–50% coverage on `services/billing.py`, `middleware/tenant.py`, and campaign/content routers; a cross-tenant access test exists and passes (denies).
 
-### P0-3 · Stripe webhook signature verification 🔴 · S — ✅ VERIFIED IMPLEMENTED 260817
-**Problem:** Confirm `handle_webhook` validates `Stripe-Signature`. Unverified webhooks = anyone can grant themselves a paid plan.
-**Finding:** already correct in `routers/billing.py`. Missing secret → 503 (fails closed); missing `stripe-signature` header → 400; `stripe.Webhook.construct_event` runs against the **raw** body via `await request.body()`; `ValueError` → 400, `SignatureVerificationError` → 400. Only verified events reach `billing.handle_webhook()`.
-**Acceptance:** met in code. **Caveat:** the regression test asserting it (`tests/test_billing.py`) does not currently run — blocked on P0-2's missing conftest fixtures. Verification is real but unguarded against future regression.
+### P0-3 · Billing webhook signature verification 🔴 · S — ✅ VERIFIED IMPLEMENTED 260817 · **re-established on Dodo 260925**
+**Problem:** Confirm `handle_webhook` validates the provider signature. Unverified webhooks = anyone can grant themselves a paid plan.
+**Finding (260817, Stripe):** already correct in `routers/billing.py` — missing secret → 503 (fails closed); missing `stripe-signature` → 400; `construct_event` against the **raw** body.
+**Re-verified 260925 (Dodo Payments):** same shape, Standard Webhooks spec. Missing `DODO_WEBHOOK_KEY` → 503; missing or bad `webhook-id` / `webhook-signature` / `webhook-timestamp` → 401; `client.webhooks.unwrap()` runs against the raw body from `await request.body()`. Only verified events reach `billing.handle_webhook()`, and the route stays ungated by design.
+**Acceptance:** met in code.
 
 ### P0-4 · Hide or label all stubs 🔴 · M
 **Problem:** Selling faked features (trends, webhooks, Instagram, competitive intel, RAG-as-vector) is a trust/legal risk.
@@ -87,7 +94,7 @@ Legend — Effort: S ≤1d · M 2–4d · L 1–2wk. Impact: 🔴 critical · �
 **Problem:** `README.md` said 36 endpoints/8 agents/15 tables; feature docs said 83/11/17. Both were wrong.
 **Verified actual:** 82 endpoints · 24 routers · 18 tables · 23 services · 17 pages · 9 LangGraph nodes.
 **Done:** all 12 `docs/features/*.md` + `README.md` + `yc-pitch.md` corrected and restamped `verified: 260817`. Added a `[STUB]` label and Feature Honesty table so P0-4's "looks real but isn't" list is at least *documented* — note this does **not** close P0-4, which requires the UI itself to stop presenting stubs as working.
-**Also corrected:** `services.md` plan limits contradicted `PLAN_CONFIG` and `billing.md`; `platform_metrics.py` was undocumented; Stripe webhook signature verification was already implemented (see P0-3 below).
+**Also corrected:** `services.md` plan limits contradicted `PLAN_CONFIG` and `billing.md`; `platform_metrics.py` was undocumented; billing webhook signature verification was already implemented (see P0-3 below).
 **Acceptance:** met — counts match a fresh grep of the codebase.
 
 ---
@@ -111,4 +118,4 @@ Legend — Effort: S ≤1d · M 2–4d · L 1–2wk. Impact: 🔴 critical · �
 ## Open questions
 1. ~~Target ICP confirmed as small agencies (white-label), or self-serve solo marketers?~~ **Resolved 260817:** small agencies + freelancers managing 3–15 client brands. Wedge sits *above* the scheduler (export-first), so P0-1 analytics and P1-2 Instagram are no longer launch blockers for the first cohort.
 2. Any design partners already lined up (needed for P1-1 real proof)?
-3. Is Razorpay (used elsewhere in your stack) or Stripe the intended payment rail for launch? README/billing assume Stripe.
+3. ~~Is Razorpay or Stripe the intended payment rail for launch?~~ **Resolved 260925: neither — Dodo Payments**, chosen as merchant of record so VAT/GST, invoices and receipts are handled for us. Stripe is removed entirely. See [dodo-payments-plan-260925.md](dodo-payments-plan-260925.md).

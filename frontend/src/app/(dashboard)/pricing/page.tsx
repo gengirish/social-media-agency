@@ -24,7 +24,7 @@ import { LoadingState } from "@/components/ui/empty-state";
  * this map is a lookup, never the list. A tier the server returns that is
  * missing here still renders, from its own PLAN_CONFIG fields.
  *
- * Prices are the real Stripe amounts and do not vary by profile: a profile
+ * Prices are the real Dodo Payments amounts and do not vary by profile: a profile
  * chooses which of these four plans you are offered, not what they cost.
  */
 const TIER_COPY: Record<string, { name: string; price: string; subtitle: string; features: string[] }> = {
@@ -36,7 +36,7 @@ const TIER_COPY: Record<string, { name: string; price: string; subtitle: string;
   },
   starter: {
     name: "Starter",
-    price: "$49",
+    price: "$20",
     subtitle: "per month",
     // "Email reports" removed 260817 — no report is ever emailed; reports are
     // generated on request in the dashboard.
@@ -44,7 +44,7 @@ const TIER_COPY: Record<string, { name: string; price: string; subtitle: string;
   },
   growth: {
     name: "Growth",
-    price: "$149",
+    price: "$36",
     subtitle: "per month",
     // "Team (3 seats)" removed 260817 — no seat limit is defined or enforced
     // anywhere; team members are unlimited on every paid tier today.
@@ -59,7 +59,7 @@ const TIER_COPY: Record<string, { name: string; price: string; subtitle: string;
   },
   agency: {
     name: "Agency",
-    price: "$399",
+    price: "$168",
     subtitle: "per month",
     features: [
       "Unlimited clients",
@@ -76,7 +76,7 @@ function titleCase(tier: string) {
   return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
 
-/** Dollars from the Stripe amount in cents, for a tier this page has no copy for. */
+/** Dollars from the plan amount in cents, for a tier this page has no copy for. */
 function priceFrom(plan: Plan) {
   if (plan.amount == null) return "—";
   return `$${Math.round(plan.amount / 100)}`;
