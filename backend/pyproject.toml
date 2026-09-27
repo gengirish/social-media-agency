@@ -8,7 +8,10 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
-    "sqlalchemy[asyncio]>=2.0.36",
+    # Pinned below 2.1: it tightened Result/ScalarResult typing, so every
+    # `x = await db.execute(...)` needs an explicit annotation (14 errors
+    # across the gated modules). Lift once those are annotated.
+    "sqlalchemy[asyncio]>=2.0.36,<2.1",
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
     "python-jose[cryptography]>=3.3.0",
