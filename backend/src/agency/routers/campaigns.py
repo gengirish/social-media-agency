@@ -46,6 +46,7 @@ from agency.services import product_analytics as pa
 from agency.services.ad_variants import normalize as normalize_ad
 from agency.services.ad_variants import render_body as render_ad_body
 from agency.services.billing import PLAN_CONFIG
+from agency.services.tracing import merge_config, trace_config
 from agency.services.webhook_dispatcher import EVENT_CAMPAIGN_COMPLETED, dispatch_webhook
 
 logger = structlog.get_logger()
@@ -481,6 +482,21 @@ async def _mark_campaign_failed(
     )
 
 
+def _campaign_trace(
+    campaign_id: str, org_id: str, client_id: str, phase: str
+) -> dict[str, Any]:
+    """Trace fragment for a pipeline run. Seeded by campaign id, so the run
+    before the human-review pause and the resume after it share one trace."""
+    return trace_config(
+        f"campaign-pipeline:{phase}",
+        org_id=org_id,
+        session_id=campaign_id,
+        trace_seed=f"campaign:{campaign_id}",
+        tags=["campaign-pipeline"],
+        metadata={"campaign_id": campaign_id, "client_id": client_id, "phase": phase},
+    )
+
+
 async def _run_campaign_pipeline(
     campaign_id: str,
     org_id: str,
@@ -513,12 +529,13 @@ async def _run_campaign_pipeline(
 
     graph = get_runtime_compiled_graph()
     config = {"configurable": {"thread_id": campaign_id}}
+    run_config = merge_config(config, _campaign_trace(campaign_id, org_id, client_id, "start"))
 
     _active_pipelines.add(campaign_id)
     # Which nodes finished, so a crash can be attributed to the stage that did not.
     completed: set[str] = set()
     try:
-        async for event in graph.astream(initial_state, config=config, stream_mode="updates"):
+        async for event in graph.astream(initial_state, config=run_config, stream_mode="updates"):
             for node_name, node_output in event.items():
                 if node_name == "__interrupt__":
                     await queue.put(AgentStreamEvent(
@@ -1060,12 +1077,14 @@ async def _resume_pipeline(
     if not queue:
         return
 
+    run_config = merge_config(config, _campaign_trace(campaign_id, org_id, client_id, "resume"))
+
     _active_pipelines.add(campaign_id)
     # A resume re-enters after human_review, so everything up to and including it
     # is already done — a crash here must not be attributed to Strategy or SEO.
     completed: set[str] = set(AGENT_ORDER[: AGENT_ORDER.index("human_review") + 1])
     try:
-        async for event in graph.astream(None, config=config, stream_mode="updates"):
+        async for event in graph.astream(None, config=run_config, stream_mode="updates"):
             for node_name, node_output in event.items():
                 if node_name == "__interrupt__":
                     await queue.put(AgentStreamEvent(

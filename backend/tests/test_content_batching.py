@@ -32,7 +32,7 @@ class RecordingLLM:
         self.reply = reply
         self.calls = 0
 
-    async def ainvoke(self, _prompt: Any) -> SimpleNamespace:
+    async def ainvoke(self, _prompt: Any, config: Any = None) -> SimpleNamespace:
         self.calls += 1
         return SimpleNamespace(content=self.reply)
 

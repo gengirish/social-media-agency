@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     llm_ad_copy_model: str = ""
     llm_lite_model: str = ""
 
+    # Langfuse tracing (services/tracing.py). Off unless both keys are set.
+    # EU cloud is the default; US is https://us.cloud.langfuse.com, or point it
+    # at a self-hosted instance.
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_sample_rate: float = 1.0
+    # pii | full | off — see services/tracing.py. Unknown values mean "full".
+    langfuse_mask_mode: str = "pii"
+
     # Stripe
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""

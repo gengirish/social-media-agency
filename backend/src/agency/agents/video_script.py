@@ -5,6 +5,7 @@ import json
 import structlog
 
 from agency.services.llm_provider import get_worker_llm
+from agency.services.tracing import trace_config
 
 logger = structlog.get_logger()
 
@@ -78,7 +79,7 @@ Return JSON:
     "thumbnail_idea": "..."
 }}"""
 
-    response = await llm.ainvoke(prompt)
+    response = await llm.ainvoke(prompt, config=trace_config("video-script"))
     text = response.content if hasattr(response, "content") else str(response)
     text = text.strip()
 

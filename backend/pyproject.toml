@@ -39,9 +39,18 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.0.0",
     "psycopg[binary]>=3.2.0",
     "langchain-core>=0.3.0",
+    # The langchain umbrella package is required by langfuse, not by us: its
+    # langchain/CallbackHandler.py does a bare `import langchain` to read
+    # __version__ and pick a v0/v1 import path, then imports everything real
+    # from langchain_core. Declaring only langchain-core passes on any machine
+    # where something unrelated pulled langchain in, and fails in CI with
+    # "Please install langchain" -- which is how it failed on 260927. Capped
+    # below 2 because that __version__ check is a behavioural fork, not cosmetic.
+    "langchain>=1.0,<2",
     "langchain-google-genai>=2.0.0",
     "langchain-openai>=0.3.0",
     "langchain-anthropic>=0.3.0",
+    "langfuse>=4.0.0",
     "sse-starlette>=2.2.0",
     "stripe>=11.0.0",
     "agentmail>=0.4.12",
