@@ -8,7 +8,19 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
-    "sqlalchemy[asyncio]>=2.0.36",
+    # Capped below 2.1 deliberately. 2.1 tightened the typing of Result /
+    # ScalarResult, so every bare ``x = await db.execute(...)`` becomes
+    # "Need type annotation" under `strict = true` -- 14 errors across the gated
+    # modules (utils/slug, permissions, services/{insights,analytics_fetcher,
+    # webhook_dispatcher,post_studio,ad_sets}, routers/{amplify,create_content}).
+    #
+    # This was invisible for months: the range was open, so CI resolved whatever
+    # was newest (2.1.1) while developers kept an older pin in site-packages
+    # (2.0.48). CI went red on code nobody had touched, and because this workflow
+    # had never reliably fired, nothing reported it.
+    #
+    # Lift the cap by annotating those call sites, not by widening the range.
+    "sqlalchemy[asyncio]>=2.0.36,<2.1",
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
     "python-jose[cryptography]>=3.3.0",
