@@ -1,44 +1,121 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
-class ApiError extends Error {
-  constructor(public status: number, message: string) {
+/**
+ * A non-2xx response. `detail` is FastAPI's `detail` exactly as sent — usually
+ * a string, but structured for errors the UI branches on (e.g. `{code: ...}`).
+ * `message` is always a readable string, so `err.message` callers keep working.
+ */
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public detail: unknown = message) {
     super(message);
   }
 }
 
+function detailMessage(detail: unknown): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail) && typeof detail[0]?.msg === "string") return detail[0].msg;
+  if (detail && typeof detail === "object") {
+    const d = detail as { message?: unknown; code?: unknown };
+    if (typeof d.message === "string") return d.message;
+    if (typeof d.code === "string") return d.code.replace(/_/g, " ");
+  }
+  return "Request failed";
+}
+
 let _clerkGetToken: (() => Promise<string | null>) | null = null;
 
-/** Called once from ClerkTokenSync to wire up Clerk's getToken. */
-export function setClerkTokenGetter(getter: () => Promise<string | null>) {
+/*
+ * Clerk readiness gate.
+ *
+ * `getToken()` resolves `null` until Clerk has hydrated the session, and every
+ * dashboard screen fires its fetches from a mount effect. Without this gate the
+ * first render of a freshly signed-up user raced Clerk and lost: the requests
+ * went out with **no** Authorization header at all, the API answered 401 (which
+ * is correct — there was no credential), and providers like ActiveClientProvider
+ * latched `error: true` with no retry, so the app stayed broken until a manual
+ * reload. It reproduced hardest for new users because their session is created
+ * in the same navigation that renders the dashboard.
+ *
+ * So: never fire an authenticated request while the token is merely *not ready
+ * yet*. Wait for Clerk to report `isLoaded`, then read the token.
+ */
+let _authReady = false;
+let _markAuthReady = () => {};
+const _authReadyPromise = new Promise<void>((resolve) => {
+  _markAuthReady = resolve;
+});
+
+/** Cap on how long a request waits for Clerk. Only ever hit if Clerk never loads
+ * (blocked script, offline) — the request then proceeds unauthenticated and 401s,
+ * which is the honest outcome rather than a hang. */
+const AUTH_READY_TIMEOUT_MS = 8000;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Called from ClerkTokenSync to wire up Clerk's getToken.
+ *
+ * `ready` is Clerk's `isLoaded`. Signed **out** counts as ready: `getToken()`
+ * legitimately returns null there, and requests should go out unauthenticated
+ * rather than stall for the timeout.
+ */
+export function setClerkTokenGetter(
+  getter: () => Promise<string | null>,
+  ready = true
+) {
   _clerkGetToken = getter;
+  if (ready && !_authReady) {
+    _authReady = true;
+    _markAuthReady();
+  }
 }
 
 /** Base URL and token, for callers that need their own fetch (e.g. keepalive). */
 export const API_BASE_URL = API_BASE;
 
+/** The bearer token, waiting for Clerk to hydrate rather than returning a
+ * premature null. Returns null only when genuinely signed out or Clerk never
+ * loaded. */
 export async function getAuthToken(): Promise<string | null> {
+  if (!_authReady) {
+    await Promise.race([_authReadyPromise, sleep(AUTH_READY_TIMEOUT_MS)]);
+  }
   return _clerkGetToken ? await _clerkGetToken() : null;
 }
 
 async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.detail || "Request failed");
+    throw new ApiError(res.status, detailMessage(body.detail), body.detail);
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = _clerkGetToken ? await _clerkGetToken() : null;
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = await getAuthToken();
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
+  const send = (bearer: string | null) =>
+    fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+        ...options?.headers,
+      },
+    });
+
+  let res = await send(token);
+
+  // Safety net for the narrow window the readiness gate cannot cover: Clerk
+  // reported loaded but handed back a token that was null or had just expired
+  // (its session tokens are short-lived and refreshed lazily). Only retried when
+  // the first attempt was unauthenticated or the server rejected the credential,
+  // and only once, so a genuinely signed-out caller still fails fast.
+  if (res.status === 401 && _clerkGetToken) {
+    const fresh = await _clerkGetToken().catch(() => null);
+    if (fresh && fresh !== token) res = await send(fresh);
+  }
 
   return unwrap<T>(res);
 }
@@ -84,7 +161,7 @@ async function requestWithApiKey<T>(
 }
 
 /** Build a query string from defined values only. Returns "" when empty. */
-function qs(params: Record<string, string | number | boolean | undefined | null>): string {
+export function qs(params: Record<string, string | number | boolean | undefined | null>): string {
   const search = new URLSearchParams();
   for (const key of Object.keys(params)) {
     const value = params[key];
@@ -120,11 +197,35 @@ export const api = {
     }),
 
   // --- Clients ---
-  getClients: (page = 1) => request<ClientListResponse>(`/api/v1/clients?page=${page}`),
+  getClients: (page = 1, archived = false) =>
+    request<ClientListResponse>(`/api/v1/clients?page=${page}${archived ? "&archived=true" : ""}`),
   getClient: (id: string) => request<Client>(`/api/v1/clients/${id}`),
   createClient: (data: CreateClientRequest) =>
     request<Client>("/api/v1/clients", { method: "POST", body: JSON.stringify(data) }),
 
+  /** Active and archived clients, for resolving names on campaigns and posts that
+   * outlive an archive. Not for pickers — archived clients cannot take new work. */
+  getClientsForLookup: async (): Promise<Client[]> => {
+    const [active, archived] = await Promise.all([
+      request<ClientListResponse>("/api/v1/clients?per_page=100"),
+      request<ClientListResponse>("/api/v1/clients?per_page=100&archived=true"),
+    ]);
+    return [...active.items, ...archived.items];
+  },
+  /** 409 `has_scheduled_posts` while any of its posts are scheduled, unless `unschedule`,
+   * which returns them to approved first. */
+  archiveClient: (id: string, unschedule = false) =>
+    request<Client>(`/api/v1/clients/${id}/archive${unschedule ? "?unschedule=true" : ""}`, { method: "POST" }),
+  restoreClient: (id: string) => request<Client>(`/api/v1/clients/${id}/restore`, { method: "POST" }),
+  updateClient: (id: string, data: UpdateClientRequest) =>
+    request<Client>(`/api/v1/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  getBrandProfile: (clientId: string) =>
+    request<SavedBrandProfile>(`/api/v1/clients/${clientId}/brand-profile`),
+  saveBrandProfile: (clientId: string, data: BrandProfileRequest) =>
+    request<SavedBrandProfile>(`/api/v1/clients/${clientId}/brand-profile`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   createBrandProfile: (clientId: string, data: BrandProfileRequest) =>
     request<BrandProfileCreatedResponse>(`/api/v1/clients/${clientId}/brand-profile`, {
       method: "POST",
@@ -139,6 +240,11 @@ export const api = {
   getCampaign: (id: string) => request<Campaign>(`/api/v1/campaigns/${id}`),
   createCampaign: (data: CampaignBriefRequest) =>
     request<Campaign>("/api/v1/campaigns", { method: "POST", body: JSON.stringify(data) }),
+  rerunCampaign: (id: string) =>
+    request<Campaign>(`/api/v1/campaigns/${id}/rerun`, { method: "POST" }),
+
+  getCampaignProgress: (id: string) =>
+    request<CampaignProgress>(`/api/v1/campaigns/${id}/progress`),
 
   getCampaignContent: (campaignId: string) =>
     request<{ items: ContentPiece[]; total: number }>(`/api/v1/campaigns/${campaignId}/content`),
@@ -251,6 +357,20 @@ export const api = {
     return data.plans ?? data.items ?? [];
   },
 
+  /**
+   * The plans this workspace should be shown, already filtered and ordered by
+   * its chosen profile, plus the profile catalogue for the picker. Prefer this
+   * over `getPlans` on any screen that sells — `getPlans` returns the raw tier
+   * list with no shaping and no `recommended` flag.
+   */
+  getPricing: () => request<PricingResponse>("/api/v1/billing/plans"),
+
+  setWorkspaceProfile: (profile: WorkspaceProfileId | null) =>
+    request<{ profile: WorkspaceProfileId | null; plans: Plan[] }>(
+      "/api/v1/billing/workspace-profile",
+      { method: "PUT", body: JSON.stringify({ profile }) }
+    ),
+
   getSubscription: () => request<SubscriptionInfo>("/api/v1/billing/subscription"),
 
   createCheckout: (planTier: string, successUrl?: string, cancelUrl?: string) =>
@@ -282,6 +402,14 @@ export const api = {
     request<TeamInviteResponse>("/api/v1/team/invite", {
       method: "POST",
       body: JSON.stringify({ email, role }),
+    }),
+
+  /** Rotates the member's temporary password and mails the invite again. Use
+   * this when a first invite created the account but `email_sent` was false —
+   * re-POSTing /team/invite for the same address returns 400 forever. */
+  resendTeamInvite: (userId: string) =>
+    request<TeamInviteResponse>(`/api/v1/team/${userId}/resend-invite`, {
+      method: "POST",
     }),
 
   updateTeamMemberRole: (userId: string, role: string) =>
@@ -588,6 +716,34 @@ export interface CreateClientRequest {
   contact_email?: string;
 }
 
+/** Mirrors `ClientUpdate` — only the fields sent are written. */
+export type UpdateClientRequest = Partial<CreateClientRequest>;
+
+/** Mirrors `BrandProfileResponse` — a client's saved brand profile. */
+export interface SavedBrandProfile {
+  client_id: string;
+  voice_description: string | null;
+  tone_attributes: Record<string, number> | null;
+  vocabulary_include: string[] | null;
+  vocabulary_exclude: string[] | null;
+  style_rules: string[] | null;
+  emoji_policy: string | null;
+  competitor_differentiation: string | null;
+  target_audience: string | null;
+  /**
+   * The one answer to "what is this client's voice?" (CF-08).
+   *
+   * Three stores can hold a voice — the written guide, Settings' posting-prefs
+   * register, and the older `tone_attributes.register` — and each screen used to
+   * read a different one, so one client showed "Friendly & casual", "Not set"
+   * and "Not configured" at the same time. Render this, never a raw column.
+   * Empty string when nothing is set.
+   */
+  effective_voice?: string;
+  /** Which store `effective_voice` came from, or null when none is set. */
+  voice_source?: "guide" | "register" | "tone_register" | null;
+}
+
 /** Mirrors `BrandProfileCreate` — every field has a server-side default. */
 export interface BrandProfileRequest {
   voice_description?: string;
@@ -618,7 +774,72 @@ export interface Campaign {
   budget: Record<string, unknown>;
   status: string;
   agent_plan: Record<string, unknown>;
+  /**
+   * Why the run failed, when it did (CF-07). Empty `{}` otherwise, and empty for
+   * campaigns that failed before this was recorded — render
+   * {@link campaignFailureSummary}, which says so rather than inventing a reason.
+   */
+  failure?: CampaignFailure | null;
   created_at: string;
+}
+
+export interface CampaignFailure {
+  error?: string;
+  error_type?: string;
+  /**
+   * The agents the crash is attributable to. Two when a parallel pair (Strategy ∥
+   * SEO, Content ∥ Ad Copy) was in flight and either could have thrown — the
+   * backend reports both rather than guessing.
+   */
+  agents?: string[];
+  /** The last agent that finished, or null if none did. */
+  after?: string | null;
+  at?: string;
+}
+
+/** Display names for the pipeline's nodes. Mirrors AGENT_ORDER in the router. */
+const AGENT_LABELS: Record<string, string> = {
+  orchestrate: "Orchestrator",
+  strategise: "Strategy",
+  seo_research: "SEO",
+  create_content: "Content",
+  write_ads: "Ad Copy",
+  human_review: "Human Review",
+  qa_check: "QA / Brand",
+  compile_output: "Compile",
+  analytics: "Analytics",
+};
+
+export function agentLabel(agent: string): string {
+  return AGENT_LABELS[agent] ?? agent;
+}
+
+/**
+ * A one-line account of why a campaign failed, for the card and the detail page.
+ *
+ * Returns null when the campaign has not failed. A failed campaign with nothing
+ * recorded returns a sentence saying exactly that — these are the runs that
+ * failed before the reason was stored, and claiming to know more would be worse
+ * than admitting the gap.
+ */
+export function campaignFailureSummary(campaign: Campaign): string | null {
+  if (campaign.status !== "failed") return null;
+  const failure = campaign.failure;
+  if (!failure?.error) return "No reason was recorded for this failure.";
+
+  const agents = failure.agents ?? [];
+  let where: string;
+  if (agents.length === 1) {
+    where = `${agentLabel(agents[0])} failed`;
+  } else if (agents.length > 1) {
+    // Either branch could have thrown; say so instead of picking one.
+    where = `${agents.map(agentLabel).join(" or ")} failed`;
+  } else if (failure.after) {
+    where = `Failed after ${agentLabel(failure.after)}`;
+  } else {
+    where = "The run failed";
+  }
+  return `${where}: ${failure.error}`;
 }
 
 export interface CampaignListResponse {
@@ -649,6 +870,69 @@ export interface ReviewSubmittedResponse {
   decision: string;
 }
 
+/** The ad platforms the Ad Copy agent writes for. */
+export type AdPlatform = "google" | "meta" | "linkedin";
+
+/**
+ * One ad variant in the shape its network renders, from
+ * `backend/services/ad_variants.py`. Which keys of `fields` are present depends
+ * on `platform`: Google has `headlines`/`descriptions`, Meta has
+ * `primary_text`/`headline`/`description`, LinkedIn has
+ * `intro_text`/`headline`/`description`.
+ *
+ * Read this rather than `body` when rendering an ad — `body` is the same copy
+ * flattened to labelled text for the generic paths.
+ */
+export interface AdVariant {
+  platform: AdPlatform;
+  variant: number;
+  angle: string;
+  cta: string;
+  target_keyword: string;
+  notes: string;
+  fields: {
+    headlines?: string[];
+    descriptions?: string[];
+    primary_text?: string;
+    intro_text?: string;
+    headline?: string;
+    description?: string;
+  };
+  /** Per-field character limits for this network, for the over-limit hint. */
+  limits: Record<string, number>;
+  /** Required fields that came back empty. */
+  missing: string[];
+  /** True when nothing usable was generated. Such a variant is stored failed. */
+  is_empty: boolean;
+}
+
+/** `content_piece.metadata`, as the API spells it (`metadata_`). */
+export interface ContentMetadata {
+  /** Present on ad variants. */
+  ad?: AdVariant;
+  /** Why a piece is not a usable draft, set when generation fell short. */
+  generation?: {
+    status: "failed" | "incomplete";
+    reason?: string;
+    missing?: string[];
+  };
+  post_url?: string | null;
+  publish_error?: string | null;
+  /**
+   * Why a scheduled post could not go out, when the cause is the workspace
+   * rather than the post (CF-01) — today, no connected account for its platform.
+   * The post is returned to Approved with its schedule cleared, not marked
+   * Failed, and this is cleared when it publishes or is rescheduled.
+   */
+  publish_blocked?: {
+    reason: string;
+    code?: string;
+    platform?: string;
+    at?: string;
+  } | null;
+  [key: string]: unknown;
+}
+
 export interface ContentPiece {
   id: string;
   campaign_id: string | null;
@@ -662,6 +946,31 @@ export interface ContentPiece {
   ai_generated: boolean;
   performance_score: number | null;
   created_at: string;
+  metadata_?: ContentMetadata | null;
+}
+
+/** The structured ad on a piece, or null when it is not an ad variant. */
+export function adVariantOf(piece: Pick<ContentPiece, "metadata_">): AdVariant | null {
+  const ad = piece.metadata_?.ad;
+  return ad && typeof ad === "object" && ad.fields ? ad : null;
+}
+
+/**
+ * Why this piece cannot be approved, or null when it can.
+ *
+ * An ad variant the agent returned empty is stored failed rather than draft, but
+ * older rows predate that and are still drafts with nothing in them — so this
+ * checks the content, not only the status (CF-05).
+ */
+export function unusableReason(piece: Pick<ContentPiece, "metadata_" | "body">): string | null {
+  const generation = piece.metadata_?.generation;
+  if (generation?.status === "failed") {
+    return generation.reason ?? "This item was generated empty.";
+  }
+  const ad = adVariantOf(piece);
+  if (ad?.is_empty) return "The ad copy agent returned no usable copy for this variant.";
+  if (!ad && !piece.body.trim()) return "This item has no content.";
+  return null;
 }
 
 export interface ContentListResponse {
@@ -846,10 +1155,18 @@ export interface AgentStreamEvent {
   timestamp: string;
 }
 
+export interface CampaignProgress {
+  campaign_status: string;
+  progress: number;
+  agent_statuses: Record<string, string>;
+  is_active: boolean;
+}
+
 export interface BrandProfile {
   brand_name?: string;
   industry?: string;
   description?: string;
+  contact_email?: string;
   voice_description?: string;
   tone_attributes?: Record<string, number>;
   target_audience?: string;
@@ -899,6 +1216,29 @@ export interface Plan {
   campaigns_limit?: number;
   features?: string[];
   amount?: number;
+  /** Set by the server from the workspace profile. Absent on the unshaped `getPlans` list. */
+  recommended?: boolean;
+}
+
+/** How a workspace describes itself. Display only — it grants nothing. */
+export type WorkspaceProfileId = "product_owner" | "freelancer" | "organization";
+
+export interface WorkspaceProfileOption {
+  id: WorkspaceProfileId;
+  label: string;
+  description: string;
+  recommended_tier: string;
+  reason: string;
+}
+
+export interface PricingResponse {
+  /** Shaped by the profile: which tiers, in what order, which one is recommended. */
+  plans: Plan[];
+  /** Every tier, unshaped. */
+  all_plans: Plan[];
+  /** `null` = never chosen, which shows the full grid. */
+  profile: WorkspaceProfileId | null;
+  profiles: WorkspaceProfileOption[];
 }
 
 export interface SubscriptionInfo {
@@ -1097,6 +1437,37 @@ export interface NotificationItem {
 }
 
 // --- Campaign templates ---
+
+/**
+ * The one campaign-template taxonomy (CF-14).
+ *
+ * The filter tabs listed launch / social / awareness / seasonal /
+ * thought-leadership while the seeded rows were categorised recurring / b2b /
+ * events, so "Social" and "Thought Leadership" returned nothing and three
+ * categories had no tab at all. Both ends read this list now — a card's label
+ * and the tab that finds it cannot diverge again.
+ *
+ * Mirrors `db/seed.sql`; a new category goes here and there together.
+ */
+export const TEMPLATE_CATEGORIES = [
+  { id: "launch", label: "Launch" },
+  { id: "social", label: "Social" },
+  { id: "awareness", label: "Awareness" },
+  { id: "thought-leadership", label: "Thought Leadership" },
+  { id: "seasonal", label: "Seasonal" },
+  { id: "events", label: "Events" },
+] as const;
+
+export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number]["id"];
+
+/** A category's display name. An unknown one is title-cased, never dropped. */
+export function templateCategoryLabel(category: string): string {
+  const known = TEMPLATE_CATEGORIES.find((c) => c.id === category);
+  if (known) return known.label;
+  return category
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (l) => l.toUpperCase());
+}
 
 export interface CampaignTemplateSummary {
   id: string;
@@ -1586,4 +1957,254 @@ export interface BetaMetrics {
       error_rate: number;
     }[];
   };
+}
+
+// --- Posts queue (phase 3) ---
+// Kept in one block so the phase branches merge cleanly. Contract for approve,
+// schedule and publish: docs/cadence-port-plan-260921.md §4.
+
+/** The DB value behind each Queue tab. `draft` is labelled Pending in the UI. */
+export type QueueStatus = "draft" | "approved" | "scheduled" | "published" | "failed";
+
+/**
+ * A row from `GET /api/v1/content`. The list endpoint serialises the ORM row,
+ * so it carries more than {@link ContentPiece}; these extras are optional
+ * because the single-item endpoints do not return them.
+ */
+export interface QueuePost extends ContentPiece {
+  scheduled_at?: string | null;
+  published_at?: string | null;
+}
+
+export interface QueueListResponse {
+  items: QueuePost[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface ModerationIssue {
+  severity: string;
+  message: string;
+}
+
+export interface ApproveResult {
+  id: string;
+  status: "approved";
+  moderation?: {
+    status: "passed" | "unavailable" | "overridden";
+    issues: ModerationIssue[];
+  };
+}
+
+/** `detail.code` of a structured API error, or null. */
+export function apiErrorCode(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  const d = err.detail as { code?: unknown } | null;
+  return d && typeof d === "object" && typeof d.code === "string" ? d.code : null;
+}
+
+/**
+ * `detail.message` of a structured API error, or null.
+ *
+ * The server words these for the reader — a plan limit says which plan, what the
+ * limit is and what to do about it — so showing it beats re-inventing the
+ * sentence on each screen.
+ */
+export function apiErrorMessage(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  const d = err.detail as { message?: unknown } | null;
+  return d && typeof d === "object" && typeof d.message === "string" ? d.message : null;
+}
+
+/** Issues carried by a `409 moderation_flagged`; empty for anything else. */
+export function moderationIssues(err: unknown): ModerationIssue[] {
+  if (apiErrorCode(err) !== "moderation_flagged") return [];
+  const issues = ((err as ApiError).detail as { issues?: unknown }).issues;
+  return Array.isArray(issues) ? (issues as ModerationIssue[]) : [];
+}
+
+export const postsApi = {
+  /** Note the filter param is `content_status` — `status` is silently ignored. */
+  list: (params: {
+    content_status: QueueStatus;
+    client_id?: string;
+    platform?: string;
+    page?: number;
+    per_page?: number;
+  }) => request<QueueListResponse>(`/api/v1/content${qs(params)}`),
+
+  /** Total for one status under the same filters — one row fetched, `total` read. */
+  count: async (status: QueueStatus, filters: { client_id?: string; platform?: string }) => {
+    const res = await request<QueueListResponse>(
+      `/api/v1/content${qs({ ...filters, content_status: status, per_page: 1 })}`
+    );
+    return res.total;
+  },
+
+  /** Runs moderation first. 409 `moderation_flagged` unless `override`. */
+  approve: (id: string, override = false) =>
+    request<ApproveResult>(`/api/v1/content/${id}/approve${override ? "?override=true" : ""}`, {
+      method: "POST",
+    }),
+
+  /**
+   * Send a post whose publish failed back to `approved`, ready to try again.
+   *
+   * Moderation runs again — a failed post can be edited, so the text may not be
+   * the text that was approved. 409 `not_failed` if it is not a failed post.
+   */
+  retry: (id: string, override = false) =>
+    request<ApproveResult>(`/api/v1/content/${id}/retry${override ? "?override=true" : ""}`, {
+      method: "POST",
+    }),
+
+  edit: (id: string, data: { title?: string; body?: string; hashtags?: string[] }) =>
+    request<ContentPiece>(`/api/v1/content/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+};
+
+// --- Amplify (phase 4) ---
+// One source → up to 8 angle-distinct drafts. Preview saves nothing to the
+// queue; commit writes the kept atoms as `draft` (Pending). Backend:
+// backend/src/agency/routers/amplify.py.
+
+/** Closed angle taxonomy — mirrors REPURPOSE_ANGLES in services/repurpose.py. */
+export const AMPLIFY_ANGLES = [
+  "hook",
+  "how-to",
+  "contrarian",
+  "story",
+  "data-point",
+  "question",
+  "behind-the-scenes",
+  "listicle",
+] as const;
+export type AmplifyAngle = (typeof AMPLIFY_ANGLES)[number];
+export const AMPLIFY_MAX_ATOMS = AMPLIFY_ANGLES.length;
+
+/** Platforms the Amplify endpoint accepts (PLATFORM_CHAR_LIMITS keys). */
+export const AMPLIFY_PLATFORMS = [
+  { id: "twitter", label: "X / Twitter" },
+  { id: "linkedin", label: "LinkedIn" },
+  { id: "instagram", label: "Instagram" },
+  { id: "facebook", label: "Facebook" },
+  { id: "tiktok", label: "TikTok" },
+] as const;
+
+// Declaration merge: `/billing/subscription` also reports the Amplify quota.
+export interface SubscriptionInfo {
+  generations_used?: number;
+  generations_limit?: number;
+}
+
+export interface AmplifyAtom {
+  platform: string;
+  angle: AmplifyAngle;
+  title: string;
+  body: string;
+  hashtags: string[];
+  /** Overlaps a recent post of this client, or an earlier atom in the pack. A warning, not a block. */
+  duplicate_warning: boolean;
+  /** Published length (body + appended hashtags) and the platform's hard cap. */
+  char_count: number;
+  char_limit: number;
+}
+
+export interface AmplifyPreviewRequest {
+  client_id: string;
+  source_content_id?: string;
+  /** A saved Create-screen asset (blog post, comparison page, niche scan, video script, launch kit). */
+  source_asset_id?: string;
+  source_text?: string;
+  platforms: string[];
+  max_atoms?: number;
+}
+
+export interface AmplifyPreviewResponse {
+  pack_id: string;
+  atoms: AmplifyAtom[];
+  /** How many atoms were asked of the model, and how many it returned unusably. */
+  requested: number;
+  dropped: number;
+}
+
+export type AmplifyCommitAtom = Pick<AmplifyAtom, "platform" | "angle" | "title" | "body" | "hashtags">;
+
+export interface AmplifyCommitResponse {
+  created: string[];
+  count: number;
+}
+
+export interface AmplifyPack {
+  id: string;
+  client_id: string;
+  client_name: string | null;
+  source_content_id: string | null;
+  source_asset_id?: string | null;
+  source_title: string | null;
+  source_excerpt: string | null;
+  platforms: string[];
+  atom_count: number;
+  committed_count: number;
+  created_at: string | null;
+}
+
+/** HTTP status of a failed api call, when it has one. */
+export function apiErrorStatus(err: unknown): number | null {
+  return err instanceof ApiError ? err.status : null;
+}
+
+/** 402 from preview: the org's Amplify generations for this period are used up. */
+export function isGenerationQuotaError(err: unknown): boolean {
+  return apiErrorStatus(err) === 402;
+}
+
+export const amplifyApi = {
+  preview: (data: AmplifyPreviewRequest, signal?: AbortSignal) =>
+    request<AmplifyPreviewResponse>("/api/v1/amplify/preview", {
+      method: "POST",
+      body: JSON.stringify(data),
+      signal,
+    }),
+  commit: (packId: string, atoms: AmplifyCommitAtom[]) =>
+    request<AmplifyCommitResponse>(`/api/v1/amplify/${packId}/commit`, {
+      method: "POST",
+      body: JSON.stringify({ atoms }),
+    }),
+  packs: (clientId?: string) => request<{ items: AmplifyPack[] }>(`/api/v1/amplify/packs${qs({ client_id: clientId })}`),
+  /** One pack, with the drafts it queued and a per-platform breakdown (CF-15). */
+  pack: (packId: string) => request<AmplifyPackDetail>(`/api/v1/amplify/packs/${packId}`),
+};
+
+/**
+ * What became of one platform in a pack.
+ *
+ * `not_kept` and `not_generated` are distinguishable only from the pack's
+ * counts, because atoms are never persisted — `commit` writes the kept ones to
+ * `content_piece` and the rest are gone. Where the counts cannot tell them
+ * apart, the backend says `not_kept` and `dropped_count` gives the UI enough to
+ * word it honestly.
+ */
+export type AmplifyPlatformStatus = "queued" | "not_kept" | "not_generated";
+
+export interface AmplifyPackPost {
+  id: string;
+  platform: string;
+  angle: string | null;
+  status: string;
+  title: string;
+  excerpt: string | null;
+}
+
+export interface AmplifyPackDetail {
+  id: string;
+  client_id: string;
+  platforms: string[];
+  atom_count: number;
+  committed_count: number;
+  created_at: string | null;
+  posts: AmplifyPackPost[];
+  platform_breakdown: { platform: string; status: AmplifyPlatformStatus }[];
+  dropped_count: number;
+  unqueued_platforms: string[];
 }

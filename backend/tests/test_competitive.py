@@ -367,9 +367,12 @@ async def test_blank_key_returns_unavailable_with_no_llm_and_no_http(
 
     assert result["status"] == "unavailable"
     assert result["findings"] == []
-    assert "EXA_API_KEY" in result["reason"]
     assert exa_calls.calls == []
     assert fake_llm["invocations"] == 0
+    # CF-16: the reason is rendered in the app, so it names no env var. The
+    # operator's fix is logged where the key is read.
+    assert "EXA_API_KEY" not in result["reason"]
+    assert "isn't available yet" in result["reason"]
 
 
 async def test_whitespace_key_is_treated_as_unconfigured(exa_env, exa_calls, fake_llm):
@@ -390,9 +393,11 @@ async def test_rejected_key_is_unavailable_without_llm(exa_env, exa_calls, fake_
 
     assert result["status"] == "unavailable"
     assert result["http_status"] == 401
-    assert "EXA_API_KEY" in result["reason"]
     assert len(exa_calls.calls) == 1  # 4xx is permanent, not retried
     assert fake_llm["invocations"] == 0
+    # CF-16: a rejected key is an admin's problem; say so without naming the var.
+    assert "EXA_API_KEY" not in result["reason"]
+    assert "admin" in result["reason"]
 
 
 # --------------------------------------------------------------------------

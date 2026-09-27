@@ -148,7 +148,12 @@ def _configured_order() -> tuple[str, ...]:
     unknown = [p for p in chosen if p not in known]
     if unknown:
         logger.warning("llm_unknown_providers_ignored", providers=unknown, known=sorted(known))
-    return tuple(p for p in chosen if p in known) or DEFAULT_PROVIDER_ORDER
+    # noqa rationale: ruff reads the `or` as redundant, but it is the fallback. An
+    # order naming only unknown providers filters to an empty tuple, and returning
+    # that would leave no provider configured at all — the pipeline would die inside
+    # the first agent with campaigns stuck in `running`. Taking ruff's fix here would
+    # reintroduce exactly the silent default CLAUDE.md warns against.
+    return tuple(p for p in chosen if p in known) or DEFAULT_PROVIDER_ORDER  # noqa: SIM222
 
 
 def _tier_pin(tier: str) -> str:

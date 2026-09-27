@@ -97,6 +97,17 @@ class Organization(Base):
     name = Column(String(255), nullable=False)
     # Portal identity — see db/init.sql. Unique, nullable (null = portal disabled).
     slug = Column(String(64), unique=True)
+    # Account shape, not a plan tier: 'personal' (solo creator) | 'business' (agency).
+    # Decides which features exist; agency/permissions.py subtracts the seat-management
+    # capabilities for 'personal'. Every new org starts personal and flips one-way to
+    # business on the first team invite or growth-tier purchase.
+    account_type = Column(String(20), nullable=False, default="personal", server_default="personal")
+    # How this workspace describes itself: 'product_owner' | 'freelancer' | 'organization'.
+    # Presentation only -- it reshapes the pricing page (which tiers are offered, in what
+    # order, which one is recommended) and nothing else. It grants no capability, changes
+    # no limit and is NOT a plan tier; the subscription row remains the only source of
+    # truth for what an org may do. NULL = never chosen, which shows the full plan grid.
+    workspace_profile = Column(String(24))
     domain = Column(String(255))
     settings = Column(JSONB, default={})
     agentmail_inbox_id = Column(String(255))
@@ -115,7 +126,10 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default="viewer")
-    is_active = Column(Boolean, default=True)
+    # NOT NULL: ``resolve_capabilities`` filters ``is_active IS TRUE``, which excludes
+    # NULL, so a NULL here is a silent lockout — the user authenticates and then 403s
+    # on every gated route. ``server_default`` so raw-SQL inserts get TRUE too.
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -130,6 +144,10 @@ class Subscription(Base):
     clients_limit = Column(Integer, default=1)
     posts_limit = Column(Integer, default=30)
     posts_used = Column(Integer, default=0)
+    # Amplify packs this billing period — 1 pack = 1 generation. A null limit
+    # (rows provisioned before 260921) falls back to the tier's PLAN_CONFIG value.
+    generations_used = Column(Integer, nullable=False, default=0, server_default="0")
+    generations_limit = Column(Integer)
     current_period_start = Column(DateTime(timezone=True))
     current_period_end = Column(DateTime(timezone=True))
     status = Column(String(50), default="active")
@@ -208,6 +226,11 @@ class Campaign(Base):
     budget = Column(JSONB, default={})
     status = Column(String(30), default="planning")
     agent_plan = Column(JSONB, default={})
+    # Why this campaign failed, when it did: {"error", "error_type", "agents",
+    # "after", "at"}. A failed campaign used to carry no reason at all, so the
+    # list showed four "Failed" cards with nothing to act on (CF-07). Empty {}
+    # for a campaign that has not failed.
+    failure = Column(JSONB, default={})
     tags = Column(JSONB, default=[])
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -292,6 +315,113 @@ class Workflow(Base):
     completed_at = Column(DateTime(timezone=True))
 
     campaign = relationship("Campaign", back_populates="workflow")
+
+
+class RepurposePack(Base):
+    """One Amplify generation: a source turned into up to 8 angle-distinct atoms.
+
+    Atoms are not stored here — preview returns them, commit writes the kept ones
+    to ``content_piece`` as drafts with ``metadata.amplify_pack_id`` pointing back.
+    """
+
+    __tablename__ = "repurpose_pack"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id = Column(
+        UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    source_content_id = Column(
+        UUID(as_uuid=True), ForeignKey("content_piece.id", ondelete="SET NULL"), nullable=True
+    )
+    source_text = Column(Text, nullable=True)
+    # A saved Create-screen asset (blog post, comparison page, ...) as the source.
+    source_asset_id = Column(
+        UUID(as_uuid=True), ForeignKey("creative_asset.id", ondelete="SET NULL"), nullable=True
+    )
+    platforms = Column(JSONB, nullable=False, default=[])
+    atom_count = Column(Integer, nullable=False, default=0)
+    committed_count = Column(Integer, nullable=False, default=0)
+    created_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    # Mirrors db/init.sql — the history list reads newest-first per org.
+    __table_args__ = (
+        Index("idx_repurpose_pack_org_created", "org_id", text("created_at DESC")),
+    )
+
+
+class CreativeAsset(Base):
+    """Kept output of a Create-screen generator (blog post, email campaign, ad set, ...).
+
+    ``kind`` is validated against ``services.creative_assets.ASSET_KINDS``.
+    Social posts never live here — they go to ``content_piece`` as drafts so
+    moderation and approval apply.
+    """
+
+    __tablename__ = "creative_asset"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id = Column(
+        UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    kind = Column(String(40), nullable=False)
+    title = Column(String(500), nullable=False, default="")
+    payload = Column(JSONB, nullable=False, default={})
+    source_asset_id = Column(
+        UUID(as_uuid=True), ForeignKey("creative_asset.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index(
+            "idx_creative_asset_org_client_kind",
+            "org_id",
+            "client_id",
+            "kind",
+            text("created_at DESC"),
+        ),
+    )
+
+
+class InboxItemState(Base):
+    """What a human did with one Inbox item (read / handled / replied).
+
+    Inbox items are read live from X and LinkedIn and never stored; only this
+    triage state is. ``item_key`` is ``"<platform>:<platform item id>"``.
+    """
+
+    __tablename__ = "inbox_item_state"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id = Column(
+        UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    item_key = Column(String(255), nullable=False)
+    is_read = Column(Boolean, nullable=False, default=False)
+    handled = Column(Boolean, nullable=False, default=False)
+    reply_id = Column(String(255), nullable=True)
+    reply_url = Column(Text, nullable=True)
+    updated_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("org_id", "client_id", "item_key"),)
 
 
 class AnalyticsSnapshot(Base):

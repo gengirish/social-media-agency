@@ -30,4 +30,19 @@ test.describe("Clients", () => {
 
     await expect(page.getByText(brand, { exact: true })).toBeVisible({ timeout: 30000 });
   });
+
+  test("read website drafts the client details", async ({ page }) => {
+    test.setTimeout(180_000);
+    test.skip(!process.env.RUN_LLM_TESTS, "Skipped: set RUN_LLM_TESTS=1 to run LLM-dependent tests");
+
+    await page.goto("/clients", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /add client/i }).click();
+
+    await page.getByLabel(/^website/i).fill("https://example.com");
+    await page.getByRole("button", { name: /read website/i }).click();
+
+    await expect(page.getByText(/brand profile from website/i)).toBeVisible({ timeout: 120000 });
+    await expect(page.getByLabel(/^brand name/i)).not.toHaveValue("");
+    await expect(page.getByLabel(/^industry/i)).not.toHaveValue("");
+  });
 });

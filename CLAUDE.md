@@ -40,6 +40,17 @@ npx vercel --prod --archive=tgz   # from the repo ROOT, not frontend/
 
 [frontend/vercel.json](frontend/vercel.json) still patches a missing `page_client-reference-manifest.js` after `next build`. It is probably now **vestigial**: it was papering over an intermittent `InvariantError: Expected clientReferenceManifest` whose real cause was two pages resolving to `/` (`app/page.tsx` and a dead `app/(dashboard)/page.tsx`), fixed on 260818. The hack could never have helped anyway — it runs *after* `next build` returns, so a build that dies during prerender never reaches it. Removing it is safe to try, but verify a few consecutive clean builds first; the failure it masked was intermittent (~1 in 4), so a single green build proves nothing.
 
+## Product rules
+
+Adopted from the Cadence Crew prototype (see [docs/cadence-port-plan-260921.md](docs/cadence-port-plan-260921.md) and the full-parity pass in [docs/cadence-parity-plan-260923.md](docs/cadence-parity-plan-260923.md)). They apply to every agent and every code path that creates or moves content, not just the AI ones.
+
+1. **Never imply a capability that isn't real.** Publishing *is* real here (X, LinkedIn, Facebook post to live client accounts), which raises the stakes — Instagram/TikTok publishing, image posting, DMs, ad-account actions and email sending are not, and the UI must say so where it matters (`lib/platforms.ts::publishUnavailableReason`). The Inbox reads X mentions live and LinkedIn comments only when `LINKEDIN_INBOX_SCOPE` is set; everything else reports a per-account status, never seed data.
+2. **A human has final say.** No path auto-approves or auto-publishes. `autonomous_operator.py` plans; it must never schedule.
+3. **Moderation runs before approval, on every path that creates a post** — pipeline, manual, portal, Amplify, repurpose. Schedule and publish accept only approved content (enforced — see [Approval gate](#approval-gate-moderation-before-approval)).
+4. **No invented numbers.** Real data or an explicit empty state — never a placeholder metric, predicted CTR, or fabricated score. Same discipline as the marketing layer's data-reliability rules.
+5. **LLM access only through the four tier getters** (see [LLM routing](#llm-routing-servicesllm_providerpy)).
+6. **Before presenting a change:** `ruff` + `mypy` + `pytest` for backend, `npm run lint` + `npm run build` for frontend. A clean compile has missed runtime crashes before; run the tests.
+
 ## Commands
 
 ### Backend (`backend/`, Python 3.12+)
@@ -146,11 +157,56 @@ Two rules that follow from having no RLS, both of which were violated in shipped
 
 `backend/tests/test_tenancy_routers.py` covers these per router, and every test in it is verified to fail when its filter is deleted — keep that property when adding more.
 
-Frontend auth: [middleware.ts](frontend/middleware.ts) marks only `/`, `/sign-in`, `/sign-up`, and `/api/webhooks/*` public. `ClerkTokenSync` calls `setClerkTokenGetter()` once so [lib/api.ts](frontend/src/lib/api.ts) can attach `Authorization` headers — the API client has no direct Clerk dependency.
+Frontend auth: [middleware.ts](frontend/middleware.ts) marks only `/`, `/sign-in`, `/sign-up`, `/legal`, and `/api/webhooks/*` public. `ClerkTokenSync` calls `setClerkTokenGetter()` once so [lib/api.ts](frontend/src/lib/api.ts) can attach `Authorization` headers — the API client has no direct Clerk dependency.
 
 ### Real-time streaming
 
 Agent progress streams over **SSE**, not WebSocket, despite `docs/features/websocket.md`. `GET /api/v1/campaigns/{id}/stream?token=...` passes the JWT as a **query param** because `EventSource` cannot set headers ([lib/agent-stream.ts](frontend/src/lib/agent-stream.ts)). The client closes the stream on `complete` or `error` events.
+
+### Approval gate (moderation before approval)
+
+`content_piece.status` stays `draft` in the database for anything awaiting review; the UI calls it **Pending**. The only path to `approved` is `POST /content/{id}/approve`, which runs [services/moderation.py](backend/src/agency/services/moderation.py) first — logic lives in [services/content_approval.py](backend/src/agency/services/content_approval.py), routers stay thin.
+
+- **Flagged** → `409 {code: "moderation_flagged", issues}`; `?override=true` approves anyway and records `metadata.moderation.override_by`. The portal approve path never allows override.
+- **Fail-open:** an LLM error/timeout/no provider approves with `metadata.moderation.status = "unavailable"` and logs `moderation_unavailable` — never silent. The character-limit and brand `vocabulary_exclude` checks run in code, so they still flag when the LLM is down.
+- **Schedule and publish** accept only `approved`/`scheduled` (`409 not_approved` otherwise). `PATCH /content/{id}` cannot set `approved`/`scheduled`/`published`, and editing the body or hashtags of approved/scheduled content resets it to `draft` so the edit is re-moderated.
+- Every content-creating path (pipeline, repurpose, variants, Amplify) writes `draft`. Keep it that way — a new path that writes `approved` or `scheduled` bypasses moderation and, since publishing is real, posts unreviewed copy to a client's live account.
+
+`backend/tests/test_approval_gate.py` verifies each gate fails its test when removed.
+
+### Amplify (repurposing engine)
+
+One source (a `content_piece` or pasted text) → up to 8 drafts, one per angle from the closed enum in [services/repurpose.py](backend/src/agency/services/repurpose.py) (`hook`, `how-to`, `contrarian`, `story`, `data-point`, `question`, `behind-the-scenes`, `listicle`). Angles are assigned in code (`plan_atoms`), not chosen by the model, so a pack cannot repeat one.
+
+- [agents/amplify.py](backend/src/agency/agents/amplify.py) uses `get_worker_llm` — not `lite`, because whether the angles are genuinely distinct *is* the judgement.
+- [routers/amplify.py](backend/src/agency/routers/amplify.py): `preview` generates and saves nothing to the queue; `{pack_id}/commit` writes the kept atoms as `draft`, whatever status the client sends; `packs` lists history (`repurpose_pack` table).
+- **Quota:** 1 pack = 1 generation against `subscription.generations_used`/`generations_limit` (per tier in `PLAN_CONFIG`, reset on `invoice.paid`), charged only when at least one usable draft comes back. `402 generation_quota_exceeded` when exhausted. The check and the increment are not atomic, so two concurrent previews can overshoot by one.
+- The old `POST /content/{id}/repurpose` still exists for API compatibility; the UI no longer calls it.
+
+### Frontend design system and navigation
+
+The look is the **Cadence** palette (navy + amber, glass panels, Space Grotesk / Inter / IBM Plex Mono) in light and dark. Tokens are CSS variables emitted from [tailwind.config.ts](frontend/tailwind.config.ts); `slate`, `white`, `indigo` and the status hues are **remapped** onto them, so a legacy `bg-white text-slate-900` class already themes. Prefer the semantic names (`canvas`, `panel`, `ink`, `muted`, `line`, `accent`, `accent-text`, `on-accent`) and the primitives in [components/ui/](frontend/src/components/ui/) for new work. Never hardcode a hex color in a page — it will be wrong in one of the two themes.
+
+- Theme: `.dark` on `<html>`, set before paint by `THEME_INIT_SCRIPT` ([lib/theme.ts](frontend/src/lib/theme.ts)); OS preference by default, the toggle persists to `localStorage`. Clerk widgets resolve colors in JS, so they get literal per-theme values from [lib/clerk-appearance.ts](frontend/src/lib/clerk-appearance.ts).
+- Navigation is a top bar with grouped sub-tabs defined in [lib/navigation.ts](frontend/src/lib/navigation.ts): **Setup** (Profile `/setup/profile`, Clients, Accounts `/setup/accounts`) · **Create** (Campaigns, Content `/create/content`, Email, Launch, Amplify, Ads, Templates) · **Posts** (Queue `/content`, Calendar) · **Inbox** · **Insights** (`/analytics`) · **Settings** (Workspace, Team, Billing). Group order is deliberate (Create before Posts, unlike Cadence) and is also the `1`–`6` keyboard-shortcut order; `?` opens the shortcut list. Add a page by adding a tab there. The logo goes to `/welcome`.
+- **The active client scopes the app.** The top-nav client switcher ([lib/active-client.tsx](frontend/src/lib/active-client.tsx), Cadence's product switcher) is backed by `GET /clients/overview`; Create / Posts / Insights screens read `useActiveClient()` and must call `refresh()` after anything that changes a client's counts. The chosen id lives in `localStorage` as a convenience only and is re-validated against the org's clients on load.
+- `e2e/navigation.spec.ts` asserts each route's H1; `/content`'s is "Queue".
+
+### Create screens and the shared generator pattern
+
+Content, Email, Launch, Ads, Setup's Brand Voice / Strategy Lens, Insights' advocacy and Inbox reply suggestions all follow Amplify's shape — copy it for any new generator:
+
+1. `services/brand_context.py::get_org_client` (404 across orgs), then `require_generation_quota`.
+2. Prompt with `brand_prompt_block(load_brand_context(...))` — voice, vocab, differentiator, tone register, posting prefs and the client's **campaign focus** (`PUT/DELETE /clients/{id}/campaign-focus`, shown by `CampaignIndicator`). The PRFAQ stress-test deliberately strips the campaign focus.
+3. Validate the model's JSON in code; malformed → `502` "no quota was used", nothing saved.
+4. Long-form output → `services/creative_assets.py::save_asset` (`creative_asset` table, closed `ASSET_KINDS`, generic `/assets` CRUD). Social posts never go there — they are `content_piece` drafts so the approval gate applies.
+5. `charge_generation` only after success, then commit. Cancel: Post Studio (generate / regenerate / creative brief) checks `request.is_disconnected()` after the model returns and then saves and charges nothing; the other generators only stop the browser waiting — a server that finishes still saves and charges, and the UI says so. Content, Email and Launch also refuse with `409 brand_profile_required` when the client has no brand profile; the other generators gate only in the UI.
+
+Ad copy runs through `services/ad_guardrails.py` (hard Google limits, Meta visible thresholds, trademark and personal-attribute heuristics) plus advisory brain-tier moderation that fails open *visibly*. Nothing creates ad campaigns or predicts CTR/CPC/ROAS.
+
+### OAuth connect flow
+
+`GET /oauth/{platform}/authorize?client_id=&code_challenge=` returns a URL whose `state` is a signed token (`services/oauth_state.py`, key derived from `JWT_SECRET`, 15 min, bound to org + platform + client). X requires PKCE: the browser keeps the verifier in `sessionStorage` and the in-app page `app/(dashboard)/api/oauth/[platform]/callback` posts code + state + verifier to `POST /oauth/{platform}/callback`. That route has to live at exactly `{first CORS origin}/api/oauth/{platform}/callback` — it is a page in a route group, not an API route. Account handles are still placeholders (`{platform}_user`).
 
 ### Product analytics
 
@@ -165,7 +221,7 @@ To make a new flow show up in the adoption table, call `trackFeature("kebab-name
 
 ### Backend layering
 
-`routers/` (24 routers, all mounted under `/api/v1`) → `services/` (24 modules: billing, publishing, scheduler, brand_learning, cross_learning, white_label, webhook_dispatcher, platform_metrics, exa_client, …) → `models/` (`tables.py` SQLAlchemy, `schemas.py` Pydantic, `database.py` session factory). Keep business logic in `services/`; routers stay thin.
+`routers/` (25 routers, all mounted under `/api/v1`) → `services/` (28 modules: billing, publishing, scheduler, moderation, content_approval, repurpose, brand_learning, cross_learning, white_label, webhook_dispatcher, platform_metrics, exa_client, …) → `models/` (`tables.py` SQLAlchemy, `schemas.py` Pydantic, `database.py` session factory). Keep business logic in `services/`; routers stay thin.
 
 `main.py` registers a background `scheduler` on startup alongside the graph runtime — both need matching shutdown handling.
 
@@ -174,6 +230,8 @@ To make a new flow show up in the adoption table, call `trackFeature("kebab-name
 Schema is raw SQL in [db/init.sql](db/init.sql) (+ `db/seed.sql`), **not** Alembic migrations, even though `alembic` is a dependency. Schema changes must be applied to both `db/init.sql` and `models/tables.py`.
 
 `init.sql` only runs on a **fresh** database, so a schema change is invisible to any already-provisioned environment (Neon prod, a local volume that was not reset). Alongside the two edits above, add a dated forward-only script to [db/migrations/](db/migrations/) — e.g. [260817_org_slug.sql](db/migrations/260817_org_slug.sql) — and run it by hand on Neon. Nothing applies these automatically.
+
+The Cadence-parity release needs, in order: `260923_creative_asset.sql`, `260923_amplify_asset_source.sql` (adds a column that references `creative_asset`), `260923_inbox.sql`.
 
 `organization.slug` is the portal's identity column and is `UNIQUE` deliberately: `/api/v1/portal/{org_slug}` is unauthenticated, and the previous `domain`-then-`name` resolution used non-unique columns. A null slug means that org has no portal.
 
@@ -191,7 +249,7 @@ Marketing assets are mirrored in **two trees**: `.claude/` (what Claude Code loa
 |---|---|
 | `workflows/` | `primary-workflow.md`, `sales-workflow.md`, `crm-workflow.md`, `marketing-rules.md`, `orchestration-protocol.md`, `documentation-management.md`, `data-reliability-rules.md` |
 | `agents/` | 20 marketing agents (attraction-specialist, lead-qualifier, email-wizard, copywriter, seo-specialist, reviewer personas, …) |
-| `skills/` | 59 skills. The `agency-*` skills (`agency-backend`, `agency-frontend`, `agency-database`, `agency-ai-engine`, `agency-deploy`, `agency-testing`, `agency-billing`, `agency-realtime`, `agency-agentmail`, `agency-project`) document **this codebase** — read the relevant one before non-trivial product work |
+| `skills/` | 60 skills. The `agency-*` skills (`agency-backend`, `agency-frontend`, `agency-database`, `agency-ai-engine`, `agency-deploy`, `agency-testing`, `agency-billing`, `agency-realtime`, `agency-agentmail`, `agency-project`) document **this codebase** — read the relevant one before non-trivial product work. `campaignforge-brief` turns a product URL into paste-ready inputs for the app's own New Client / New Campaign forms (verified facts + guardrail Additional Context); worked example in `campaigns/certforge-launch/05-campaignforge-brief.md` |
 | `commands/` | 100 slash commands grouped by domain (campaign, content, seo, cro, growth, analytics, …) plus the English `training/` course |
 | `rules/deployment-domains.mdc` | Cursor `.mdc` rule format; Claude Code does not read `.claude/rules/`, so this file is inert on the Claude side |
 | `campaigns/` (repo root) | Campaign outputs (e.g. `ai-upskill-cohort`) |

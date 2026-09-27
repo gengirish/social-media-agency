@@ -53,8 +53,13 @@ KEYWORD = "keyword"
 #   * nvidia — NIM's retrieval models require an `input_type` field
 #     (query vs passage) that the OpenAI SDK does not send, so asymmetric
 #     retrieval would silently degrade. Excluded rather than half-supported.
+#   * google text-embedding-004 — retired (404 on embedContent, 260923);
+#     gemini-embedding-001 replaces it. Its native width is 3072, above the
+#     1536-wide storage column, so it is asked for 768 dims (Matryoshka
+#     truncation, supported by the API). Cosine similarity ignores the lack of
+#     re-normalisation at reduced widths.
 EMBEDDING_MODELS: dict[str, tuple[str, int]] = {
-    "google": ("models/text-embedding-004", 768),
+    "google": ("models/gemini-embedding-001", 768),
     "openai": ("text-embedding-3-small", 1536),
 }
 
@@ -180,7 +185,9 @@ def _build_embedder(provider: str) -> Embedder:
     if provider == "google":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-        client: Any = GoogleGenerativeAIEmbeddings(model=model, google_api_key=key)
+        client: Any = GoogleGenerativeAIEmbeddings(
+            model=model, google_api_key=key, output_dimensionality=dim
+        )
     else:
         from langchain_openai import OpenAIEmbeddings
 

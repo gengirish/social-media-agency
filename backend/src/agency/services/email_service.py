@@ -164,6 +164,46 @@ async def resolve_sender(db: AsyncSession | None = None, org_id: UUID | None = N
     return await ensure_sender_inbox()
 
 
+def _describe_send_failure(exc: Exception) -> str:
+    """A short, human reason for a failed send. Never a raw header dump.
+
+    ``ApiError.__str__`` renders every response header — CloudFront ids, request
+    ids, the lot. That string used to travel straight into the team-invite
+    response and out to a toast, which buried the one sentence that mattered.
+    Two cases are worth naming because they are the ones that actually happen and
+    they need different actions:
+
+    * **429** — the AgentMail plan's *organization-wide* daily send limit. Any
+      other app sending from the same AgentMail org consumes it, so a newsletter
+      blast can starve transactional invites for the rest of the day.
+    * **403** — the API key is rejected: revoked, rotated, or from another org.
+    """
+    from agentmail.core.api_error import ApiError
+
+    if not isinstance(exc, ApiError):
+        return str(exc)
+
+    body = exc.body if isinstance(exc.body, dict) else {}
+    detail = str(body.get("message") or "").strip()
+
+    if exc.status_code == 429:
+        limit = body.get("limit")
+        scope = body.get("scope") or "organization"
+        reset = body.get("window") or "daily"
+        extra = f" The {reset} limit is {limit} per {scope}." if limit else ""
+        return (
+            f"AgentMail rejected the send: {detail or 'send limit exceeded'}.{extra} "
+            "Anything else sending from the same AgentMail organization shares this "
+            "quota. Wait for the window to reset or upgrade the plan."
+        )
+    if exc.status_code == 403:
+        return (
+            "AgentMail rejected the API key (403). It is revoked, rotated, or "
+            "belongs to a different organization — check AGENTMAIL_API_KEY."
+        )
+    return f"AgentMail returned {exc.status_code}: {detail or 'no detail'}"
+
+
 async def send_email(
     *,
     to: str | list[str],
@@ -203,10 +243,17 @@ async def send_email(
     try:
         await client.inboxes.messages.send(inbox_id, **payload)
     except Exception as e:  # noqa: BLE001 — the caller's request must still succeed
+        reason = _describe_send_failure(e)
+        # The full exception still goes to the log; only the summary is returned,
+        # because the reason is shown to a user.
         logger.warning(
-            "agentmail_send_failed", inbox_id=inbox_id, subject=subject, error=str(e)
+            "agentmail_send_failed",
+            inbox_id=inbox_id,
+            subject=subject,
+            reason=reason,
+            error=str(e),
         )
-        return SendResult(False, f"AgentMail send failed: {e}", inbox_id)
+        return SendResult(False, reason, inbox_id)
 
     logger.info("agentmail_send_ok", inbox_id=inbox_id, subject=subject, labels=labels or [])
     return SendResult(True, "", inbox_id)

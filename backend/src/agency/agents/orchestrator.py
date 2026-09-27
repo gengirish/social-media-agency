@@ -4,11 +4,11 @@ Parses the client brief, creates an execution plan, and decides which agents
 to invoke. Uses a Brain-tier model (Claude Sonnet) for high-reasoning planning.
 """
 
-import json
 
 from langchain_core.messages import SystemMessage
 
 from agency.agents.state import CampaignState
+from agency.agents.utils import parse_agent_json, text_of
 from agency.services.llm_provider import get_brain_llm
 
 SYSTEM_PROMPT = """You are the Orchestrator of CampaignForge, an AI-powered digital marketing agency.
@@ -77,16 +77,12 @@ async def orchestrator_node(state: CampaignState) -> dict:
 
     response = await llm.ainvoke(messages)
 
-    try:
-        plan = json.loads(response.content)
-    except json.JSONDecodeError:
-        content = response.content
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start != -1 and end > start:
-            plan = json.loads(content[start:end])
-        else:
-            plan = {"campaign_summary": response.content, "error": "Failed to parse JSON"}
+    parsed = await parse_agent_json(response.content, agent="orchestrator")
+    plan = (
+        parsed
+        if isinstance(parsed, dict)
+        else {"campaign_summary": text_of(response.content), "error": "Failed to parse JSON"}
+    )
 
     return {
         "execution_plan": plan,

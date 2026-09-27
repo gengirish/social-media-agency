@@ -1,41 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { DM_Sans, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { Sparkles } from "lucide-react";
 import { AuthCta } from "@/components/landing/auth-cta";
+import { ThemeToggle } from "@/components/theme";
 
 /*
- * Landing page — implements the "CampaignForge Landing" Claude Design file.
+ * Landing page, in the Cadence look the dashboard uses: navy/amber glass over
+ * a faint grid, Space Grotesk headlines, Inter body, IBM Plex Mono labels.
  *
  * Server Component by design: everything here is static markup, so the page
- * ships as HTML with no client bundle. Session-dependent buttons live in the
- * AuthCta island.
+ * ships as HTML with no client bundle beyond two islands — the session-aware
+ * AuthCta buttons and the theme toggle.
  *
- * Fonts come from next/font rather than the design's <link> to
- * fonts.googleapis.com — self-hosted, preloaded, and no render-blocking
- * request to a third party. They are scoped to this page via CSS variables on
- * the wrapper, so dashboard routes do not pay for three extra families.
+ * Fonts and colors are the app's own: the root layout loads the three
+ * families as CSS variables, and every color below reads the theme tokens
+ * from tailwind.config.ts (`--c-*`, redefined under `.dark`), so the page
+ * follows the same light/dark switch as the dashboard.
  */
-
-const display = Space_Grotesk({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--cf-display",
-  display: "swap",
-});
-
-const body = DM_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--cf-body",
-  display: "swap",
-});
-
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--cf-mono",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "CampaignForge AI — Take on more clients without hiring",
@@ -160,13 +141,15 @@ const STREAM_LINES = [
 
 export default function Home() {
   return (
-    <div className={`cf ${display.variable} ${body.variable} ${mono.variable}`}>
+    <div className="cf">
       <style>{CSS}</style>
 
       <header className="cf-header">
         <div className="cf-shell cf-header-inner">
           <Link href="#top" className="cf-brand">
-            <span className="cf-mark">CF</span>
+            <span className="cf-mark" aria-hidden>
+              <Sparkles className="cf-mark-icon" />
+            </span>
             <span className="cf-brand-name">CampaignForge AI</span>
           </Link>
           <nav className="cf-nav">
@@ -176,6 +159,7 @@ export default function Home() {
             <a href="#pricing" className="cf-navlink">Pricing</a>
           </nav>
           <div className="cf-header-cta">
+            <ThemeToggle />
             <AuthCta variant="header" />
           </div>
         </div>
@@ -333,7 +317,7 @@ export default function Home() {
           </div>
           <div className="cf-grid-4 cf-grid-plans">
             {PLANS.map((p) => (
-              <article key={p.name} className="cf-card cf-plan">
+              <article key={p.name} className={`cf-card cf-plan${p.popular ? " cf-plan-popular" : ""}`}>
                 {p.popular && <span className="cf-badge">MOST POPULAR</span>}
                 <div className="cf-plan-head">
                   <span className="cf-plan-name">{p.name}</span>
@@ -351,7 +335,10 @@ export default function Home() {
                     </li>
                   ))}
                 </ul>
-                <Link href="/sign-up" className="cf-btn cf-btn-outline cf-plan-cta">
+                <Link
+                  href="/sign-up"
+                  className={`cf-btn ${p.popular ? "cf-btn-accent" : "cf-btn-outline"} cf-plan-cta`}
+                >
                   {p.cta}
                 </Link>
               </article>
@@ -374,7 +361,9 @@ export default function Home() {
       <footer className="cf-footer">
         <div className="cf-shell cf-footer-inner">
           <div className="cf-brand">
-            <span className="cf-mark cf-mark-sm">CF</span>
+            <span className="cf-mark cf-mark-sm" aria-hidden>
+              <Sparkles className="cf-mark-icon" />
+            </span>
             <span className="cf-copyright">© 2026 CampaignForge AI</span>
           </div>
           <nav className="cf-foot-nav">
@@ -391,147 +380,172 @@ export default function Home() {
 
 /*
  * Scoped under `.cf` so nothing leaks into the dashboard, which is Tailwind.
- * Deliberately single-theme: this is a committed dark marketing surface, so
- * every colour is painted explicitly rather than inherited.
+ * Every color is a theme token (bare "R G B" channels from tailwind.config.ts,
+ * swapped under `.dark`), so there is one stylesheet for both themes. The
+ * "violet" tone names are kept from the original design; they now paint the
+ * Cadence secondary blue.
  */
 const CSS = `
 .cf {
-  --ink: oklch(0.97 0.006 275);
-  --ink-2: oklch(0.76 0.02 275);
-  --ink-3: oklch(0.68 0.02 275);
-  --ink-4: oklch(0.58 0.02 275);
-  --bg: oklch(0.16 0.012 275);
-  --surface: oklch(0.17 0.012 275);
-  --surface-2: oklch(0.20 0.014 275);
-  --accent: oklch(0.80 0.16 148);
-  --accent-hi: oklch(0.88 0.14 148);
-  --violet: oklch(0.76 0.16 295);
-  --hair: oklch(1 0 0 / 0.09);
-  --hair-2: oklch(1 0 0 / 0.16);
-  --wash: oklch(1 0 0 / 0.03);
+  --ink: rgb(var(--c-slate-900));
+  --ink-2: rgb(var(--c-slate-700));
+  --ink-3: rgb(var(--c-slate-600));
+  --ink-4: rgb(var(--c-slate-500));
+  --bg: rgb(var(--c-canvas));
+  --panel: rgb(var(--c-white) / 0.72);
+  --panel-solid: rgb(var(--c-white));
+  --line: rgb(var(--c-slate-200));
+  --line-2: rgb(var(--c-slate-300));
+  --accent: rgb(var(--c-accent));
+  --accent-text: rgb(var(--c-accent-text));
+  --on-accent: rgb(var(--c-on-accent));
+  --violet: rgb(var(--c-blue-600));
+  --focus: rgb(var(--c-indigo-500));
+  --grad: linear-gradient(135deg, #F6D07E 0%, #F2C14E 55%, #E4A72E 100%);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 32px rgb(0 0 0 / 0.08);
 
   background:
-    radial-gradient(900px 520px at 78% -8%, oklch(0.30 0.09 295 / 0.55), transparent 70%),
-    radial-gradient(700px 460px at 8% 12%, oklch(0.28 0.08 148 / 0.35), transparent 70%),
+    radial-gradient(900px 560px at 8% -6%, rgb(var(--c-accent) / 0.14), transparent 65%),
+    radial-gradient(760px 520px at 100% 4%, rgb(94 161 255 / 0.10), transparent 65%),
+    linear-gradient(rgb(var(--c-slate-500) / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--c-slate-500) / 0.06) 1px, transparent 1px),
     var(--bg);
+  background-size: auto, auto, 32px 32px, 32px 32px, auto;
   color: var(--ink);
-  font-family: var(--cf-body), system-ui, sans-serif;
+  font-family: var(--font-sans), Inter, system-ui, sans-serif;
   min-height: 100vh;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
+.dark .cf { --shadow: 0 1px 2px rgb(0 0 0 / 0.24), 0 12px 32px rgb(0 0 0 / 0.28); }
 .cf *, .cf *::before, .cf *::after { box-sizing: border-box; }
-.cf ::selection { background: var(--accent); color: var(--bg); }
-.cf a { text-decoration: none; color: inherit; }
-.cf :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.cf ::selection { background: var(--accent); color: var(--on-accent); }
+.cf a { text-decoration: none; }
+.cf a:not(.cf-btn) { color: inherit; }
+.cf :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 6px; }
 .cf h1, .cf h2, .cf h3, .cf p, .cf dl, .cf dd, .cf ul { margin: 0; }
 .cf ul { list-style: none; padding: 0; }
 
 @keyframes cf-pulse { 0%,100% { opacity:.35 } 50% { opacity:1 } }
 @keyframes cf-rise { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:none } }
+@keyframes cf-spin { to { transform: rotate(360deg) } }
 
 .cf-shell { max-width: 1240px; margin: 0 auto; padding-inline: 32px; }
 
 /* Header */
 .cf-header {
   position: sticky; top: 0; z-index: 50;
-  backdrop-filter: blur(18px);
-  background: oklch(0.16 0.012 275 / 0.72);
-  border-bottom: 1px solid oklch(1 0 0 / 0.07);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  background: rgb(var(--c-canvas) / 0.75);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 0 rgb(var(--c-accent) / 0.08);
 }
-.cf-header-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 16px; }
-.cf-brand { display: flex; align-items: center; gap: 12px; }
+.cf-header-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 14px; }
+.cf-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .cf-mark {
-  width: 30px; height: 30px; border-radius: 9px; flex: none;
-  background: linear-gradient(140deg, var(--accent), oklch(0.72 0.17 295));
+  width: 30px; height: 30px; border-radius: 7px; flex: none;
+  border: 1px solid var(--accent); background: rgb(var(--c-accent) / 0.1); color: var(--accent-text);
   display: grid; place-items: center;
-  font-family: var(--cf-display), sans-serif; font-weight: 700; font-size: 13px; color: var(--bg);
 }
-.cf-mark-sm { width: 26px; height: 26px; border-radius: 8px; font-size: 11px; }
-.cf-brand-name { font-family: var(--cf-display), sans-serif; font-weight: 600; font-size: 16px; letter-spacing: -0.01em; }
+.cf-mark-icon { width: 15px; height: 15px; animation: cf-spin 8s linear infinite; }
+.cf-mark-sm { width: 26px; height: 26px; }
+.cf-mark-sm .cf-mark-icon { width: 13px; height: 13px; }
+.cf-brand-name {
+  font-family: var(--font-mono), ui-monospace, monospace; font-weight: 500; font-size: 13.5px;
+  letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap;
+}
 .cf-nav { display: flex; align-items: center; gap: 28px; font-size: 14px; }
-.cf-navlink { color: var(--ink-2); transition: color .15s ease; font-size: 14px; }
+.cf-navlink { color: var(--ink-3); transition: color .15s ease; font-size: 14px; }
 .cf-navlink:hover { color: var(--ink); }
 .cf-header-cta { display: flex; align-items: center; gap: 14px; }
 .cf-auth-skeleton {
-  display: block; width: 96px; height: 38px; border-radius: 999px;
-  background: oklch(1 0 0 / 0.08); animation: cf-pulse 1.6s ease-in-out infinite;
+  display: block; width: 96px; height: 34px; border-radius: 7px;
+  background: rgb(var(--c-slate-500) / 0.12); animation: cf-pulse 1.6s ease-in-out infinite;
 }
 
-/* Buttons */
+/* Buttons — Cadence GlowButton: mono label, 7px radius, amber gradient primary */
 .cf-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 999px; font-weight: 500; transition: background .15s ease, border-color .15s ease;
-  padding: 15px 26px; font-size: 15.5px; white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border-radius: 8px; font-family: var(--font-mono), ui-monospace, monospace; font-weight: 500;
+  transition: transform .2s cubic-bezier(.16,1,.3,1), box-shadow .2s ease, background .2s ease, border-color .2s ease, color .2s ease;
+  padding: 13px 22px; font-size: 14px; white-space: nowrap;
 }
-.cf-btn-sm { padding: 10px 18px; font-size: 14px; }
-.cf-btn-lg { padding: 16px 30px; font-size: 16px; font-weight: 600; }
-.cf-btn-solid { background: var(--ink); color: var(--bg); font-weight: 500; }
-.cf-btn-solid:hover { background: var(--accent); }
-.cf-btn-accent { background: var(--accent); color: var(--bg); font-weight: 600; }
-.cf-btn-accent:hover { background: var(--accent-hi); }
-.cf-btn-ghost { border: 1px solid var(--hair-2); color: oklch(0.94 0.01 275); }
-.cf-btn-ghost:hover { background: oklch(1 0 0 / 0.06); }
-.cf-btn-outline { border: 1px solid var(--hair-2); color: oklch(0.95 0.01 275); font-size: 14.5px; padding: 12px 18px; }
-.cf-btn-outline:hover { background: oklch(1 0 0 / 0.08); }
+.cf-btn:active { transform: scale(0.97); }
+.cf-btn-sm { padding: 8px 15px; font-size: 13px; }
+.cf-btn-lg { padding: 15px 28px; font-size: 15px; font-weight: 600; }
+.cf-btn-solid { background: var(--ink); color: var(--bg); }
+.cf-btn-solid:hover { background: var(--grad); color: var(--on-accent); }
+.cf-btn-accent {
+  background: var(--grad); color: var(--on-accent); font-weight: 600;
+  box-shadow: 0 2px 8px rgb(var(--c-accent) / 0.18), inset 0 1px 0 rgb(255 255 255 / 0.2);
+}
+.cf-btn-accent:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgb(var(--c-accent) / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.25); }
+.cf-btn-ghost { border: 1px solid var(--line-2); color: var(--ink-2); background: var(--panel); }
+.cf-btn-ghost:hover { border-color: rgb(var(--c-accent) / 0.5); color: var(--ink); }
+.cf-btn-outline { border: 1px solid var(--line-2); color: var(--ink); font-size: 13.5px; padding: 11px 18px; }
+.cf-btn-outline:hover { border-color: rgb(var(--c-accent) / 0.55); background: rgb(var(--c-accent) / 0.08); }
 
 /* Hero */
 .cf-hero { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 64px; align-items: center; padding-block: 96px 72px; }
-.cf-hero-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 28px; }
+.cf-hero-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 28px; animation: cf-rise .6s cubic-bezier(.22,1,.36,1) both; }
 .cf-eyebrow {
   display: inline-flex; align-items: center; gap: 10px;
   padding: 7px 14px 7px 10px; border-radius: 999px;
-  border: 1px solid oklch(1 0 0 / 0.12); background: oklch(1 0 0 / 0.04);
-  font-family: var(--cf-mono), monospace; font-size: 11.5px;
-  letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.82 0.02 275);
+  border: 1px solid var(--line); background: var(--panel);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  font-family: var(--font-mono), ui-monospace, monospace; font-size: 11.5px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3);
 }
-.cf-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--accent); flex: none; }
+.cf-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--accent); flex: none; box-shadow: 0 0 8px rgb(var(--c-accent) / 0.7); }
 .cf-dot-slow { animation: cf-pulse 2.2s ease-in-out infinite; }
 .cf-dot-fast { animation: cf-pulse 1.4s ease-in-out infinite; }
 .cf-h1 {
-  font-family: var(--cf-display), sans-serif; font-weight: 600;
-  font-size: clamp(48px, 6.2vw, 88px); line-height: 0.94; letter-spacing: -0.04em; text-wrap: balance;
+  font-family: var(--font-display), sans-serif; font-weight: 600;
+  font-size: clamp(46px, 6.2vw, 86px); line-height: 0.96; letter-spacing: -0.035em; text-wrap: balance;
 }
+/* Deep amber in light mode so the word clears 3:1 on the pale canvas; bright amber in dark. */
 .cf-grad {
-  background: linear-gradient(100deg, var(--accent), var(--violet));
+  background: linear-gradient(100deg, rgb(var(--c-indigo-700)), rgb(var(--c-indigo-500)));
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
-.cf-lede { max-width: 520px; font-size: 19px; line-height: 1.55; color: var(--ink-2); text-wrap: pretty; }
-.cf-hero-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.cf-stats { display: flex; gap: 40px; padding-top: 14px; border-top: 1px solid oklch(1 0 0 / 0.08); width: 100%; max-width: 520px; }
+.cf-lede { max-width: 520px; font-size: 19px; line-height: 1.55; color: var(--ink-3); text-wrap: pretty; }
+.cf-hero-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cf-stats { display: flex; gap: 40px; padding-top: 16px; border-top: 1px solid var(--line); width: 100%; max-width: 520px; }
 .cf-stat { display: flex; flex-direction: column; gap: 4px; }
-.cf-stat-n { font-family: var(--cf-display), sans-serif; font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
-.cf-stat-l { font-size: 13px; color: var(--ink-3); margin: 0; }
+.cf-stat-n { font-family: var(--font-display), sans-serif; font-size: 30px; font-weight: 600; letter-spacing: -0.02em; color: var(--accent-text); }
+.cf-stat-l { font-family: var(--font-mono), ui-monospace, monospace; font-size: 11.5px; color: var(--ink-4); margin: 0; }
 
 /* Stream panel */
 .cf-panel {
-  border: 1px solid oklch(1 0 0 / 0.10); border-radius: 20px;
-  background: oklch(0.19 0.014 275 / 0.85);
-  box-shadow: 0 40px 90px -40px oklch(0.05 0.02 275 / 0.9);
+  border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  box-shadow: var(--shadow), 0 0 40px rgb(var(--c-accent) / 0.08);
   overflow: hidden;
+  animation: cf-rise .6s cubic-bezier(.22,1,.36,1) .1s both;
 }
 .cf-panel-bar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 18px; border-bottom: 1px solid oklch(1 0 0 / 0.08);
-  font-family: var(--cf-mono), monospace; font-size: 11.5px; color: var(--ink-3);
+  padding: 13px 18px; border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono), ui-monospace, monospace; font-size: 11.5px; color: var(--ink-3);
 }
 .cf-panel-live { display: flex; align-items: center; gap: 8px; }
 .cf-panel-id { color: var(--ink-4); }
-.cf-panel-body { padding: 18px; display: flex; flex-direction: column; gap: 10px; font-family: var(--cf-mono), monospace; font-size: 12.5px; }
+.cf-panel-body { padding: 18px; display: flex; flex-direction: column; gap: 9px; font-family: var(--font-mono), ui-monospace, monospace; font-size: 12.5px; }
 .cf-line {
-  padding: 12px 14px; border-radius: 12px;
-  background: oklch(1 0 0 / 0.04); border: 1px solid oklch(1 0 0 / 0.07);
-  color: oklch(0.86 0.01 275); animation: cf-rise .5s ease both;
+  padding: 11px 14px; border-radius: 9px;
+  background: rgb(var(--c-canvas) / 0.6); border: 1px solid var(--line);
+  color: var(--ink-2); animation: cf-rise .5s ease both;
 }
-.cf-line-active { background: oklch(0.80 0.16 148 / 0.10); border-color: oklch(0.80 0.16 148 / 0.32); color: oklch(0.92 0.02 148); }
-.cf-tone-dim { color: oklch(0.62 0.02 275); }
+.cf-line-active { background: rgb(var(--c-accent) / 0.1); border-color: rgb(var(--c-accent) / 0.45); color: var(--ink); }
+.cf-tone-dim { color: var(--ink-4); }
 .cf-tone-violet { color: var(--violet); }
-.cf-tone-accent { color: var(--accent); }
-.cf-caret { animation: cf-pulse 1s steps(2) infinite; }
+.cf-tone-accent { color: var(--accent-text); }
+.cf-caret { animation: cf-pulse 1s steps(2) infinite; color: var(--accent-text); }
 .cf-panel-foot { display: flex; align-items: center; justify-content: space-between; padding: 14px 4px 2px; color: var(--ink-4); font-size: 11.5px; }
-.cf-pct { color: var(--accent); }
-.cf-track { height: 4px; border-radius: 99px; background: oklch(1 0 0 / 0.08); overflow: hidden; }
-.cf-fill { width: 62%; height: 100%; background: linear-gradient(90deg, var(--accent), var(--violet)); }
+.cf-pct { color: var(--accent-text); }
+.cf-track { height: 4px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.cf-fill { width: 62%; height: 100%; border-radius: 99px; background: var(--grad); box-shadow: 0 0 10px rgb(var(--c-accent) / 0.5); }
 
 /* Sections */
 .cf-section { padding-block: 80px; }
@@ -541,85 +555,103 @@ const CSS = `
 .cf-section-head-wrap { flex-wrap: wrap; }
 .cf-section-head-col { display: flex; flex-direction: column; gap: 12px; }
 .cf-section-sub { max-width: 380px; font-size: 16px; line-height: 1.55; color: var(--ink-3); }
-.cf-h2 { font-family: var(--cf-display), sans-serif; font-size: clamp(32px, 3.6vw, 52px); letter-spacing: -0.03em; font-weight: 600; line-height: 1.02; text-wrap: balance; }
-.cf-h2-xl { font-size: clamp(34px, 4.4vw, 60px); letter-spacing: -0.035em; max-width: 760px; }
-.cf-h3 { font-family: var(--cf-display), sans-serif; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
+.cf-h2 { font-family: var(--font-display), sans-serif; font-size: clamp(32px, 3.6vw, 50px); letter-spacing: -0.03em; font-weight: 600; line-height: 1.04; text-wrap: balance; }
+.cf-h2-xl { font-size: clamp(34px, 4.4vw, 58px); letter-spacing: -0.035em; max-width: 760px; }
+.cf-h3 { font-family: var(--font-display), sans-serif; font-size: 22px; font-weight: 600; letter-spacing: -0.015em; }
 .cf-h3-lg { font-size: 26px; }
-.cf-h3-sm { font-size: 21px; }
-.cf-copy { font-size: 15.5px; line-height: 1.6; color: oklch(0.72 0.02 275); }
-.cf-copy-sm { font-size: 14.5px; line-height: 1.55; }
-.cf-kicker { font-family: var(--cf-mono), monospace; font-size: 11.5px; letter-spacing: 0.08em; color: var(--accent); }
-.cf-kicker-violet { color: oklch(0.80 0.10 295); letter-spacing: 0; }
-.cf-kicker-muted { color: oklch(0.76 0.02 275); }
-.cf-flow { font-family: var(--cf-mono), monospace; font-size: 13px; color: var(--ink-3); margin: 12px 0 40px; overflow-x: auto; }
+.cf-h3-sm { font-size: 19px; }
+.cf-copy { font-size: 15px; line-height: 1.6; color: var(--ink-3); }
+.cf-copy-sm { font-size: 14px; line-height: 1.55; }
+.cf-kicker { font-family: var(--font-mono), ui-monospace, monospace; font-size: 11.5px; letter-spacing: 0.08em; color: var(--accent-text); }
+.cf-kicker-violet { color: var(--violet); }
+.cf-kicker-muted { color: var(--ink-4); }
+.cf-flow { font-family: var(--font-mono), ui-monospace, monospace; font-size: 13px; color: var(--ink-3); margin: 18px 0 40px; overflow-x: auto; }
 
-.cf-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-.cf-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
-.cf-grid-plans { gap: 18px; align-items: stretch; }
+.cf-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.cf-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.cf-grid-plans { gap: 16px; align-items: stretch; }
 
-.cf-card { border-radius: 20px; border: 1px solid var(--hair); background: var(--wash); display: flex; flex-direction: column; }
-.cf-card-step { padding: 32px; gap: 14px; transition: border-color .15s ease; }
-.cf-card-step:hover { border-color: oklch(0.80 0.16 148 / 0.45); }
+/* Glass card */
+.cf-card {
+  border-radius: 12px; border: 1px solid var(--line); background: var(--panel);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  box-shadow: var(--shadow);
+  display: flex; flex-direction: column;
+  transition: transform .2s cubic-bezier(.16,1,.3,1), border-color .2s ease;
+}
+.cf-card-step { padding: 30px; gap: 12px; }
+.cf-card-step:hover, .cf-card-agent:hover { transform: translateY(-2px); border-color: rgb(var(--c-accent) / 0.5); }
 .cf-card-lead {
   grid-column: span 2; padding: 28px; gap: 10px; min-height: 170px;
-  border-color: oklch(0.76 0.16 295 / 0.35);
-  background: linear-gradient(150deg, oklch(0.76 0.16 295 / 0.14), oklch(1 0 0 / 0.02));
+  border-color: rgb(var(--c-accent) / 0.45);
+  background:
+    radial-gradient(420px 220px at 0% 0%, rgb(var(--c-accent) / 0.16), transparent 70%),
+    var(--panel);
 }
-.cf-card-agent { padding: 28px; gap: 10px; transition: background .15s ease; }
-.cf-card-agent:hover { background: oklch(1 0 0 / 0.06); }
+.cf-card-agent { padding: 26px; gap: 8px; }
 
 /* Features — hairline grid via 1px gap over a rule-coloured backdrop */
 .cf-hairline {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
-  background: var(--hair); border: 1px solid var(--hair);
-  border-radius: 22px; overflow: hidden;
+  background: var(--line); border: 1px solid var(--line);
+  border-radius: 14px; overflow: hidden; box-shadow: var(--shadow);
 }
-.cf-cell { padding: 36px 32px; background: var(--surface); display: flex; flex-direction: column; gap: 12px; min-height: 200px; transition: background .15s ease; }
-.cf-cell:hover { background: var(--surface-2); }
+.cf-cell { padding: 34px 30px; background: var(--panel-solid); display: flex; flex-direction: column; gap: 12px; min-height: 196px; transition: background .15s ease; }
+.cf-cell:hover { background: rgb(var(--c-slate-50)); }
 .cf-chip { width: 10px; height: 10px; border-radius: 3px; }
-.cf-chip-accent { background: var(--accent); }
+.cf-chip-accent { background: var(--accent); box-shadow: 0 0 10px rgb(var(--c-accent) / 0.6); }
 .cf-chip-violet { background: var(--violet); }
 .cf-cell .cf-h3 { margin-top: 6px; }
 
 /* Pricing */
 .cf-billing {
-  display: flex; align-items: center; gap: 10px; padding: 6px;
-  border-radius: 999px; border: 1px solid oklch(1 0 0 / 0.12);
-  font-family: var(--cf-mono), monospace; font-size: 11.5px; letter-spacing: 0.05em;
+  display: flex; align-items: center; gap: 10px; padding: 5px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
+  font-family: var(--font-mono), ui-monospace, monospace; font-size: 11.5px; letter-spacing: 0.05em;
 }
-.cf-billing-on { padding: 8px 16px; border-radius: 999px; background: oklch(1 0 0 / 0.06); color: oklch(0.88 0.01 275); }
-.cf-billing-off { padding: 8px 12px; color: oklch(0.62 0.02 275); }
-.cf-plan { position: relative; padding: 30px 26px; gap: 18px; border-color: oklch(1 0 0 / 0.10); transition: border-color .15s ease; }
-.cf-plan:hover { border-color: oklch(1 0 0 / 0.22); }
+.cf-billing-on { padding: 7px 14px; border-radius: 6px; background: var(--accent); color: var(--on-accent); }
+.cf-billing-off { padding: 7px 10px; color: var(--ink-3); }
+.cf-plan { position: relative; padding: 28px 24px; gap: 18px; }
+.cf-plan:hover { border-color: var(--line-2); }
+.cf-plan-popular {
+  border-color: rgb(var(--c-accent) / 0.7);
+  box-shadow: 0 0 0 1px rgb(var(--c-accent) / 0.35), 0 18px 48px rgb(var(--c-accent) / 0.14);
+}
+.cf-plan-popular:hover { border-color: var(--accent); }
 .cf-badge {
-  position: absolute; top: -11px; left: 26px; padding: 5px 12px; border-radius: 999px;
-  background: var(--accent); color: var(--bg);
-  font-family: var(--cf-mono), monospace; font-size: 10.5px; letter-spacing: 0.06em;
+  position: absolute; top: -11px; left: 24px; padding: 4px 11px; border-radius: 999px;
+  background: var(--accent); color: var(--on-accent);
+  font-family: var(--font-mono), ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em;
+  box-shadow: 0 6px 18px rgb(var(--c-accent) / 0.35);
 }
 .cf-plan-head { display: flex; flex-direction: column; gap: 6px; }
-.cf-plan-name { font-family: var(--cf-display), sans-serif; font-size: 17px; font-weight: 600; }
-.cf-plan-blurb { font-size: 13.5px; color: oklch(0.66 0.02 275); }
+.cf-plan-name { font-family: var(--font-display), sans-serif; font-size: 17px; font-weight: 600; }
+.cf-plan-blurb { font-size: 13.5px; color: var(--ink-3); }
 .cf-plan-price { display: flex; align-items: baseline; gap: 6px; }
-.cf-plan-amount { font-family: var(--cf-display), sans-serif; font-size: 42px; font-weight: 600; letter-spacing: -0.03em; }
-.cf-plan-period { font-size: 13.5px; color: oklch(0.62 0.02 275); }
-.cf-plan-feats { display: flex; flex-direction: column; gap: 9px; padding-top: 4px; border-top: 1px solid oklch(1 0 0 / 0.08); }
-.cf-feat { font-size: 14.5px; color: oklch(0.78 0.02 275); display: flex; gap: 10px; align-items: baseline; }
-.cf-feat-dot { width: 5px; height: 5px; border-radius: 99px; background: var(--accent); flex: none; }
+.cf-plan-amount { font-family: var(--font-display), sans-serif; font-size: 42px; font-weight: 600; letter-spacing: -0.03em; }
+.cf-plan-period { font-family: var(--font-mono), ui-monospace, monospace; font-size: 12px; color: var(--ink-4); }
+.cf-plan-feats { display: flex; flex-direction: column; gap: 9px; padding-top: 16px; border-top: 1px solid var(--line); }
+.cf-feat { font-size: 14px; color: var(--ink-2); display: flex; gap: 10px; align-items: baseline; }
+.cf-feat-dot { width: 5px; height: 5px; border-radius: 99px; background: var(--accent); flex: none; transform: translateY(-2px); }
 .cf-plan-cta { margin-top: auto; }
 
 /* Closing CTA */
 .cf-cta {
-  padding: 72px 48px; border-radius: 28px; border: 1px solid oklch(1 0 0 / 0.10);
-  background: linear-gradient(140deg, oklch(0.80 0.16 148 / 0.16), oklch(0.76 0.16 295 / 0.18));
-  display: flex; flex-direction: column; align-items: center; gap: 24px; text-align: center;
+  position: relative; overflow: hidden;
+  padding: 72px 48px; border-radius: 16px; border: 1px dashed var(--line-2);
+  background:
+    radial-gradient(600px 300px at 50% 0%, rgb(var(--c-accent) / 0.16), transparent 70%),
+    var(--panel);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center;
 }
-.cf-cta-sub { max-width: 520px; font-size: 17px; line-height: 1.55; color: oklch(0.82 0.02 275); }
+.cf-cta-sub { max-width: 520px; font-size: 17px; line-height: 1.55; color: var(--ink-3); }
 
 /* Footer */
-.cf-footer { border-top: 1px solid oklch(1 0 0 / 0.08); }
-.cf-footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; padding-block: 32px; }
-.cf-copyright { font-size: 13.5px; color: oklch(0.62 0.02 275); }
-.cf-foot-nav { display: flex; gap: 24px; font-size: 13.5px; }
+.cf-footer { border-top: 1px solid var(--line); background: rgb(var(--c-canvas) / 0.6); }
+.cf-footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; padding-block: 28px; }
+.cf-copyright { font-family: var(--font-mono), ui-monospace, monospace; font-size: 12px; color: var(--ink-4); }
+.cf-foot-nav { display: flex; gap: 24px; font-size: 13.5px; flex-wrap: wrap; }
 
 /* Responsive — the design is desktop-first; these are the reflow points. */
 @media (max-width: 1080px) {
@@ -628,20 +660,25 @@ const CSS = `
   .cf-hairline { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 900px) {
-  .cf-hero { grid-template-columns: 1fr; gap: 48px; padding-block: 64px 56px; }
+  .cf-hero { grid-template-columns: 1fr; gap: 48px; padding-block: 56px 48px; }
   .cf-grid-3 { grid-template-columns: 1fr; }
   .cf-nav { display: none; }
   .cf-section-head { flex-direction: column; align-items: flex-start; gap: 16px; }
   .cf-section-sub { max-width: none; }
 }
 @media (max-width: 640px) {
-  .cf-shell { padding-inline: 20px; }
+  .cf-shell { padding-inline: 16px; }
+  .cf-header-cta { gap: 8px; }
+  .cf-brand-name { font-size: 12px; letter-spacing: 0.1em; }
   .cf-grid-4, .cf-hairline { grid-template-columns: 1fr; }
   .cf-card-lead { grid-column: span 1; }
   .cf-section { padding-block: 56px; }
-  .cf-cta { padding: 48px 24px; }
+  .cf-cta { padding: 48px 20px; }
   .cf-stats { gap: 24px; }
   .cf-cell { min-height: 0; }
+}
+@media (max-width: 420px) {
+  .cf-brand-name { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cf *, .cf *::before, .cf *::after { animation: none !important; transition: none !important; }

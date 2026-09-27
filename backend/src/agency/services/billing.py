@@ -20,13 +20,23 @@ PLAN_CONFIG = {
         "clients_limit": 1,
         "posts_limit": 30,
         "campaigns_limit": 5,
-        "features": ["1 client", "5 campaigns/mo", "No publishing"],
+        # Amplify packs per billing period (1 pack = up to 8 drafts). Sized so a
+        # tier's packs roughly cover its publishing allowance with room to drop
+        # atoms at review. Mirrored in db/migrations/260921_amplify.sql.
+        "generations_limit": 10,
+        # CF-11: this said "No publishing" beside a "Published posts 0/30" meter.
+        # The meter was right and the feature line was wrong — nothing gates
+        # publishing by plan, and `posts_limit` above is 30, so a free org can
+        # and does publish. Blocking it to match the copy would take away a
+        # capability real orgs are using; the copy is what was untrue.
+        "features": ["1 client", "5 campaigns/mo", "30 published posts/mo"],
     },
     "starter": {
         "price_id": _s.stripe_price_starter or "price_starter",
         "clients_limit": 3,
         "posts_limit": 200,
         "campaigns_limit": 20,
+        "generations_limit": 50,
         "amount": 4900,
         # No report is ever emailed (nothing in reports.py sends mail), so
         # "Email reports" was dropped in the 260817 stub audit.
@@ -37,6 +47,7 @@ PLAN_CONFIG = {
         "clients_limit": 10,
         "posts_limit": 1000,
         "campaigns_limit": 9999,
+        "generations_limit": 250,
         "amount": 14900,
         "features": [
             "10 clients",
@@ -53,6 +64,7 @@ PLAN_CONFIG = {
         "clients_limit": 999,
         "posts_limit": 99999,
         "campaigns_limit": 9999,
+        "generations_limit": 9999,
         "amount": 39900,
         "features": [
             "Unlimited clients",
@@ -64,6 +76,109 @@ PLAN_CONFIG = {
         ],
     },
 }
+
+
+#: How a workspace describes itself -> which plans its pricing page offers.
+#:
+#: PRESENTATION ONLY. Every profile bills against the same four ``PLAN_CONFIG``
+#: tiers, the same amounts and the same Stripe ``price_id``s; a profile decides
+#: only which of them are shown, in what order, and which one is called out.
+#: Nothing here grants a capability or changes a limit -- ``subscription`` remains
+#: the sole source of truth for what an org may do.
+#:
+#: ``tiers`` is also the display order. ``recommended`` must be one of them.
+WORKSPACE_PROFILES: dict[str, dict] = {
+    "product_owner": {
+        "label": "Product owner",
+        "description": "One product, marketed by the person who builds it.",
+        "tiers": ["free", "starter", "growth"],
+        "recommended": "starter",
+        # Why this tier: one product = one client, so the client ceiling never
+        # binds; what does bind is publishing at all, which Starter is the first
+        # tier to allow.
+        "reason": "One product is one client — Starter is the first tier that can publish.",
+    },
+    "freelancer": {
+        "label": "Freelancer / consultant",
+        "description": "A handful of clients, all of them run by you.",
+        "tiers": ["starter", "growth", "agency"],
+        "recommended": "growth",
+        "reason": "Growth lifts the client ceiling to 10 and opens every platform.",
+    },
+    "organization": {
+        "label": "Agency / organization",
+        "description": "A team running many client brands, with seats and white-label.",
+        "tiers": ["growth", "agency"],
+        "recommended": "agency",
+        "reason": "Agency is the only tier with white-label, API access and no client cap.",
+    },
+}
+
+
+def normalize_workspace_profile(value: str | None) -> str | None:
+    """A recognised profile key, or ``None``.
+
+    ``None`` is a real state -- "never chosen" -- and renders the full plan grid.
+    An unrecognised string (a stale row, a hand-edited database) normalises to
+    ``None`` rather than raising, so a bad value can never hide a plan someone
+    is entitled to buy.
+    """
+    return value if value in WORKSPACE_PROFILES else None
+
+
+def plans_for_profile(profile: str | None, current_tier: str | None = None) -> list[dict]:
+    """The plan list a workspace of this profile should see, in display order.
+
+    Two invariants, both load-bearing:
+
+    * ``current_tier`` is **always** included, even when the profile would not
+      offer it. Hiding the plan someone is already paying for would make their
+      own subscription unrepresentable on the billing screen.
+    * An unknown profile falls through to every plan. Fail open -- this is a
+      storefront, and the failure mode of guessing wrong is a hidden product.
+    """
+    key = normalize_workspace_profile(profile)
+    if key is None:
+        tiers = list(PLAN_CONFIG)
+    else:
+        cfg = WORKSPACE_PROFILES[key]
+        tiers = [t for t in cfg["tiers"] if t in PLAN_CONFIG]
+        if current_tier and current_tier in PLAN_CONFIG and current_tier not in tiers:
+            # Keep PLAN_CONFIG's own ordering rather than appending, so the grid
+            # never reads free -> growth -> starter.
+            tiers = [t for t in PLAN_CONFIG if t in {*tiers, current_tier}]
+    recommended = WORKSPACE_PROFILES[key]["recommended"] if key else None
+    return [
+        {"tier": t, **PLAN_CONFIG[t], "recommended": t == recommended}
+        for t in tiers
+    ]
+
+
+def workspace_profile_catalog() -> list[dict]:
+    """The choosable profiles, for the picker. Order is the dict's order."""
+    return [
+        {
+            "id": key,
+            "label": cfg["label"],
+            "description": cfg["description"],
+            "recommended_tier": cfg["recommended"],
+            "reason": cfg["reason"],
+        }
+        for key, cfg in WORKSPACE_PROFILES.items()
+    ]
+
+
+def generations_limit_for(sub: Subscription) -> int:
+    """The org's Amplify pack allowance.
+
+    A NULL column (a row created before 260921 that the migration's backfill
+    missed, e.g. an unknown tier) falls back to the tier's PLAN_CONFIG value,
+    then to the free tier -- never to "unlimited".
+    """
+    if sub.generations_limit is not None:
+        return int(sub.generations_limit)
+    plan = PLAN_CONFIG.get(str(sub.plan_tier), PLAN_CONFIG["free"])
+    return int(plan["generations_limit"])
 
 
 def _tier_for_price_id(price_id: str) -> str | None:
@@ -167,6 +282,7 @@ class BillingService:
             sub.plan_tier = plan_tier
             sub.clients_limit = plan["clients_limit"]
             sub.posts_limit = plan["posts_limit"]
+            sub.generations_limit = plan["generations_limit"]  # type: ignore[assignment]
             sub.status = "active"
         else:
             sub = Subscription(
@@ -176,6 +292,7 @@ class BillingService:
                 plan_tier=plan_tier,
                 clients_limit=plan["clients_limit"],
                 posts_limit=plan["posts_limit"],
+                generations_limit=plan["generations_limit"],
                 status="active",
             )
             db.add(sub)
@@ -198,6 +315,7 @@ class BillingService:
             return {"status": "ignored", "reason": "no_subscription_for_customer"}
 
         sub.posts_used = 0  # Reset usage on new billing period
+        sub.generations_used = 0  # type: ignore[assignment]
         await db.commit()
         return {"status": "usage_reset"}
 
@@ -213,6 +331,7 @@ class BillingService:
             sub.plan_tier = "free"
             sub.clients_limit = free["clients_limit"]
             sub.posts_limit = free["posts_limit"]
+            sub.generations_limit = free["generations_limit"]  # type: ignore[assignment]
             await db.commit()
         return {"status": "cancelled"}
 
@@ -260,6 +379,7 @@ class BillingService:
         sub.plan_tier = tier
         sub.clients_limit = plan["clients_limit"]
         sub.posts_limit = plan["posts_limit"]
+        sub.generations_limit = plan["generations_limit"]  # type: ignore[assignment]
         sub.status = data.get("status") or sub.status
 
         for column, key in (
@@ -283,7 +403,7 @@ class BillingService:
         result = await db.execute(select(Subscription).where(Subscription.org_id == org_id))
         sub = result.scalar_one_or_none()
         if not sub:
-            return {"plan_tier": "free", **PLAN_CONFIG["free"]}
+            return {"plan_tier": "free", **PLAN_CONFIG["free"], "generations_used": 0}
         plan = PLAN_CONFIG.get(sub.plan_tier, {})
         return {
             "plan_tier": sub.plan_tier,
@@ -292,6 +412,10 @@ class BillingService:
             "posts_limit": sub.posts_limit,
             "posts_used": sub.posts_used,
             **plan,
+            # After the spread: the row's usage and limit are the truth, not the
+            # tier default (which would hide a per-org override).
+            "generations_used": sub.generations_used or 0,
+            "generations_limit": generations_limit_for(sub),
         }
 
     async def check_quota(self, db: AsyncSession, org_id: UUID, resource: str = "posts") -> bool:
@@ -314,6 +438,33 @@ class BillingService:
 
     def get_plans(self) -> list:
         return [{"tier": k, **v} for k, v in PLAN_CONFIG.items()]
+
+    async def get_workspace_profile(self, db: AsyncSession, org_id: UUID) -> str | None:
+        """The org's stored profile, normalised. Never raises on a stale value."""
+        result = await db.execute(select(Organization).where(Organization.id == org_id))
+        org = result.scalar_one_or_none()
+        return normalize_workspace_profile(org.workspace_profile if org else None)
+
+    async def set_workspace_profile(
+        self, db: AsyncSession, org_id: UUID, profile: str | None
+    ) -> str | None:
+        """Store the org's profile. ``None`` clears it back to "never chosen".
+
+        Rejects an unrecognised key rather than storing it -- the column has a
+        CHECK constraint, and a 400 here is a better error than a database one.
+        Changing this does not touch the subscription: it is a display choice,
+        so it never starts, stops or reprices anything.
+        """
+        if profile is not None and profile not in WORKSPACE_PROFILES:
+            raise ValueError(f"Unknown workspace profile: {profile}")
+        result = await db.execute(select(Organization).where(Organization.id == org_id))
+        org = result.scalar_one_or_none()
+        if not org:
+            raise ValueError("Organization not found")
+        org.workspace_profile = profile
+        await db.commit()
+        logger.info("workspace_profile_set", org_id=str(org_id), profile=profile)
+        return profile
 
 
 billing = BillingService()

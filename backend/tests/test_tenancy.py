@@ -8,7 +8,7 @@ regardless of the HTTP verb.
 import pytest
 
 from tests.conftest import (
-    auth_header_for,
+    auth_for,
     create_campaign_row,
     create_client_row,
     create_content_row,
@@ -40,7 +40,7 @@ async def two_orgs(session_factory):
     return {
         "org_a": org_a,
         "org_b": org_b,
-        "headers_a": auth_header_for(org_a),
+        "headers_a": await auth_for(session_factory, org_a),
         "client_a": client_a,
         "client_b": client_b,
         "camp_a": camp_a,

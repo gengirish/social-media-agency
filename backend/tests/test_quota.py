@@ -9,7 +9,7 @@ from datetime import date
 
 from agency.services.billing import PLAN_CONFIG
 from tests.conftest import (
-    auth_header_for,
+    auth_for,
     create_campaign_row,
     create_client_row,
     create_content_row,
@@ -44,7 +44,7 @@ async def test_campaign_creation_blocked_at_limit(client, session_factory):
         await create_campaign_row(session_factory, org_id, client_id, name=f"c{i}")
 
     resp = await client.post(
-        f"{API}/campaigns", json=_brief(client_id), headers=auth_header_for(org_id)
+        f"{API}/campaigns", json=_brief(client_id), headers=await auth_for(session_factory, org_id)
     )
     assert resp.status_code == 402
     assert "limit" in resp.json()["detail"].lower()
@@ -62,7 +62,7 @@ async def test_campaign_creation_allowed_under_limit(client, session_factory, mo
     client_id = await create_client_row(session_factory, org_id)
 
     resp = await client.post(
-        f"{API}/campaigns", json=_brief(client_id), headers=auth_header_for(org_id)
+        f"{API}/campaigns", json=_brief(client_id), headers=await auth_for(session_factory, org_id)
     )
     assert resp.status_code == 201, resp.text
     assert resp.json()["status"] == "running"
@@ -75,10 +75,12 @@ async def test_publish_blocked_when_posts_quota_exhausted(client, session_factor
     org_id = await create_org(session_factory, "PubCapped")
     await create_subscription(session_factory, org_id, posts_limit=30, posts_used=30)
     client_id = await create_client_row(session_factory, org_id)
-    content_id = await create_content_row(session_factory, org_id, client_id)
+    content_id = await create_content_row(
+        session_factory, org_id, client_id, status="approved"
+    )
 
     resp = await client.post(
-        f"{API}/publishing/{content_id}/publish", headers=auth_header_for(org_id)
+        f"{API}/publishing/{content_id}/publish", headers=await auth_for(session_factory, org_id)
     )
     assert resp.status_code == 402
     assert "limit" in resp.json()["detail"].lower()
@@ -91,10 +93,12 @@ async def test_publish_passes_quota_gate_under_limit(client, session_factory):
     org_id = await create_org(session_factory, "PubOk")
     await create_subscription(session_factory, org_id, posts_limit=30, posts_used=0)
     client_id = await create_client_row(session_factory, org_id)
-    content_id = await create_content_row(session_factory, org_id, client_id)
+    content_id = await create_content_row(
+        session_factory, org_id, client_id, status="approved"
+    )
 
     resp = await client.post(
-        f"{API}/publishing/{content_id}/publish", headers=auth_header_for(org_id)
+        f"{API}/publishing/{content_id}/publish", headers=await auth_for(session_factory, org_id)
     )
     assert resp.status_code != 402
     assert resp.status_code == 400

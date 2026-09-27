@@ -3,12 +3,27 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from sqlalchemy import func, select
 
-from agency.dependencies import get_current_user, get_db, get_org_id
+from agency.dependencies import get_current_user, get_current_user_id, get_db, get_org_id
 from agency.models.schemas import ContentPieceResponse, ContentUpdateRequest
 from agency.models.tables import Client, ContentPiece
+from agency.permissions import Capability, ensure_cap, require_cap
+from agency.services.content_approval import (
+    ContentGateError,
+    apply_content_edit,
+    approve_content_piece,
+    retry_failed_content,
+)
 from agency.services.tracing import trace_config
 from agency.services.webhook_dispatcher import EVENT_CONTENT_APPROVED, dispatch_webhook
 
@@ -228,6 +243,17 @@ async def update_content(
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
+    """Edit a content piece.
+
+    ``status`` may only be set to ``draft`` or ``rejected`` here. ``approved``,
+    ``scheduled`` and ``published`` are reachable only through their dedicated
+    endpoints (``/content/{id}/approve``, ``/publishing/{id}/schedule``,
+    ``/publishing/{id}/publish``) → ``400 {"code": "status_via_dedicated_endpoint"}``.
+
+    **Editing the body or hashtags of an ``approved`` or ``scheduled`` piece resets it
+    to ``draft``** and clears its schedule: edited content must be re-moderated and
+    re-approved before it can be published.
+    """
     result = await db.execute(
         select(ContentPiece).where(
             ContentPiece.id == content_id, ContentPiece.org_id == org_id
@@ -237,14 +263,16 @@ async def update_content(
     if not piece:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
 
-    if request.title is not None:
-        piece.title = request.title
-    if request.body is not None:
-        piece.body = request.body
-    if request.hashtags is not None:
-        piece.hashtags = request.hashtags
-    if request.status is not None:
-        piece.status = request.status
+    try:
+        apply_content_edit(
+            piece,
+            title=request.title,
+            body=request.body,
+            hashtags=request.hashtags,
+            status=request.status,
+        )
+    except ContentGateError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
     await db.commit()
     await db.refresh(piece)
@@ -450,14 +478,41 @@ Return ONLY a JSON array with one object per variant, in label order:
     }
 
 
-@router.post("/{content_id}/approve")
+@router.post(
+    "/{content_id}/approve",
+    dependencies=[Depends(require_cap(Capability.CONTENT_APPROVE))],
+)
 async def approve_content(
     content_id: UUID,
     background: BackgroundTasks,
-    user=Depends(get_current_user),
+    request: Request,
+    override: bool = Query(False, description="Approve despite moderation issues"),
+    user_id: UUID = Depends(get_current_user_id),
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
+    """Moderate, then approve. Only ``draft`` or ``rejected`` pieces can be approved.
+
+    - 200 ``{"id", "status": "approved", "moderation": {"status", "issues"}}`` where
+      ``moderation.status`` is ``passed``, ``unavailable`` (LLM check failed open) or
+      ``overridden``.
+    - 409 ``{"code": "moderation_flagged", "issues": [{"severity", "message"}]}`` —
+      status unchanged; retry with ``?override=true`` to approve anyway (recorded in
+      ``metadata.moderation.override_by``).
+    - 409 ``{"code": "invalid_status", "status": <current>}``.
+    - 403 ``{"code": "insufficient_permissions", "required": "content.approve"}`` — or
+      ``"content.override"`` when ``?override=true`` is used without that capability.
+
+    Two capabilities, deliberately split. ``content.approve`` gates the route itself,
+    so a ``viewer`` cannot approve at all. ``content.override`` is checked *here*,
+    inside the handler, because it depends on a query flag a route-level dependency
+    cannot see: a ``member`` is a human and may approve clean copy, but must not be
+    able to wave a moderation flag through onto a live client account. The check runs
+    before the row is loaded, so a refusal can never leave the piece half-approved.
+    """
+    if override:
+        await ensure_cap(Capability.CONTENT_OVERRIDE, request, user_id, org_id, db)
+
     result = await db.execute(
         select(ContentPiece).where(
             ContentPiece.id == content_id, ContentPiece.org_id == org_id
@@ -467,8 +522,12 @@ async def approve_content(
     if not piece:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
 
-    piece.status = "approved"
-    await db.commit()
+    try:
+        response = await approve_content_piece(
+            db, piece, org_id=org_id, override=override, user_id=user_id
+        )
+    except ContentGateError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
     # After the response: retries + backoff must not sit in the request path.
     background.add_task(
@@ -482,7 +541,56 @@ async def approve_content(
             "platform": piece.platform,
         },
     )
-    return {"status": "approved", "content_id": str(content_id)}
+    return response
+
+
+@router.post(
+    "/{content_id}/retry",
+    dependencies=[Depends(require_cap(Capability.CONTENT_APPROVE))],
+)
+async def retry_content(
+    content_id: UUID,
+    request: Request,
+    override: bool = Query(False, description="Retry despite moderation issues"),
+    user_id: UUID = Depends(get_current_user_id),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """Send a piece whose publish failed back to ``approved``, ready to try again (CF-06).
+
+    A ``failed`` post used to offer only Delete, so a transient failure — an expired
+    token, a platform 503 — meant rewriting the copy from scratch. This restores the
+    publishable state it was in before the attempt and clears the recorded error.
+
+    Moderation runs again: a failed piece can be edited (an edit leaves it failed),
+    so the text may not be the text that was approved.
+
+    - 200 — same body as ``/approve``.
+    - 409 ``{"code": "not_failed", "status": <current>}``.
+    - 409 ``{"code": "moderation_flagged" | "empty_content"}`` — status unchanged.
+
+    Gated on ``content.approve``, and on ``content.override`` for ``?override=true``,
+    for the same reason approval is: this is what makes a post publishable again.
+    """
+    if override:
+        await ensure_cap(Capability.CONTENT_OVERRIDE, request, user_id, org_id, db)
+
+    piece = (
+        await db.execute(
+            select(ContentPiece).where(
+                ContentPiece.id == content_id, ContentPiece.org_id == org_id
+            )
+        )
+    ).scalar_one_or_none()
+    if not piece:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
+
+    try:
+        return await retry_failed_content(
+            db, piece, org_id=org_id, override=override, user_id=user_id
+        )
+    except ContentGateError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
 
 
 @router.post("/{content_id}/generate-image")

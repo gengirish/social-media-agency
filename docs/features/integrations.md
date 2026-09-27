@@ -1,5 +1,5 @@
 # Platform Integrations
-<!-- verified: 260817 -->
+<!-- verified: 260923 -->
 
 ## Social Publishing
 **Status**: [LIVE]
@@ -14,6 +14,18 @@
 
 Publishing is triggered via `POST /api/v1/publishing/{content_id}/publish` or automatically by the scheduler when `scheduled_at` arrives. OAuth tokens are stored encrypted on `PlatformAccount` and decrypted at publish time.
 
+<!-- verified: 260923 -->
+**Connecting** (260923): real provider redirects from Setup › Accounts — signed `state`, PKCE for X, return page at `/api/oauth/{platform}/callback`. See [api-endpoints.md › OAuth](api-endpoints.md#oauth).
+
+**Reading (Inbox, 260923)** — `services/inbox.py`, live, nothing stored except triage state:
+
+| Platform | Reads | Replies | Needs |
+|----------|-------|---------|-------|
+| X / Twitter | [LIVE] mentions timeline `GET /2/users/:id/mentions` | [LIVE] `POST /2/tweets` reply | `tweet.read users.read` (held) **and** an X API plan that allows reads (402/403 surface as `api_access_denied`). Access tokens auto-refreshed |
+| LinkedIn | [LIVE, gated] comments on posts CampaignForge published | [LIVE, gated] comment | `LINKEDIN_INBOX_SCOPE` (`r_member_social` or `r_organization_social`, granted only to approved apps); `LINKEDIN_API_VERSION` header. Commenter names are not resolvable with these scopes |
+| Facebook / others | — (`unsupported`) | — | — |
+| DMs (any) | not read | — | X `dm.read` not requested; LinkedIn has no messaging API for this app |
+
 **Metrics caveat:** the live analytics path still runs through `services/analytics_fetcher.py`, which persists all-zero snapshots. `services/platform_metrics.py` holds the real fetchers but has no callers yet — "Meta (Facebook & Instagram)" as a headline capability claim currently overstates Instagram on both publish and metrics.
 
 ## Stripe
@@ -27,6 +39,10 @@ Checkout sessions, webhook processing, subscription lifecycle. See [billing.md](
 **File**: `backend/src/agency/services/email_service.py`
 
 Transactional email. All outbound mail goes through `send_email()`, which sends from a **shared sender inbox** — `AGENTMAIL_FROM_EMAIL`, default `alerts@intelliforge.tech`. An org that has its own `organization.agentmail_inbox_id` overrides the shared sender per message; nothing provisions per-org inboxes yet, so in practice everything sends from the shared address.
+
+**The AgentMail send limit is per *organization*, not per app.** The free plan allows 100 sends/day across the whole AgentMail account, and `alerts@intelliforge.tech` is shared with other IntelliForge senders — the daily "IntelliForge Morning Briefing" newsletter among them. A bulk blast can therefore exhaust the quota before a single team invite is attempted, and every send for the rest of the window returns 429 while the key, the domain and the sender inbox are all perfectly healthy. `_describe_send_failure` names this case explicitly instead of returning the raw `ApiError` header dump. If transactional mail needs to be independent of bulk mail, it needs its own AgentMail organization or a paid plan — a separate inbox on the same account does not help, because the quota is account-scoped.
+
+**`AGENTMAIL_API_KEY` must be set as a Fly secret, and the key must be live.** Because `send_email()` degrades quietly by contract, neither failure is visible from the server's health: the API looks fine and accounts are still created, but no mail leaves. Production ran with the secret entirely absent and every team invite logged `team_invite_email_not_sent reason='AgentMail is not configured'` while the UI reported the account created. A key that is present but revoked fails differently and just as quietly — `ensure_sender_inbox()` gets a 403 and returns None. Check `GET /api/v1/health/email` and read `can_send`; `configured` only means a key string exists.
 
 `send_email()` **never raises and never lies**: it returns `SendResult(sent, reason, inbox_id)`, and a missing key, an unverified domain, or an AgentMail outage yields `sent=False` with a reason. Callers must surface `sent` honestly rather than claiming an email went out — `POST /api/v1/team/invite` returns `email_sent: bool` for exactly this reason.
 
@@ -80,9 +96,10 @@ Slack bot with event and slash-command handlers at `POST /api/v1/integrations/sl
 **Status**: [LIVE]
 **File**: `backend/src/agency/services/magic_brief.py`
 
-HTTP fetch of target URL + LLM-powered brand profile extraction. No external API key beyond LLM provider.
+HTTP fetch of target URL + LLM-powered brand profile extraction. No external API key beyond LLM provider. The fetch is restricted to public addresses by `services/url_safety.py`.
 
 ## Exa — Search
-**Status**: [PLANNED]
+**Status**: [LIVE] <!-- verified: 260923 -->
+**File**: `backend/src/agency/services/exa_client.py`
 
-`EXA_API_KEY` is defined in `config.py` and `.env.example`, but no service reads it. `services/trends.py` returns hardcoded topics instead of querying Exa.
+Shared Exa client, keyed by `EXA_API_KEY`. Callers: `services/trends.py`, `agents/competitive_intel.py`, and (260923) `services/competitor_research.py` for Create › Content comparison pages and niche scans. With no key or a failed search, callers return an explicit `unavailable` record with the reason — output is never presented as web-researched when it was not. (This section previously said `[PLANNED]`; that was stale since Phase 1.)

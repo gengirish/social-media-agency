@@ -4,6 +4,166 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260925 — Workspace profile shapes pricing; Ads gets its own nav group
+
+- **Added**: `organization.workspace_profile` (`product_owner` | `freelancer` | `organization`, nullable) and `WORKSPACE_PROFILES` in `services/billing.py`. `/pricing` now opens with a "Which of these are you?" picker; choosing one filters and reorders the plan grid and marks one tier "Best for you". **Prices are untouched** — all profiles bill against the same four `PLAN_CONFIG` amounts and the same Stripe price IDs, so no new Stripe products were created. Endpoints: `GET`/`PUT /api/v1/billing/workspace-profile` (`PUT` needs `billing.manage`), and `GET /billing/plans` now returns the shaped list plus `all_plans`, `profile` and `profiles`.
+  - Deliberately **not** `organization.account_type`: that is a one-way flip driving `permissions.py`, and merging them would let a pricing-page click move someone's permissions. The profile grants nothing.
+  - Two fail-open invariants, both tested in `tests/test_workspace_profile.py`: the org's current tier is always shown even when its profile would not offer it, and an unrecognised stored value falls back to the full grid.
+  - **Needs `db/migrations/260925_workspace_profile.sql` run on Neon** before deploy — without it `/billing/plans` fails with `UndefinedColumn` and the pricing page cannot load.
+- **Changed**: **Ads** is now its own top-level nav group (position 3, keyboard `3`), holding Ads `/create/ads` and Templates `/templates`, both moved out of Create. Shortcuts are `1`–`7`; the binding was already by index over the visible groups, so nothing else changed. Note `/templates` still holds **campaign** templates — **Use Template** routes to `/campaigns/new`. It sits under Ads by request; no ad-creative template library exists.
+- **Changed**: the three looping UI animations were slowed — `breathe` 3s → 5s (the glow on primary CTAs), `pulse-dot` 1.5s → 2.4s (live status dots, intake cursor), `ring-pulse` 1.8s → 3s (connected-account ring). Single-source edits in `tailwind.config.ts`.
+- **Added**: **Create image** and **Short video** on Instagram Queue cards, beside **Get creative brief**, both disabled and tagged "Soon". Image generation does already exist server-side (`POST /content/{id}/generate-image`, fal.ai, live with `FAL_API_KEY`); what it lacks is UI, quota accounting and any rendering of `media_urls` on the card. Short-video generation has no backend.
+
+---
+
+## 260925 — Team invite emails never sent
+
+Invites created accounts and mailed nothing. Three independent causes, stacked, each one silent:
+
+1. **`AGENTMAIL_API_KEY` was never set as a Fly secret.** `send_email` returned `sent=False` on every invite and production logged `team_invite_email_not_sent reason='AgentMail is not configured'`. Nothing was broken in the send path — it was never reached.
+2. **The key in `backend/.env` was revoked** (403 from `inboxes.get`), so local dev failed too, and copying that key to Fly would not have fixed anything.
+3. **The AgentMail daily send limit is organization-wide** (100/day, free plan) and `alerts@intelliforge.tech` is shared with the IntelliForge Morning Briefing newsletter, whose blast exhausts the quota before any invite is attempted. 429 with a healthy key, domain and inbox.
+
+- **Fixed**: `AGENTMAIL_API_KEY`, `AGENTMAIL_FROM_EMAIL`, `AGENTMAIL_DEFAULT_DOMAIN` set as Fly secrets on `campaignforge-api`; live key restored in `backend/.env`.
+- **Added**: `POST /api/v1/team/{user_id}/resend-invite` — rotates the temporary password and re-mails the invitation. Previously a failed *email* left a real account behind and `POST /team/invite` refused that address forever ("User with this email already exists"), so an invitee whose mail never arrived was unreachable through the UI. 403 on self, tenant-scoped, and the password is rotated rather than reused because the original was already shown in a response and a toast. Surfaced as a **Resend invite** button on `/team`.
+- **Added**: `GET /api/v1/health/email` — `can_send` performs live sender-inbox resolution. `configured` only means a key string exists, which is what made the original failure invisible. Never returns key material.
+- **Changed**: `email_service._describe_send_failure` classifies AgentMail failures. `ApiError.__str__` renders every response header, and that string used to travel into the invite response and out to a user-facing toast; 429 (shared quota) and 403 (rejected key) now read as one actionable sentence, with the full exception kept in the log.
+- **Unchanged**: `send_email` still never raises and never lies. `email_sent` remains authoritative on both the invite and resend responses.
+
+---
+
+## 260923 — Cadence full parity
+
+Every Cadence Crew prototype screen now has a CampaignForge route (branch `feat/cadence-parity`; plan and screen map in [`docs/cadence-parity-plan-260923.md`](../cadence-parity-plan-260923.md)). Where Cadence simulated something — OAuth popups, a seeded inbox, browser-side LLM calls, sending — this does it for real or says it is unavailable. Nav order stays Setup, Create, Posts (not Cadence's Setup, Posts, Create).
+
+> **Deploy order:** run by hand on Neon, in order, *before* the backend deploy — `db/migrations/260923_creative_asset.sql`, `260923_amplify_asset_source.sql` (FK to `creative_asset`), `260923_inbox.sql`. Otherwise `/assets`, every Create screen, `/amplify/*` and `/inbox` fail with `UndefinedTable` / `UndefinedColumn`. New optional env vars: `LINKEDIN_INBOX_SCOPE`, `LINKEDIN_API_VERSION` (added to both `.env.example` files).
+
+### Foundation
+- **Added**: active client — top-nav `ClientSwitcher` (Cadence's product switcher) backed by `GET /clients/overview` (real per-client setup progress and queue counts); every Create / Posts / Inbox / Insights screen scopes to it.
+- **Added**: `/welcome` (adaptive onboarding, then a welcome-back hub; the logo links here), public `/legal` (privacy, terms, AI notice), dashboard footer, keyboard shortcuts `1`–`6` (nav groups) and `?` (help), last-visited sub-tab per group, ambient glows and Cadence motion keyframes.
+- **Added**: campaign focus — `PUT/DELETE /clients/{id}/campaign-focus` (`client.settings.campaign_focus`), shown by `CampaignIndicator`, fed to every generator except the PRFAQ.
+- **Added**: `creative_asset` table + `/assets` CRUD — stored output of the Create screens (closed `ASSET_KINDS`).
+- **Changed**: `services/generation_quota.py` and `services/brand_context.py` extracted from Amplify; every generator now shares one quota (1 generation per successful call), one tenant-scoped client lookup and one brand prompt block.
+- **Added**: UI primitives `ErrorBanner`, `ConfirmDialog`, `undoToast` (8 s), `SearchInput`, `PlatformFilterRow`, `CampaignIndicator`.
+- **Changed**: nav regrouped — **Setup** (Profile, Clients, Accounts) · **Create** (Campaigns, Content, Email, Launch, Amplify, Ads, Templates) · **Posts** (Queue, Calendar) · **Inbox** · **Insights** · **Settings**.
+
+### Setup
+- **Added**: `/setup/profile` — intake (real website scan via Magic Brief, coached audience/differentiator answers, fixed tone register), then Campaign, Brand Voice (generate → edit → approve) and Strategy Lens (saved as an asset). Endpoints `/setup/{client_id}/profile`, `/profile/evaluate-answer`, `/brand-voice/generate`, `/brand-voice`, `/strategy-lens`. Merges column by column; never wipes fields it did not mention.
+- **Added**: `/setup/accounts` (moved from `/settings?tab=platforms`, which still resolves) with `GET /setup/{client_id}/accounts`, a scope-listing consent dialog and real provider redirects.
+- **Changed**: OAuth — signed `state` (HS256, 15 min, bound to org + platform + client, key **derived** from `JWT_SECRET` so it can never verify as a login token); **PKCE for X** (verifier in `sessionStorage`, HTTP Basic token exchange); LinkedIn requests `LINKEDIN_INBOX_SCOPE` on top of its publishing scopes when set; new in-app return page `app/(dashboard)/api/oauth/[platform]/callback`.
+
+### Posts
+- **Added**: `routers/post_studio.py` — `POST /content/generate`, `POST /content` (manual), `POST /content/{id}/regenerate`, `POST /content/{id}/creative-brief`, `DELETE /content/{id}` (409 `published_locked` for published), `GET /post-studio/channels`. Everything created or rewritten is Pending; a draft may carry a *planned* day in `scheduled_at` that the scheduler ignores. Generations are not charged if the caller disconnected.
+- **Changed**: `GET /publishing/calendar` gains `client_id` and `include_pending`; items include `hashtags`.
+- **Changed**: Queue rebuilt as Cadence's list — sidebar (client card, channels, usage, stats), generate posts, regenerate, creative brief, autosaving Pending edits, bulk approve/publish/delete, delete with undo, run report. Calendar — month/week, drag reschedule gated on approval, keyboard reschedule, add your own post, fill with AI, an honest "This week" panel.
+
+### Create
+- **Added**: `/create/content` — niche scan, blog post (keyword memory, AI-search pack, blog-from-gap), comparison page, video script; comparison/scan grounded in Exa research or explicitly marked unavailable.
+- **Added**: `/create/email` — 5 lifecycle campaign types; drafts only, nothing is sent.
+- **Added**: `/create/launch` — product launch kit, community kit, partnership outreach, and the PRFAQ stress-test (brain tier, stored at `client.settings.prfaq`, ignores the campaign focus; launch kits record `prfaq_addressed`).
+- **Added**: `/create/ads` — Google RSA / Meta copy on the ad-copy tier with code-enforced guardrails (`services/ad_guardrails.py`: limits, trademark and personal-attribute risks) and advisory moderation that fails open visibly. Copy and structure only.
+- **Changed**: Amplify accepts `source_asset_id` (blog post, comparison page, niche scan, video script, launch kit) — "From Create" source; recorded on `repurpose_pack.source_asset_id` and each committed atom.
+
+### Inbox
+- **Added**: `/inbox` — live X mentions and (with `LINKEDIN_INBOX_SCOPE`) LinkedIn comments on CampaignForge-published posts; nothing seeded. Explicit per-account status (`ok`, `not_connected`, `needs_reconnect`, `api_access_denied`, `rate_limited`, `unsupported`, `error`); DMs marked unavailable. Read/handled state in the new `inbox_item_state` table. Reply suggestions (worker tier, message fenced as untrusted). `POST /inbox/reply` posts for real only on a confirmed human click, only to an item in that account's fetched inbox, after moderation (override recorded), and writes `audit_log` — the first caller of `log_action`.
+
+### Insights & Settings
+- **Added**: `GET /insights/summary` — per-client funnel, publish/moderation rates, content quality signal, engagement and recommendations, every ratio gated on n ≥ 3 with thresholds shown. `POST /insights/advocacy` — review request / case study / proof line citing only server-supplied counts.
+- **Added**: `/workspace/activity` (activity log derived from real rows), `/workspace/export` (client JSON export, no tokens), `/workspace/posting-prefs` (voice register + cadence, fed to every generator). Settings gains per-client tabs: Client profile, Connected accounts, Posting preferences, Plan & usage, Activity log, Export.
+- **Changed**: the approval gate records moderation refusals (`moderation_flagged` product event) and pre-approval edits (`metadata.edited_before_approval`) so the quality signal has real data. New server-authored events: `moderation_flagged`, `advocacy_generated`.
+
+### Not replicated
+- Cadence's **Reset workspace data** (destructive; a workspace holds many clients), simulated OAuth popups, seeded inbox data.
+
+### Known gaps found while documenting
+- `routers/audit.py`'s empty-state reason ("no route writes audit entries") is stale now that Inbox replies are audited.
+- OAuth callback verifies `state` only when it is sent; account handles are still the `{platform}_user` placeholder.
+- `services/oauth_state.py`'s docstring says it signs with `JWT_SECRET`; the code uses the derived key.
+- Amplify's quota hint still says "packs left this period" although the pool is now shared by every generator.
+- The workspace export's Amplify packs omit `source_asset_id`.
+
+Tests: `test_foundation.py`, `test_setup_profile.py`, `test_post_studio.py`, `test_create_content.py`, `test_create_email_launch.py`, `test_ad_guardrails.py`, `test_create_ads.py`, `test_inbox.py`, `test_insights_settings.py`; E2E `navigation.spec.ts` asserts the H1 of every new route.
+
+---
+
+## 260922 — Edit, archive and restore clients
+
+- **Added**: client editing: `PATCH /clients/{id}` (partial) and `GET`/`PUT /clients/{id}/brand-profile` (upsert, partial on update). Until now a client's details and brand voice could be set only at creation, and `POST .../brand-profile` failed on a second call. The client page has an **Edit client** form covering both, plus an **About** card (description, website, email) it did not show before.
+- **Added**: archive / restore: `POST /clients/{id}/archive[?unschedule=true]`, `POST /clients/{id}/restore`, `GET /clients?archived=true`. Soft delete on the existing `client.is_active`; nothing is removed. Archive refuses with 409 `has_scheduled_posts` while posts are scheduled, unless `unschedule=true`, which returns them to `approved`.
+- **Changed**: schedule, publish-now and the scheduler refuse an archived client's posts (409 `client_archived`; the scheduler marks the post `failed`). With the archive rule above, nothing can go live on an archived client's accounts.
+- **Changed**: `/clients` has Active / Archived tabs, and the whole client tile opens the detail page (previously only the name was a link). Campaigns and the Queue resolve client names from active + archived clients, so an archived client's posts keep their label.
+- Analytics: `client-edit`, `client-archive`, `client-restore`. Tests: `tests/test_client_edit.py`.
+- **Fixed**: the scheduler's connected-account lookup did not filter on `org_id` — the same gap closed in `publish_now` on 260817. An account row owned by another tenant but carrying this client's id could have been used to post. Not reachable via the API since the OAuth fix, but the scheduler posts unattended, so it now matches `publish_now`: org-scoped, newest account wins (duplicates used to raise). Tests: `tests/test_scheduler_publish.py`.
+
+---
+
+## 260921 — Magic Brief refuses internal URLs (SSRF)
+
+`POST /api/v1/magic-brief` fetched whatever URL a signed-in user gave it, from inside Fly, following redirects — so `localhost`, the `fdaa::/16` private network or `169.254.169.254` were all reachable, directly or via a public page that redirects there. The fetch now goes through the new `services/url_safety.py`: http/https on ports 80/443 only, every resolved address must be public, redirects are followed by hand and each hop re-checked, bodies are capped at 2 MB. A refused URL returns 400 with a readable reason and never reaches the LLM. Tests: `tests/test_url_safety.py`.
+
+Known gap: DNS rebinding is not closed. `webhook_dispatcher` and `slack_integration` still POST to user-configured URLs unguarded.
+
+---
+
+## 260921 — Read website on the Clients form
+
+**The website-reading AI now lives on `/clients`.** `POST /api/v1/magic-brief` already extracted a brand profile from a URL, but only `/campaigns/new/magic-brief` called it — adding a client by hand meant typing everything and never capturing a brand voice. The New Client form now has a **Read website** button that drafts brand name, industry and description and previews voice and target audience. Nothing saves until the user presses Create Client, which also stores the extracted brand profile.
+
+By default a read only fills empty fields or fields the previous read filled, so typed values survive a re-read; a **Replace details I've already typed** checkbox lets it overwrite them.
+
+**Removed:** the `/campaigns/new/magic-brief` page, its sessionStorage hand-off banner on `/campaigns/new`, and `e2e/magic-brief.spec.ts` (replaced by an LLM-gated test in `e2e/clients.spec.ts`). Analytics: `magic-brief-client-create` is gone; `client-website-read` is new, and `client-create` carries `from_website_read`.
+
+---
+
+## 260921 — Cadence Port: Design System, Approval Gate, Queue, Amplify
+
+Ports the *design and flow* of the Cadence Crew prototype (not its code) — plan and open decisions in [`docs/cadence-port-plan-260921.md`](../cadence-port-plan-260921.md). Phases 0–5 shipped; phase 6 (authenticated client portal) is not started.
+
+### Approval gate (phase 2) — behaviour change
+
+Publishing posts to live X/LinkedIn/Facebook accounts, and until now nothing stood between a draft and that: `PATCH /content/{id}` accepted any status string, `schedule` and `publish` accepted any piece, and approve set `approved` unconditionally. Now (plan §4):
+
+- **`POST /content/{id}/approve` moderates first** (`services/moderation.py`, brain tier). Issues → 409 `moderation_flagged`; `?override=true` approves anyway and records `override_by`/`at` in `metadata.moderation`. Only `draft`/`rejected` can be approved (409 `invalid_status`). LLM failure **fails open** as `moderation.status = "unavailable"` with a `moderation_unavailable` log; the character-limit and excluded-vocabulary checks are code-level and still flag without the LLM.
+- **Schedule and publish-now accept only `approved`/`scheduled`** → otherwise 409 `not_approved`. This includes `published`: the old idempotent 200 for an already-published piece is now a 409.
+- **`PATCH /content/{id}`** can set `status` only to `draft`/`rejected`; editing body/hashtags of approved or scheduled content resets it to `draft`.
+- **Portal approve** runs the same moderation, never with override.
+
+**Behaviour change:** anything scripted to schedule or publish drafts now gets 409s. A publish that failed leaves the piece `failed`; to retry, PATCH it to `draft` and re-approve (the UI has no retry action). A `published` piece cannot change status (409 `published_locked`), so it cannot be reopened and posted twice. Scheduling Instagram/TikTok returns 409 `platform_unavailable`.
+
+### Design system + IA (phases 1, 5)
+
+- **Added**: Cadence tokens in `tailwind.config.ts` — every colour a CSS variable, light on `:root`, dark on `.dark`; `slate`/`white`/`indigo` and 12 status hues remapped so existing pages theme without a rewrite; semantic `canvas`/`panel`/`ink`/`muted`/`line`/`accent`/`on-accent`. Inter / Space Grotesk / IBM Plex Mono via `next/font`.
+- **Added**: light/dark themes — OS preference by default, toggle in the nav/landing/auth screens, stored in `localStorage` (`cf-theme`), applied before first paint by `THEME_INIT_SCRIPT`. Clerk widgets themed via `lib/clerk-appearance.ts`. AA focus ring.
+- **Added**: `components/ui/*` primitives (Button, Panel, PageHeader, SectionCard, StatCard, EmptyState/Notice, Field, SegmentedTabs, StatusBadge, CampaignStatusBadge, QuotaHint, AuthCanvas).
+- **Changed**: left sidebar → sticky top nav (`components/layout/app-nav.tsx`, data in `lib/navigation.ts`) with groups Setup · Posts · Create · Insights · Settings and sub-tabs. Routes unchanged; Setup › Accounts is `/settings?tab=platforms`, and Settings tabs now live in `?tab=`.
+- **Changed**: every dashboard page, the landing page (now a Server Component; placeholder logos/testimonials removed) and sign-in/up restyled.
+- **Changed**: `draft` is labelled **Pending** everywhere in the UI. DB value unchanged.
+
+### Posts › Queue (phase 3)
+
+- **Changed**: `/content` is now the Queue (H1 "Queue", was "Content Library"): status tabs Pending · Approved · Scheduled · Published · Failed with counts, client/platform filters, moderation-aware approve with "Approve anyway", schedule picker (the first UI to call `POST /publishing/{id}/schedule` outside the calendar), publish-now confirm, failed-publish reason, Amplify deep link. Components in `components/posts/*`.
+- **Removed**: the Repurpose dialog and Suggestions tab from `/content`.
+- **Not built**: bulk select, delete and undo — there is no content `DELETE` endpoint. `rejected` posts have no tab.
+- **Changed**: Calendar restyled; drag-to-reschedule kept.
+
+### Amplify (phase 4)
+
+- **Added**: `POST /amplify/preview`, `POST /amplify/{pack_id}/commit`, `GET /amplify/packs` (`routers/amplify.py`) — one source → up to 8 drafts on distinct angles from a closed taxonomy; preview saves nothing, commit writes kept atoms as Pending drafts only. Worker tier at 0.8 (`agents/amplify.py`); pure helpers in `services/repurpose.py`. The prompt now reads brand `example_posts`, previously unused.
+- **Added**: `repurpose_pack` table; `subscription.generations_used` / `generations_limit`. **Run `db/migrations/260921_amplify.sql` on Neon before deploying the backend.**
+- **Added**: generation quota — 1 pack = 1 generation; `PLAN_CONFIG` limits free 10 / starter 50 / growth 250 / agency 9999; 402 `generation_quota_exceeded`; reset on `invoice.paid`; failed generations charge nothing. Reported by `GET /billing/subscription`.
+- **Added**: server-authored product events `amplify_pack_generated`, `amplify_pack_committed`; frontend `trackFeature("amplify")`.
+- **Added**: `/amplify` screen (`components/amplify/*`) under Create — form, cancel, review grid, pack history, `?source=` deep link.
+- `POST /content/{id}/repurpose` stays for API compatibility; the UI no longer calls it.
+
+### Other
+
+- **Fixed**: pipeline failures are now logged (`campaign_pipeline_failed`, `campaign_mark_failed_error`) instead of only being streamed.
+- **Docs**: `websocket.md` — `step_start`/`step_update` are declared but never emitted by the backend; one consumer per stream queue. `api-endpoints.md` — `GET /content` filters on `content_status`, not `status`. Counts: 86 endpoints / 25 routers / 27 service modules / 22 tables.
+
+**Known gaps, not fixed here:** quota check-then-increment race; Cancel on Amplify does not refund a generation the server finished; Free orgs never get `invoice.paid`, so their `posts_used` and `generations_used` never reset; Amplify output quality not yet eyeballed on a live LLM; the Approve button on the campaign detail page does not handle the new 409; landing and in-app plan copy disagree for Free.
+
+---
+
 ## 260818 — Groq Provider + Production LLM Activation
 
 **`groq` added as a seventh LLM provider.** It is OpenAI-compatible but had no home here, so a `GROQ_API_KEY` had nowhere to go. Registering it took **two** edits, not one: a `ProviderSpec` *and* an entry in `DEFAULT_PROVIDER_ORDER`. `_configured_order()` filters names against that tuple, so a provider with settings and a spec but no entry there is dropped from the order silently — no error, no log, it simply never gets picked. A test now asserts groq is selectable by explicit order, which is what fails if a future provider is added the same half-way.

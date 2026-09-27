@@ -29,10 +29,19 @@ EXA_SEARCH_URL = "https://api.exa.ai/search"
 DEFAULT_TIMEOUT = 15.0
 MAX_RETRIES = 2
 
+# For the server's logs and for an operator reading the API, never for a screen.
+# This used to be appended to the `reason` every unavailable payload carries, so
+# "Set EXA_API_KEY in the backend environment…" was rendered to marketers in
+# Insights › Trends — an instruction they cannot act on, naming a variable they
+# should not have to know (CF-16).
 SETUP_HINT = (
     "Set EXA_API_KEY in the backend environment (get a key at https://exa.ai) "
     "and restart the API."
 )
+
+#: What a user is told when the workspace has no Exa key. The feature is simply
+#: not available; the operator's fix is logged, not displayed.
+NOT_CONFIGURED_REASON = "This isn't available yet — web search isn't set up on this workspace."
 
 
 def get_api_key() -> str:
@@ -46,11 +55,20 @@ def unavailable(reason: str, **extra: Any) -> dict[str, Any]:
 
 
 def http_error_reason(error: httpx.HTTPStatusError) -> str:
-    """Human-readable reason for an Exa HTTP failure, with a setup hint on auth errors."""
+    """User-facing reason for an Exa HTTP failure.
+
+    A rejected key is a misconfiguration, not something the person looking at the
+    screen can fix, so it reads as "not set up" like a missing key does (CF-16).
+    The variable to set is logged by the caller, via :data:`SETUP_HINT`.
+    """
     code = error.response.status_code
     if code in (401, 403):
-        return f"Exa rejected the API key (HTTP {code}). {SETUP_HINT}"
-    return f"Exa search API returned HTTP {code}."
+        logger.error("exa_key_rejected", http_status=code, fix=SETUP_HINT)
+        return (
+            "This isn't available right now — the web search key was rejected. "
+            "An admin needs to check it."
+        )
+    return f"The web search service returned an error (HTTP {code})."
 
 
 async def with_retries[T](

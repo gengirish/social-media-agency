@@ -5,6 +5,7 @@ All HTTP is mocked; these tests never touch the network.
 
 import httpx
 import pytest
+from structlog.testing import capture_logs
 
 from agency.config import get_settings
 from agency.services import trends
@@ -151,13 +152,21 @@ async def test_query_varies_by_platform(exa_env, exa_calls):
 
 
 async def test_blank_key_returns_unavailable_and_makes_no_call(exa_env, exa_calls):
-    result = await trends.get_trending_topics("linkedin")
+    with capture_logs() as logs:
+        result = await trends.get_trending_topics("linkedin")
 
     assert result["status"] == "unavailable"
     assert result["items"] == []
-    assert "EXA_API_KEY" in result["reason"]
-    assert "exa.ai" in result["reason"]
     assert exa_calls.calls == []  # no outbound request attempted
+
+    # CF-16: the reason is shown in Insights › Trends, so it must not name an
+    # environment variable a marketer cannot set. The operator's fix is logged.
+    assert "EXA_API_KEY" not in result["reason"]
+    assert "exa.ai" not in result["reason"]
+    assert "aren't available yet" in result["reason"]
+
+    configured = [log for log in logs if log["event"] == "trends_exa_not_configured"]
+    assert configured and "EXA_API_KEY" in configured[0]["fix"]
 
 
 async def test_blank_key_unavailable_for_all_platforms_view(exa_env, exa_calls):
@@ -171,17 +180,25 @@ async def test_blank_key_unavailable_for_all_platforms_view(exa_env, exa_calls):
 # --- (c) Exa errors ---
 
 
-async def test_auth_error_returns_unavailable_with_setup_hint(exa_env, exa_calls):
+async def test_auth_error_is_unavailable_and_logs_the_setup_hint(exa_env, exa_calls):
     exa_env("bad-key")
     exa_calls(_response(401))
 
-    result = await trends.get_trending_topics("twitter")
+    with capture_logs() as logs:
+        result = await trends.get_trending_topics("twitter")
 
     assert result["status"] == "unavailable"
     assert result["items"] == []
     assert result["http_status"] == 401
-    assert "EXA_API_KEY" in result["reason"]
     assert len(exa_calls.calls) == 1  # 4xx is permanent, not retried
+
+    # CF-16: a rejected key is an admin's problem, and the reason is rendered in
+    # the app — so it says who can fix it, not which variable to set.
+    assert "EXA_API_KEY" not in result["reason"]
+    assert "admin" in result["reason"]
+
+    rejected = [log for log in logs if log["event"] == "exa_key_rejected"]
+    assert rejected and "EXA_API_KEY" in rejected[0]["fix"]
 
 
 async def test_server_error_is_retried_then_reported_unavailable(exa_env, exa_calls):

@@ -30,6 +30,7 @@ from agency.models.schemas import (
     AgentStreamEvent,
     CampaignBrief,
     CampaignListResponse,
+    CampaignProgressResponse,
     CampaignResponse,
 )
 from agency.models.tables import (
@@ -40,7 +41,10 @@ from agency.models.tables import (
     Subscription,
     Workflow,
 )
+from agency.permissions import Capability, require_cap
 from agency.services import product_analytics as pa
+from agency.services.ad_variants import normalize as normalize_ad
+from agency.services.ad_variants import render_body as render_ad_body
 from agency.services.billing import PLAN_CONFIG
 from agency.services.tracing import merge_config, trace_config
 from agency.services.webhook_dispatcher import EVENT_CAMPAIGN_COMPLETED, dispatch_webhook
@@ -52,8 +56,61 @@ router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
 # In-memory stream store for SSE events (production: use Redis pub/sub)
 _campaign_streams: dict[str, asyncio.Queue] = {}
 
+# Campaigns whose graph is executing in this process right now. Per-process only:
+# on a multi-machine deploy a run on another machine is not visible here.
+_active_pipelines: set[str] = set()
 
-@router.post("", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
+# Graph node order, and therefore the denominator of the progress percentage.
+# The dashboard rehydrates against this list, so it must stay in step with
+# graph.py's node names.
+AGENT_ORDER = [
+    "orchestrate", "strategise", "seo_research",
+    "create_content", "write_ads", "human_review",
+    "qa_check", "compile_output", "analytics",
+]
+
+# The same nodes grouped into the stages the graph actually runs them in: the
+# pairs are the parallel branches (Strategy ∥ SEO, then Content ∥ Ad Copy).
+#
+# Used to attribute a crash. The exception surfaces from ``astream`` without
+# naming the node, so the failing agent is inferred as "the stage that had not
+# finished". Where a stage has two branches and neither finished, both are
+# reported as candidates rather than one being guessed — product rule 4 applies
+# to diagnostics too.
+AGENT_STAGES: list[tuple[str, ...]] = [
+    ("orchestrate",),
+    ("strategise", "seo_research"),
+    ("create_content", "write_ads"),
+    ("human_review",),
+    ("qa_check",),
+    ("compile_output",),
+    ("analytics",),
+]
+
+
+def _failing_agents(completed: set[str]) -> list[str]:
+    """The agents a crash can be attributed to, given which ones finished.
+
+    Returns the unfinished members of the first incomplete stage — one name when
+    that is certain, two when a parallel pair was in flight, and ``[]`` when every
+    stage completed (the failure was in the bookkeeping after the graph, not in
+    an agent).
+    """
+    for stage in AGENT_STAGES:
+        pending = [name for name in stage if name not in completed]
+        if pending:
+            return pending
+    return []
+
+
+@router.post(
+    "",
+    response_model=CampaignResponse,
+    status_code=status.HTTP_201_CREATED,
+    # Running the pipeline spends the org's campaign allowance, so it needs more
+    # than read access. ``member`` holds campaign.run; ``viewer`` does not.
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
 async def create_campaign(
     brief: CampaignBrief,
     user=Depends(get_current_user),
@@ -131,24 +188,7 @@ async def create_campaign(
     await db.commit()
     await db.refresh(campaign)
 
-    # Build brand context
-    brand_ctx = BrandContext(
-        brand_name=client.brand_name,
-        industry=client.industry or "",
-        description=client.description or "",
-    )
-    if client.brand_profile:
-        bp = client.brand_profile
-        brand_ctx.update({
-            "voice_description": bp.voice_description or "",
-            "tone_attributes": bp.tone_attributes or {},
-            "target_audience": bp.target_audience or "",
-            "style_rules": bp.style_rules or [],
-            "vocabulary_include": bp.vocabulary_include or [],
-            "vocabulary_exclude": bp.vocabulary_exclude or [],
-            "emoji_policy": bp.emoji_policy or "moderate",
-            "competitor_differentiation": bp.competitor_differentiation or "",
-        })
+    brand_ctx = _build_brand_context(client)
 
     # Compose the client brief text
     brief_text = f"""Campaign: {brief.campaign_name}
@@ -176,6 +216,150 @@ Languages: {', '.join(brief.languages) if brief.languages else 'Default (brief l
             channels=brief.channels,
             budget_usd=brief.budget_usd,
             target_languages=brief.languages,
+        )
+    )
+
+    return campaign
+
+
+def _build_brand_context(client: Client) -> BrandContext:
+    """Brand context for a pipeline run, read fresh from the client's profile."""
+    brand_ctx = BrandContext(
+        brand_name=client.brand_name,
+        industry=client.industry or "",
+        description=client.description or "",
+    )
+    if client.brand_profile:
+        bp = client.brand_profile
+        brand_ctx.update({
+            "voice_description": bp.voice_description or "",
+            "tone_attributes": bp.tone_attributes or {},
+            "target_audience": bp.target_audience or "",
+            "style_rules": bp.style_rules or [],
+            "vocabulary_include": bp.vocabulary_include or [],
+            "vocabulary_exclude": bp.vocabulary_exclude or [],
+            "emoji_policy": bp.emoji_policy or "moderate",
+            "competitor_differentiation": bp.competitor_differentiation or "",
+        })
+    return brand_ctx
+
+
+def _brief_from_campaign(campaign: Campaign) -> str:
+    """Rebuild a brief from the campaign row when the checkpoint is gone.
+
+    Target audience, key messages and additional context are not stored on the
+    campaign, so this is strictly less than the original brief — used only when
+    the checkpointer lost the thread (memory fallback, restart).
+    """
+    budget = (campaign.budget or {}).get("total_usd", 0)
+    return f"""Campaign: {campaign.name}
+Objective: {campaign.objective}
+Channels: {', '.join(campaign.channels or [])}
+Budget: ${budget}
+Duration: {campaign.start_date} to {campaign.end_date}"""
+
+
+@router.post(
+    "/{campaign_id}/rerun",
+    response_model=CampaignResponse,
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
+async def rerun_campaign(
+    campaign_id: UUID,
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """Run the agent pipeline again on an existing campaign, from the start.
+
+    Discards the campaign's LangGraph checkpoint (including any pending human
+    review) and starts a fresh thread under the same id, so review and streaming
+    keep working unchanged. Content from earlier runs is left alone; the new run
+    adds its own drafts, which go through the approval gate like any other.
+    """
+    result = await db.execute(
+        select(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
+    )
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Campaign not found")
+    if campaign.status == "autonomous":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {"code": "not_rerunnable", "message": "Autonomous campaigns do not use the pipeline."},
+        )
+
+    campaign_id_str = str(campaign_id)
+    if campaign_id_str in _active_pipelines:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "pipeline_active", "message": "This campaign's pipeline is still running."},
+        )
+
+    result = await db.execute(
+        select(Client)
+        .where(Client.id == campaign.client_id, Client.org_id == org_id)
+        .options(selectinload(Client.brand_profile))
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Client not found")
+
+    # The original brief (audience, key messages, languages) lives only in the
+    # checkpoint — recover it before the thread is deleted.
+    graph = get_runtime_compiled_graph()
+    config = {"configurable": {"thread_id": campaign_id_str}}
+    prior: dict[str, Any] = {}
+    try:
+        snapshot = await graph.aget_state(config)
+        if snapshot and snapshot.values:
+            prior = dict(snapshot.values)
+    except Exception as e:  # noqa: BLE001 — fall back to the campaign row
+        logger.warning(
+            "campaign_rerun_state_unavailable", campaign_id=campaign_id_str, error=str(e)
+        )
+
+    brief_text = prior.get("client_brief") or _brief_from_campaign(campaign)
+    target_languages = list(prior.get("target_languages") or [])
+    if not prior.get("client_brief"):
+        logger.warning("campaign_rerun_brief_reconstructed", campaign_id=campaign_id_str)
+
+    # A fresh thread: re-running on top of a finished checkpoint would merge the
+    # new input into old state (appended messages/errors, spent retry_count).
+    await graph.checkpointer.adelete_thread(campaign_id_str)
+
+    campaign.status = "running"
+    result = await db.execute(select(Workflow).where(Workflow.campaign_id == campaign_id))
+    workflow = result.scalar_one_or_none()
+    if workflow:
+        workflow.status = "running"
+        workflow.current_node = ""
+        workflow.completed_at = None
+    else:
+        db.add(Workflow(campaign_id=campaign_id, org_id=org_id, status="running"))
+
+    await db.commit()
+    await db.refresh(campaign)
+
+    logger.info(
+        "campaign_rerun_started",
+        campaign_id=campaign_id_str,
+        org_id=str(org_id),
+        user_id=user.get("sub"),
+        brief_source="checkpoint" if prior.get("client_brief") else "campaign_row",
+    )
+
+    _campaign_streams[campaign_id_str] = asyncio.Queue()
+    asyncio.create_task(
+        _run_campaign_pipeline(
+            campaign_id=campaign_id_str,
+            org_id=str(org_id),
+            client_id=str(campaign.client_id),
+            brief_text=brief_text,
+            brand_ctx=_build_brand_context(client),
+            channels=list(campaign.channels or []),
+            budget_usd=float((campaign.budget or {}).get("total_usd", 0) or 0),
+            target_languages=target_languages,
         )
     )
 
@@ -214,13 +398,41 @@ async def _record_agent_step(
     )
 
 
-async def _mark_campaign_failed(campaign_id: str, org_id: str, error: str) -> None:
-    """Move a crashed pipeline out of 'running' and record the failure.
+async def _mark_campaign_failed(
+    campaign_id: str,
+    org_id: str,
+    error: str,
+    *,
+    error_type: str = "",
+    completed: set[str] | None = None,
+) -> None:
+    """Move a crashed pipeline out of 'running' and record *why* it failed.
 
     Without this a pipeline exception leaves the campaign 'running' forever,
     which both misleads the user and hides the failure from the failure-rate
     metric.
+
+    The reason used to be logged and then dropped, so the UI could only show a
+    bare "Failed" badge with nothing to act on (CF-07). It is now written to
+    ``campaign.failure`` along with the agents the crash is attributable to, and
+    a ``failed`` ``agent_run`` row is recorded for each of them so the live
+    dashboard can mark that step red instead of leaving it queued.
     """
+    completed = completed or set()
+    agents = _failing_agents(completed)
+    # The last agent that did finish — the honest anchor when a parallel pair
+    # leaves the failing branch ambiguous.
+    after = next((name for name in reversed(AGENT_ORDER) if name in completed), None)
+
+    logger.error(
+        "campaign_pipeline_failed",
+        campaign_id=campaign_id,
+        org_id=org_id,
+        error=error,
+        error_type=error_type,
+        agents=agents,
+        after=after,
+    )
     try:
         factory = get_session_factory()
         async with factory() as db:
@@ -228,6 +440,27 @@ async def _mark_campaign_failed(campaign_id: str, org_id: str, error: str) -> No
             campaign = result.scalar_one_or_none()
             if campaign:
                 campaign.status = "failed"
+                campaign.failure = {
+                    "error": error,
+                    "error_type": error_type,
+                    "agents": agents,
+                    "after": after,
+                    "at": datetime.now(UTC).isoformat(),
+                }
+
+            # One failed row per candidate agent. With a parallel pair in flight
+            # both are marked, because either could be the one that threw — saying
+            # which would be a guess.
+            for agent_name in agents:
+                db.add(
+                    AgentRun(
+                        campaign_id=UUID(campaign_id),
+                        org_id=UUID(org_id),
+                        agent_name=agent_name,
+                        status="failed",
+                        output=error[:2000],
+                    )
+                )
 
             result = await db.execute(
                 select(Workflow).where(Workflow.campaign_id == UUID(campaign_id))
@@ -238,8 +471,8 @@ async def _mark_campaign_failed(campaign_id: str, org_id: str, error: str) -> No
                 workflow.completed_at = datetime.now(UTC)
 
             await db.commit()
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — recording the failure must not raise
+        logger.error("campaign_mark_failed_error", campaign_id=campaign_id, error=str(e))
 
     await pa.track_detached(
         name=pa.CAMPAIGN_FAILED,
@@ -298,12 +531,9 @@ async def _run_campaign_pipeline(
     config = {"configurable": {"thread_id": campaign_id}}
     run_config = merge_config(config, _campaign_trace(campaign_id, org_id, client_id, "start"))
 
-    agent_order = [
-        "orchestrate", "strategise", "seo_research",
-        "create_content", "write_ads", "human_review",
-        "qa_check", "compile_output", "analytics",
-    ]
-
+    _active_pipelines.add(campaign_id)
+    # Which nodes finished, so a crash can be attributed to the stage that did not.
+    completed: set[str] = set()
     try:
         async for event in graph.astream(initial_state, config=run_config, stream_mode="updates"):
             for node_name, node_output in event.items():
@@ -315,8 +545,8 @@ async def _run_campaign_pipeline(
                     ).model_dump_json())
                     continue
 
-                current_idx = agent_order.index(node_name) if node_name in agent_order else 0
-                progress = int((current_idx + 1) / len(agent_order) * 100)
+                current_idx = AGENT_ORDER.index(node_name) if node_name in AGENT_ORDER else 0
+                progress = int((current_idx + 1) / len(AGENT_ORDER) * 100)
 
                 await queue.put(AgentStreamEvent(
                     type="step_complete",
@@ -327,6 +557,7 @@ async def _run_campaign_pipeline(
 
                 # Track agent run in DB
                 if node_name != "__interrupt__":
+                    completed.add(node_name)
                     await _record_agent_step(campaign_id, org_id, node_name, node_output)
 
         await queue.put(AgentStreamEvent(
@@ -358,7 +589,15 @@ async def _run_campaign_pipeline(
             agent="pipeline",
             content=f"Pipeline error: {str(e)}",
         ).model_dump_json())
-        await _mark_campaign_failed(campaign_id, org_id, str(e))
+        await _mark_campaign_failed(
+            campaign_id,
+            org_id,
+            str(e),
+            error_type=type(e).__name__,
+            completed=completed,
+        )
+    finally:
+        _active_pipelines.discard(campaign_id)
 
 
 async def _persist_campaign_results(
@@ -391,19 +630,38 @@ async def _persist_campaign_results(
                 )
                 db.add(cp)
 
-            # Save ad variants as content pieces
-            for ad in values.get("ad_variants", []):
+            # Save ad variants as content pieces.
+            #
+            # The agent's raw output is normalised to the fields its network
+            # actually renders (see services/ad_variants.py) and stored under
+            # metadata.ad, with the same copy flattened into body for the generic
+            # paths. A variant that came back with nothing usable is stored as
+            # failed, not draft, so it cannot be approved or amplified — it is
+            # kept rather than dropped so the run's output is accounted for.
+            for idx, raw_ad in enumerate(values.get("ad_variants", []), start=1):
+                ad = normalize_ad(raw_ad, index=idx)
+                metadata: dict = {"ad": ad, "raw": raw_ad if isinstance(raw_ad, dict) else {}}
+                if ad["is_empty"]:
+                    metadata["generation"] = {
+                        "status": "failed",
+                        "reason": "The ad copy agent returned no usable copy for this variant.",
+                    }
+                elif ad["missing"]:
+                    metadata["generation"] = {
+                        "status": "incomplete",
+                        "missing": ad["missing"],
+                    }
                 cp = ContentPiece(
                     campaign_id=campaign_id,
                     client_id=client_id,
                     org_id=org_id,
-                    content_type=f"{ad.get('platform', 'google')}_ad",
-                    platform=ad.get("platform", "google"),
-                    title=f"Ad Variant {ad.get('variant', 1)} - {ad.get('angle', 'general')}",
-                    body=json.dumps(ad.get("headlines", [])),
-                    metadata_=ad,
+                    content_type=f"{ad['platform']}_ad",
+                    platform=ad["platform"],
+                    title=f"Ad Variant {ad['variant']} - {ad['angle']}",
+                    body=render_ad_body(ad),
+                    metadata_=metadata,
                     ai_generated=True,
-                    status="draft",
+                    status="failed" if ad["is_empty"] else "draft",
                 )
                 db.add(cp)
 
@@ -456,6 +714,69 @@ async def _persist_campaign_results(
             await db.commit()
     except Exception as e:  # noqa: BLE001 — post-run bookkeeping must not crash the run
         logger.error("campaign_completion_bookkeeping_failed", error=str(e))
+
+
+@router.get("/{campaign_id}/progress", response_model=CampaignProgressResponse)
+async def get_campaign_progress(
+    campaign_id: UUID,
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """Pipeline state as the database knows it, independent of the SSE stream.
+
+    The stream replays nothing — its queue is single-consumer and is dropped once
+    the run finishes — so a client that reconnects (tab switch, remount, refresh)
+    has no way to learn what already happened. This does, from the ``agent_run``
+    rows the pipeline writes per node.
+    """
+    campaign = (
+        await db.execute(
+            select(Campaign).where(Campaign.id == campaign_id, Campaign.org_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if campaign is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    rows = (
+        await db.execute(
+            select(AgentRun.agent_name, AgentRun.status)
+            .where(AgentRun.campaign_id == campaign_id, AgentRun.org_id == org_id)
+            .order_by(AgentRun.created_at)
+        )
+    ).all()
+
+    # Every run starts at orchestrate, and a resume after review does not re-enter
+    # it, so the last orchestrate row is exactly where the current run began. Rows
+    # before it belong to a previous re-run and would otherwise report its progress.
+    names = [name for name, _ in rows]
+    start = len(names) - 1 - names[::-1].index("orchestrate") if "orchestrate" in names else 0
+    agent_statuses: dict[str, str] = {}
+    for name, run_status in rows[start:]:
+        agent_statuses[name] = "error" if run_status == "failed" else "complete"
+
+    completed = [AGENT_ORDER.index(n) for n in agent_statuses if n in AGENT_ORDER]
+    progress = int((max(completed) + 1) / len(AGENT_ORDER) * 100) if completed else 0
+
+    is_active = str(campaign_id) in _active_pipelines
+    if campaign.status == "completed":
+        progress = 100
+    elif (
+        campaign.status == "running"
+        and "human_review" not in agent_statuses
+        and "create_content" in agent_statuses
+        and "write_ads" in agent_statuses
+    ):
+        # Paused at the review gate: the graph interrupts *before* human_review, so
+        # that node never runs and never writes a row of its own.
+        agent_statuses["human_review"] = "waiting"
+
+    return CampaignProgressResponse(
+        campaign_status=campaign.status,
+        progress=progress,
+        agent_statuses=agent_statuses,
+        is_active=is_active,
+    )
 
 
 @router.get("/{campaign_id}/stream")
@@ -588,7 +909,10 @@ async def get_trends(
     return await get_trending_topics(platform)
 
 
-@router.post("/autonomous")
+@router.post(
+    "/autonomous",
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
 async def create_autonomous_campaign(
     body: dict,
     user=Depends(get_current_user),
@@ -678,7 +1002,12 @@ async def get_campaign_content(
     return {"items": pieces, "total": len(pieces)}
 
 
-@router.patch("/{campaign_id}/review")
+@router.patch(
+    "/{campaign_id}/review",
+    # Product rule 2: a human has final say. A viewer is not that human — this
+    # decision resumes the paused graph and spends the rest of the run.
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
 async def submit_human_review(
     campaign_id: UUID,
     decision: dict,
@@ -750,12 +1079,10 @@ async def _resume_pipeline(
 
     run_config = merge_config(config, _campaign_trace(campaign_id, org_id, client_id, "resume"))
 
-    agent_order = [
-        "orchestrate", "strategise", "seo_research",
-        "create_content", "write_ads", "human_review",
-        "qa_check", "compile_output", "analytics",
-    ]
-
+    _active_pipelines.add(campaign_id)
+    # A resume re-enters after human_review, so everything up to and including it
+    # is already done — a crash here must not be attributed to Strategy or SEO.
+    completed: set[str] = set(AGENT_ORDER[: AGENT_ORDER.index("human_review") + 1])
     try:
         async for event in graph.astream(None, config=run_config, stream_mode="updates"):
             for node_name, node_output in event.items():
@@ -767,8 +1094,8 @@ async def _resume_pipeline(
                     ).model_dump_json())
                     continue
 
-                current_idx = agent_order.index(node_name) if node_name in agent_order else 0
-                progress = int((current_idx + 1) / len(agent_order) * 100)
+                current_idx = AGENT_ORDER.index(node_name) if node_name in AGENT_ORDER else 0
+                progress = int((current_idx + 1) / len(AGENT_ORDER) * 100)
 
                 await queue.put(AgentStreamEvent(
                     type="step_complete",
@@ -777,6 +1104,7 @@ async def _resume_pipeline(
                     progress=progress,
                 ).model_dump_json())
 
+                completed.add(node_name)
                 await _record_agent_step(campaign_id, org_id, node_name, node_output)
 
         await queue.put(AgentStreamEvent(
@@ -807,4 +1135,12 @@ async def _resume_pipeline(
             agent="pipeline",
             content=f"Error after review: {str(e)}",
         ).model_dump_json())
-        await _mark_campaign_failed(campaign_id, org_id, str(e))
+        await _mark_campaign_failed(
+            campaign_id,
+            org_id,
+            str(e),
+            error_type=type(e).__name__,
+            completed=completed,
+        )
+    finally:
+        _active_pipelines.discard(campaign_id)

@@ -10,6 +10,8 @@ from agency.middleware.request_metrics import RequestMetricsMiddleware
 from agency.middleware.tenant import TenantMiddleware
 from agency.routers import (
     acquisition,
+    amplify,
+    assets,
     audit,
     auth,
     billing,
@@ -19,20 +21,29 @@ from agency.routers import (
     comments,
     competitive,
     content,
+    create_ads,
+    create_content,
+    create_email,
+    create_launch,
     health,
+    inbox,
+    insights,
     integrations,
     magic_brief,
     notifications,
     oauth,
     portal,
+    post_studio,
     product_analytics,
     public_api,
     publishing,
     reports,
+    setup,
     slack,
     stats,
     team,
     webhooks_config,
+    workspace,
 )
 
 logger = structlog.get_logger()
@@ -109,6 +120,17 @@ def create_app() -> FastAPI:
         brand_analytics,
         competitive,
         product_analytics,
+        amplify,
+        assets,
+        create_ads,
+        post_studio,
+        create_content,
+        create_email,
+        create_launch,
+        inbox,
+        insights,
+        workspace,
+        setup,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

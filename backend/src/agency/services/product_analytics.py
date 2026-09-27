@@ -37,6 +37,14 @@ SESSION_ENDED = "session_ended"
 PAGE_VIEW = "page_view"
 FEATURE_USED = "feature_used"
 API_ERROR = "api_error"
+# Amplify outcomes. Server-authored (never client-writable) so generation and
+# commit counts cannot be inflated from the browser.
+AMPLIFY_PACK_GENERATED = "amplify_pack_generated"
+AMPLIFY_PACK_COMMITTED = "amplify_pack_committed"
+# Moderation refused an approval (Insights' clean-approval rate and activity log).
+# Server-authored: written by the approve paths, never by the browser.
+MODERATION_FLAGGED = "moderation_flagged"
+ADVOCACY_GENERATED = "advocacy_generated"
 
 # Categories keep the table queryable without an enum migration.
 CATEGORY_BY_NAME = {
@@ -50,6 +58,10 @@ CATEGORY_BY_NAME = {
     PAGE_VIEW: "session",
     FEATURE_USED: "feature",
     API_ERROR: "error",
+    AMPLIFY_PACK_GENERATED: "feature",
+    AMPLIFY_PACK_COMMITTED: "feature",
+    MODERATION_FLAGGED: "feature",
+    ADVOCACY_GENERATED: "feature",
 }
 
 # Only these may be written by the browser. Pipeline/error events are

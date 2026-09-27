@@ -75,29 +75,47 @@ Brief → Orchestrator → [Strategy ∥ SEO] → [Content ∥ Ads]
 
 7 specialized LLM agents across 9 LangGraph nodes, running in parallel where possible. The graph compiles with `interrupt_before=["human_review"]`, so execution **pauses** there and resumes when a decision lands via `PATCH /api/v1/campaigns/{id}/review`. A conditional router loops critical QA failures back to Content or Ad Copy, capped at 2 retries. SSE streams agent progress to the frontend in real time.
 
+After the pipeline, every post lands in **Posts › Queue** as *Pending* and needs a person to approve it. Approval runs a moderation check first (brain tier, plus code-level character-limit and brand-excluded-vocabulary checks); flagged posts need an explicit, recorded override. Only approved posts can be scheduled or published — publishing is real (X, LinkedIn, Facebook).
+
+**Amplify** turns one existing post or pasted text into up to 8 drafts, each on a different angle, in the client's brand voice. Drafts are reviewed before anything is saved, land in the Queue as Pending, and each pack counts against a per-plan generation quota.
+
+## App Layout
+
+Top navigation, five groups (routes unchanged from before the 260921 redesign):
+
+| Group | Tabs |
+|---|---|
+| Setup | Clients · Accounts |
+| Posts | Queue · Calendar |
+| Create | Campaigns · Templates · Amplify |
+| Insights | Analytics |
+| Settings | Workspace · Team · Billing |
+
+Light and dark themes (follows the OS; toggle in the nav). Design tokens and primitives: [`docs/features/frontend-components.md`](docs/features/frontend-components.md).
+
 ## Project Structure
 
 ```
 backend/
   src/agency/
-    agents/       # 10 agent modules — 9 LangGraph nodes + 3 standalone entry points
-                  #   (autonomous_operator, competitive_intel, video_script)
-    routers/      # 24 FastAPI routers (82 endpoints, all under /api/v1)
-    services/     # 23 services (billing, publishing, scheduler, LLM, brand learning, …)
-    models/       # SQLAlchemy models (18 tables) + Pydantic schemas
+    agents/       # 11 agent modules — 7 graph agents + 4 standalone entry points
+                  #   (autonomous_operator, competitive_intel, video_script, amplify)
+    routers/      # 25 FastAPI routers (86 endpoints, all under /api/v1)
+    services/     # 27 services (billing, publishing, moderation, repurpose, scheduler, LLM, …)
+    models/       # SQLAlchemy models (22 tables) + Pydantic schemas
     middleware/   # Tenant isolation, API-key auth, request metrics
-db/               # Raw SQL schema (init.sql + seed.sql) — NOT Alembic migrations
+db/               # Raw SQL schema (init.sql + seed.sql) + dated migrations/ run by hand — NOT Alembic
 frontend/
   src/
-    app/          # 17 Next.js pages (campaigns, clients, content, analytics, settings, …)
-    components/   # LiveAgentDashboard, DashboardContent, ClerkTokenSync,
-                  #   NotificationsBell, AnalyticsTracker
-    lib/          # API client, SSE stream, analytics, utils
+    app/          # 17 Next.js pages (campaigns, queue, amplify, analytics, settings, …)
+    components/   # ui/ (design-system primitives), layout/ (top nav), posts/ (Queue),
+                  #   amplify/, agents/ (LiveAgentDashboard), landing/, theme
+    lib/          # API client, navigation, theme, SSE stream, analytics, utils
 docs/
   features/       # Living feature documentation
 ```
 
-Schema changes must be applied to **both** `db/init.sql` and `models/tables.py` — there are no migrations despite `alembic` being a dependency.
+Schema changes take **three** edits: `db/init.sql`, `models/tables.py`, and a dated forward-only script in `db/migrations/` that must be run by hand on existing databases (Neon) — `init.sql` only runs on a fresh one. Pending for this release: `db/migrations/260921_amplify.sql`.
 
 ## Testing
 
@@ -118,7 +136,7 @@ CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — backend lint/ty
 
 ## Project Status
 
-Not launch-ready. The agent pipeline, LLM routing, publishing, billing, and multi-tenancy are real and working. Several user-facing features are wired end-to-end but return placeholder data — analytics metrics, trending topics, RAG retrieval, and Instagram publishing. These are labelled `[STUB]` in the feature docs.
+Not launch-ready. The agent pipeline, LLM routing, publishing (X, LinkedIn, Facebook) behind the approval gate, billing, and multi-tenancy are real and working. Instagram and TikTok publishing are not implemented and say so in the UI; other gaps are listed in the Feature Honesty table of the feature docs. Amplify's output quality has not yet been reviewed on real generations. Open product decisions from the Cadence port are in [`docs/cadence-port-plan-260921.md`](docs/cadence-port-plan-260921.md).
 
 Pre-launch work is tracked in [`docs/campaignforge-hardening-backlog.md`](docs/campaignforge-hardening-backlog.md). Do not charge for a feature that is still `[STUB]`.
 

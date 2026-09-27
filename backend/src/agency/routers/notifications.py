@@ -39,10 +39,12 @@ async def list_notifications(
         # route or agent, so nothing produces notifications today. Flag it rather
         # than let a permanently empty bell read as "you are all caught up".
         "producers_wired": False,
-        "reason": (
-            "No notifications are generated yet — nothing in the backend calls "
-            "create_notification()."
-        ),
+        # User-facing. The previous wording named the function that is missing a
+        # caller, which told a marketer nothing and leaked the internals into the
+        # bell (CF-16). The fact worth stating is only that the list will stay
+        # empty, so nobody waits on it; ``producers_wired`` carries the detail for
+        # anyone reading the API.
+        "reason": "Notifications aren't switched on yet — this list stays empty for now.",
         "items": [
             {
                 "id": str(n.id),

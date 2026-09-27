@@ -10,6 +10,17 @@ CREATE TABLE IF NOT EXISTS organization (
     -- unauthenticated, so a non-unique key lets one org shadow another's namespace.
     -- Nullable = no portal for that org (fails closed).
     slug VARCHAR(64) UNIQUE,
+    -- Account shape, not a plan tier. 'personal' = solo creator (one hidden client,
+    -- no seat management), 'business' = agency. New orgs start personal and flip
+    -- one-way on the first team invite or growth-tier purchase.
+    account_type VARCHAR(20) NOT NULL DEFAULT 'personal'
+        CHECK (account_type IN ('personal', 'business')),
+    -- How the workspace describes itself. Presentation only: it reshapes the pricing
+    -- page and grants nothing. NULL = never chosen (show every plan). Deliberately
+    -- separate from account_type, which decides which features exist.
+    workspace_profile VARCHAR(24)
+        CHECK (workspace_profile IS NULL
+               OR workspace_profile IN ('product_owner', 'freelancer', 'organization')),
     domain VARCHAR(255),
     settings JSONB DEFAULT '{}',
     agentmail_inbox_id VARCHAR(255),
@@ -26,8 +37,16 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     full_name VARCHAR(255) NOT NULL,
-    role VARCHAR(50) NOT NULL DEFAULT 'viewer',
-    is_active BOOLEAN DEFAULT TRUE,
+    -- The four-role vocabulary from agency/permissions.py. The CHECK is what stops
+    -- the legacy strings ('manager', 'content_creator') coming back: a role the
+    -- capability matrix does not know resolves to *no* capabilities, so a typo here
+    -- locks a user out silently rather than loudly.
+    role VARCHAR(50) NOT NULL DEFAULT 'viewer'
+        CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+    -- NOT NULL deliberately: the capability gate filters `is_active IS TRUE`, which
+    -- excludes NULL, so a row inserted without this column would authenticate and
+    -- then 403 on everything. See db/migrations/260924_owner_backfill.sql.
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -41,6 +60,10 @@ CREATE TABLE IF NOT EXISTS subscription (
     clients_limit INTEGER DEFAULT 2,
     posts_limit INTEGER DEFAULT 30,
     posts_used INTEGER DEFAULT 0,
+    -- Amplify packs generated this billing period (1 pack = 1 generation).
+    -- Reset alongside posts_used on invoice.paid; limit comes from PLAN_CONFIG.
+    generations_used INTEGER NOT NULL DEFAULT 0,
+    generations_limit INTEGER,
     current_period_start TIMESTAMPTZ,
     current_period_end TIMESTAMPTZ,
     status VARCHAR(50) DEFAULT 'active',
@@ -110,6 +133,8 @@ CREATE TABLE IF NOT EXISTS campaign (
     budget JSONB DEFAULT '{}',
     status VARCHAR(30) DEFAULT 'planning',
     agent_plan JSONB DEFAULT '{}',
+    -- Why the run failed, when status = 'failed': {error, error_type, agents, after, at}.
+    failure JSONB DEFAULT '{}',
     tags JSONB DEFAULT '[]',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -362,6 +387,78 @@ CREATE INDEX IF NOT EXISTS idx_notification_user_created
 CREATE INDEX IF NOT EXISTS idx_notification_user_unread
     ON notification(user_id) WHERE read = FALSE;
 CREATE INDEX IF NOT EXISTS idx_notification_org ON notification(org_id);
+
+-- ---------------------------------------------------------------------------
+-- Amplify repurpose packs (routers/amplify.py). One row per generated pack;
+-- committed atoms land in content_piece as drafts carrying
+-- metadata.amplify_pack_id (FK by convention, not a column).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repurpose_pack (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    client_id UUID NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    source_content_id UUID REFERENCES content_piece(id) ON DELETE SET NULL,
+    source_text TEXT,
+    platforms JSONB NOT NULL DEFAULT '[]',
+    atom_count INTEGER NOT NULL DEFAULT 0,
+    committed_count INTEGER NOT NULL DEFAULT 0,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_repurpose_pack_org_created
+    ON repurpose_pack(org_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- creative_asset — long-form output of the Create screens (Content, Email,
+-- Launch, Ads, Insights' advocacy, Setup's strategy lens). One row per
+-- generation the human chose to keep. ``kind`` is a closed set enforced in
+-- services/creative_assets.py::ASSET_KINDS; ``payload`` is the kind's JSON
+-- shape. Social posts are NOT stored here — they live in content_piece so the
+-- approval gate applies to them.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS creative_asset (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    client_id UUID NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    kind VARCHAR(40) NOT NULL,
+    title VARCHAR(500) NOT NULL DEFAULT '',
+    payload JSONB NOT NULL DEFAULT '{}',
+    source_asset_id UUID REFERENCES creative_asset(id) ON DELETE SET NULL,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_creative_asset_org_client_kind
+    ON creative_asset(org_id, client_id, kind, created_at DESC);
+
+-- Amplify can repurpose a saved asset (blog post, comparison page, niche scan,
+-- video script, launch kit). Added here rather than in repurpose_pack's CREATE
+-- because creative_asset is defined after it.
+ALTER TABLE repurpose_pack
+    ADD COLUMN IF NOT EXISTS source_asset_id UUID REFERENCES creative_asset(id) ON DELETE SET NULL;
+
+-- ---------------------------------------------------------------------------
+-- inbox_item_state — per-item triage state for the Inbox (/inbox). The items
+-- themselves are NOT stored: they are read live from X / LinkedIn on every
+-- load. This row only remembers what the human did with one: opened it (read),
+-- closed it out (handled), or replied from CampaignForge (reply_*).
+-- ``item_key`` is "<platform>:<platform item id>".
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inbox_item_state (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    client_id UUID NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    item_key VARCHAR(255) NOT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    handled BOOLEAN NOT NULL DEFAULT FALSE,
+    reply_id VARCHAR(255),
+    reply_url TEXT,
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (org_id, client_id, item_key)
+);
 
 -- ---------------------------------------------------------------------------
 -- RAG knowledge base (backend/src/agency/services/knowledge_base.py).

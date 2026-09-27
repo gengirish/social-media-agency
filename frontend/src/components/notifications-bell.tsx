@@ -98,12 +98,14 @@ export function NotificationsBell() {
       <button
         type="button"
         onClick={togglePanel}
-        className="relative rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+        className={`press-scale relative flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
+          open ? "border-accent/50 text-ink" : "border-line text-muted hover:border-accent/40 hover:text-ink"
+        }`}
         aria-expanded={open}
         aria-label="Notifications"
       >
         <svg
-          className="h-5 w-5"
+          className="h-4 w-4"
           fill="none"
           viewBox="0 0 24 24"
           strokeWidth={1.5}
@@ -116,21 +118,21 @@ export function NotificationsBell() {
           />
         </svg>
         {unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-0.5 text-[10px] font-bold text-white">
+          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-[10px] font-semibold text-on-accent shadow-glow">
             {unread > 9 ? "9+" : unread}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 rounded-lg border border-slate-200 bg-white shadow-xl">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-semibold text-slate-900">Notifications</h3>
+        <div className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-line bg-panel/95 shadow-[0_20px_60px_rgb(0_0_0/0.25)] backdrop-blur-xl motion-safe:animate-screen-in">
+          <div className="flex items-center justify-between border-b border-line px-4 py-3">
+            <h3 className="font-display text-sm font-semibold text-ink">Notifications</h3>
             {unread > 0 && (
               <button
                 type="button"
                 onClick={markAllRead}
-                className="text-xs text-indigo-600 hover:text-indigo-500"
+                className="font-mono text-[11px] text-accent-text hover:underline"
               >
                 Mark all read
               </button>
@@ -142,8 +144,8 @@ export function NotificationsBell() {
               // create_notification), so an empty list must not read as
               // "you're all caught up".
               <div className="px-4 py-6 text-center">
-                <p className="text-sm text-slate-500">No notifications</p>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="text-sm text-ink">No notifications</p>
+                <p className="mt-1 text-xs text-muted">
                   {emptyReason ??
                     "Notifications are not generated yet — this list stays empty regardless of campaign activity."}
                 </p>
@@ -154,14 +156,14 @@ export function NotificationsBell() {
                   key={n.id}
                   type="button"
                   onClick={() => !n.read && markRead(n.id)}
-                  className={`w-full border-b border-slate-100 px-4 py-3 text-left transition-colors hover:bg-slate-50 ${
-                    !n.read ? "bg-indigo-50/40" : ""
+                  className={`w-full border-b border-line px-4 py-3 text-left transition-colors last:border-0 hover:bg-slate-500/5 ${
+                    !n.read ? "bg-accent/5 shadow-[inset_2px_0_0_rgb(var(--c-accent))]" : ""
                   }`}
                 >
-                  <p className="text-sm font-medium text-slate-900">{n.title}</p>
-                  {n.body && <p className="mt-1 text-xs text-slate-600">{n.body}</p>}
+                  <p className="text-sm font-medium text-ink">{n.title}</p>
+                  {n.body && <p className="mt-1 text-xs text-muted">{n.body}</p>}
                   {n.created_at && (
-                    <p className="mt-1 text-[10px] text-slate-400">
+                    <p className="mt-1 font-mono text-[10px] text-muted">
                       {new Date(n.created_at).toLocaleString()}
                     </p>
                   )}
