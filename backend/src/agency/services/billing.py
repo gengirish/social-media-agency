@@ -377,6 +377,27 @@ class BillingService:
         data = event.get("data") or {}
         occurred_at = _as_utc(event.get("timestamp"))
 
+        # A Dodo *business* can hold several brands, and webhook endpoints are
+        # scoped to the business, not the brand -- `webhook_create_params` has
+        # `filter_types` (event type) and no brand filter. This account also
+        # sells CertForge, so without this check every CertForge subscription
+        # event would reach `_unknown_product` and log `dodo_unknown_product_id`
+        # at ERROR, degrading the one alarm that means "a DODO_PRODUCT_* var is
+        # misconfigured and paying customers are at risk".
+        #
+        # Checked before the idempotency claim so another brand's traffic does
+        # not grow `billing_webhook_event`. Fails OPEN when DODO_BRAND_ID is
+        # unset: a missing var must not silently discard our own events.
+        brand_id = str(data.get("brand_id") or "")
+        if _s.dodo_brand_id and brand_id and brand_id != _s.dodo_brand_id:
+            logger.debug(
+                "dodo_webhook_foreign_brand",
+                webhook_id=webhook_id,
+                event_type=event_type,
+                brand_id=brand_id,
+            )
+            return {"status": "ignored", "reason": "foreign_brand"}
+
         db.add(BillingWebhookEvent(webhook_id=webhook_id, event_type=event_type))
         try:
             await db.flush()

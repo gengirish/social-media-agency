@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     dodo_product_starter: str = ""
     dodo_product_growth: str = ""
     dodo_product_agency: str = ""
+    # The Dodo brand these products belong to. Webhook endpoints are scoped to the
+    # BUSINESS, not the brand, so a business selling more than one product delivers
+    # every brand's events to every endpoint. Set this and foreign-brand events are
+    # ignored quietly; leave it blank and nothing is filtered (fail open).
+    dodo_brand_id: str = ""
 
     # Storage
     s3_bucket_name: str = "campaignforge-media"

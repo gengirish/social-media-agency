@@ -817,3 +817,92 @@ async def test_renewed_for_an_unknown_subscription_is_not_reported_as_a_reset(db
     )
     assert result["status"] == "ignored"
     assert result["reason"] == "no_subscription"
+
+
+# ---------------------------------------------------------------------------
+# Brand scoping — a Dodo business can hold several brands, and webhook
+# endpoints are scoped to the business, not the brand.
+# ---------------------------------------------------------------------------
+async def test_foreign_brand_event_is_ignored_and_writes_nothing(
+    db, session_factory, monkeypatch
+):
+    """Another product in the same Dodo business must not touch our rows.
+
+    This account also sells CertForge. Without the filter its events reach
+    ``_unknown_product`` and log ``dodo_unknown_product_id`` at ERROR, which is
+    the alarm that is supposed to mean "a DODO_PRODUCT_* var is misconfigured
+    and paying customers are at risk".
+    """
+    from agency.services import billing as billing_mod
+
+    monkeypatch.setattr(billing_mod._s, "dodo_brand_id", "brd_campaignforge")
+
+    org_id = await create_org(session_factory, "BrandScoped")
+    await create_subscription(
+        session_factory,
+        org_id,
+        plan_tier="growth",
+        posts_used=900,
+        generations_used=200,
+        billing_customer_id="cus_brand",
+    )
+
+    result = await BillingService().handle_webhook(
+        db,
+        _sub_event(
+            "subscription.renewed",
+            org_id=org_id,
+            product_id=GROWTH,
+            customer_id="cus_brand",
+            brand_id="brd_certforge",
+        ),
+        "wh_foreign_brand",
+    )
+
+    assert result["status"] == "ignored"
+    assert result["reason"] == "foreign_brand"
+
+    # Usage untouched, and no claim row — another brand's traffic must not grow
+    # billing_webhook_event.
+    sub = await _get_sub(session_factory, org_id)
+    assert sub.posts_used == 900
+    assert sub.generations_used == 200
+    assert await _claim_count(session_factory) == 0
+
+
+async def test_brand_filter_fails_open_when_unconfigured(db, session_factory, monkeypatch):
+    """A blank DODO_BRAND_ID must filter nothing.
+
+    Failing closed would make an unset env var silently discard our own paying
+    customers' renewals — the quiet failure this codebase keeps refusing to add.
+    """
+    from agency.services import billing as billing_mod
+
+    monkeypatch.setattr(billing_mod._s, "dodo_brand_id", "")
+
+    org_id = await create_org(session_factory, "NoBrandVar")
+    await create_subscription(
+        session_factory,
+        org_id,
+        plan_tier="growth",
+        posts_used=900,
+        generations_used=200,
+        billing_customer_id="cus_openbrand",
+    )
+
+    result = await BillingService().handle_webhook(
+        db,
+        _sub_event(
+            "subscription.renewed",
+            org_id=org_id,
+            product_id=GROWTH,
+            customer_id="cus_openbrand",
+            brand_id="brd_anything_at_all",
+        ),
+        "wh_open_brand",
+    )
+
+    assert result["status"] == "usage_reset"
+    sub = await _get_sub(session_factory, org_id)
+    assert sub.posts_used == 0
+    assert sub.generations_used == 0
