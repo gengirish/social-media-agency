@@ -39,7 +39,11 @@ jobs:
 
       - name: Install dependencies
         working-directory: backend
-        run: pip install -e ".[dev]"
+        # --retries/--timeout are not tuning. pip reports a timed-out index fetch
+        # as "no matching distributions available", which surfaces as a bogus
+        # ResolutionImpossible naming an innocent package (260928: /simple/click/
+        # timed out and the build failed claiming uvicorn had conflicting deps).
+        run: pip install --retries 10 --timeout 60 -e ".[dev]"
 
       - name: Lint with ruff
         working-directory: backend
@@ -131,7 +135,8 @@ jobs:
 
       - name: Install backend
         working-directory: backend
-        run: pip install -e .
+        # See the backend job: a slow PyPI turns into a fake dependency conflict.
+        run: pip install --retries 10 --timeout 60 -e .
 
       - name: Init database
         env:
