@@ -4,6 +4,15 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260927 — Langfuse tracing for the agent pipeline
+
+- **Added**: `services/tracing.py` — optional Langfuse tracing over the LangGraph pipeline. Every node run attaches a per-run `CallbackHandler`; a campaign's start and its post-review resume share one trace id, so a paused-then-resumed campaign reads as a single trace rather than two.
+- **Off by default.** Enabled only when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set; otherwise startup logs `langfuse_disabled` and nothing is sent. No `LANGFUSE_*` secret is set on Fly, so this is **implemented, not live**.
+- **Added**: client-data masking, `LANGFUSE_MASK_MODE` = `pii` (default) | `full` | `off`. Unknown values mean `full`. Also `LANGFUSE_BASE_URL` (EU cloud by default) and `LANGFUSE_SAMPLE_RATE`.
+- **Changed**: `langchain` is now a declared dependency. `langfuse`'s `CallbackHandler` does a bare `import langchain` to read `__version__` and pick a v0/v1 import path, so `langchain-core` alone is not enough — CI caught this; local environments had the umbrella package by accident.
+
+---
+
 ## 260925 — Dodo Payments replaces Stripe
 
 - **Changed**: the payment rail is now **Dodo Payments** (`dodopayments[webhooks]>=1.117.0`, async client). Stripe is removed outright — the `stripe` dependency, the five `STRIPE_*` settings and every Stripe code path are gone; there is no second provider and no fallback. Dodo is **merchant of record**, so VAT/GST, invoices and receipts are theirs and there is nothing to build for them. **Pricing, tiers and limits are untouched** (free / starter $49 / growth $149 / agency $399). Plan: [dodo-payments-plan-260925.md](../dodo-payments-plan-260925.md).

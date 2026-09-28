@@ -8,9 +8,18 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
-    # Pinned below 2.1: it tightened Result/ScalarResult typing, so every
-    # `x = await db.execute(...)` needs an explicit annotation (14 errors
-    # across the gated modules). Lift once those are annotated.
+    # Capped below 2.1 deliberately. 2.1 tightened the typing of Result /
+    # ScalarResult, so every bare ``x = await db.execute(...)`` becomes
+    # "Need type annotation" under `strict = true` -- 14 errors across the gated
+    # modules (utils/slug, permissions, services/{insights,analytics_fetcher,
+    # webhook_dispatcher,post_studio,ad_sets}, routers/{amplify,create_content}).
+    #
+    # This was invisible for months: the range was open, so CI resolved whatever
+    # was newest (2.1.1) while developers kept an older pin in site-packages
+    # (2.0.48). CI went red on code nobody had touched, and because this workflow
+    # had never reliably fired, nothing reported it.
+    #
+    # Lift the cap by annotating those call sites, not by widening the range.
     "sqlalchemy[asyncio]>=2.0.36,<2.1",
     "asyncpg>=0.30.0",
     "alembic>=1.14.0",
@@ -30,9 +39,18 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.0.0",
     "psycopg[binary]>=3.2.0",
     "langchain-core>=0.3.0",
+    # The langchain umbrella package is required by langfuse, not by us: its
+    # langchain/CallbackHandler.py does a bare `import langchain` to read
+    # __version__ and pick a v0/v1 import path, then imports everything real
+    # from langchain_core. Declaring only langchain-core passes on any machine
+    # where something unrelated pulled langchain in, and fails in CI with
+    # "Please install langchain" -- which is how it failed on 260927. Capped
+    # below 2 because that __version__ check is a behavioural fork, not cosmetic.
+    "langchain>=1.0,<2",
     "langchain-google-genai>=2.0.0",
     "langchain-openai>=0.3.0",
     "langchain-anthropic>=0.3.0",
+    "langfuse>=4.0.0",
     "sse-starlette>=2.2.0",
     # The [webhooks] extra is load-bearing, not cosmetic: webhooks.unwrap()
     # imports standardwebhooks lazily and raises at call time without it, so a
