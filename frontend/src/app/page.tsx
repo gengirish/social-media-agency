@@ -90,13 +90,69 @@ const STEPS = [
   },
 ];
 
-const AGENTS = [
-  { tag: "02 · RESEARCH", name: "Strategy", copy: "Positioning & messaging", tone: "accent" },
-  { tag: "03 · RESEARCH", name: "SEO", copy: "Keywords & structure", tone: "accent" },
-  { tag: "04 · CREATE", name: "Content Writer", copy: "Posts & long-form", tone: "muted" },
-  { tag: "05 · CREATE", name: "Ad Copywriter", copy: "Hooks & CTAs", tone: "muted" },
-  { tag: "06 · SHIP", name: "QA / Brand", copy: "Voice & compliance", tone: "accent" },
-  { tag: "07 · SHIP", name: "Analytics", copy: "Performance & learnings", tone: "accent" },
+/*
+ * The pipeline as it actually runs in backend/src/agency/agents/graph.py:
+ * five stages, two of which fan out into parallel lanes, with the human
+ * review gate as its own stage rather than a seventh agent card. `lane`
+ * drives the layout — "solo" is one box, "parallel" stacks two boxes under a
+ * "runs in parallel" rail, "gate" is the stop, styled violet because a person
+ * does it, not an agent.
+ */
+const PIPELINE = [
+  {
+    id: "01",
+    stage: "Orchestrate",
+    lane: "solo",
+    note: "splits the brief",
+    agents: [
+      {
+        name: "Orchestrator",
+        copy: "Reads the brief, splits the work into lanes, and merges every output back into one campaign.",
+      },
+    ],
+  },
+  {
+    id: "02",
+    stage: "Research",
+    lane: "parallel",
+    note: "two lanes at once",
+    agents: [
+      { name: "Strategy", copy: "Positioning & messaging" },
+      { name: "SEO", copy: "Keywords & structure" },
+    ],
+  },
+  {
+    id: "03",
+    stage: "Create",
+    lane: "parallel",
+    note: "both read 02",
+    agents: [
+      { name: "Content Writer", copy: "Posts & long-form" },
+      { name: "Ad Copywriter", copy: "Hooks & CTAs" },
+    ],
+  },
+  {
+    id: "04",
+    stage: "Review",
+    lane: "gate",
+    note: "pipeline pauses",
+    agents: [
+      {
+        name: "You",
+        copy: "Execution stops here. Approve, or send strategy or ads back for another pass.",
+      },
+    ],
+  },
+  {
+    id: "05",
+    stage: "Ship",
+    lane: "parallel",
+    note: "failures loop back",
+    agents: [
+      { name: "QA / Brand", copy: "Voice & compliance" },
+      { name: "Analytics", copy: "Performance & learnings" },
+    ],
+  },
 ];
 
 const FEATURES = [
@@ -253,29 +309,41 @@ export default function Home() {
 
         {/* Pipeline */}
         <section id="pipeline" className="cf-shell cf-section">
-          <h2 className="cf-h2">Seven agents. One pipeline.</h2>
-          <p className="cf-flow">
-            brief → orchestrator → strategy ∥ seo → content ∥ ads → human review → qa → publish
-          </p>
-          <div className="cf-grid-4">
-            <article className="cf-card cf-card-lead">
-              <span className="cf-kicker cf-kicker-violet">01 · ORCHESTRATE</span>
-              <h3 className="cf-h3 cf-h3-lg">Orchestrator</h3>
-              <p className="cf-copy">
-                Reads the brief, splits the work into parallel lanes, and merges every output back
-                into one campaign.
-              </p>
-            </article>
-            {AGENTS.map((a) => (
-              <article key={a.name} className="cf-card cf-card-agent">
-                <span className={`cf-kicker ${a.tone === "muted" ? "cf-kicker-muted" : ""}`}>
-                  {a.tag}
-                </span>
-                <h3 className="cf-h3 cf-h3-sm">{a.name}</h3>
-                <p className="cf-copy cf-copy-sm">{a.copy}</p>
-              </article>
-            ))}
+          <div className="cf-section-head">
+            <h2 className="cf-h2">Seven agents. One pipeline.</h2>
+            <p className="cf-section-sub">
+              Research and drafting run two lanes wide, so the whole campaign lands in one pass —
+              and it stops at you before anything ships.
+            </p>
           </div>
+
+          <ol className="cf-pipe">
+            <li className="cf-pipe-in" aria-hidden>
+              <span className="cf-pipe-in-label">brief</span>
+            </li>
+            {PIPELINE.map((st) => (
+              <li key={st.id} className={`cf-stage cf-stage-${st.lane}`}>
+                <div className="cf-stage-head">
+                  <span className="cf-stage-id">{st.id}</span>
+                  <span className="cf-stage-name">{st.stage}</span>
+                  <span className="cf-stage-note">{st.note}</span>
+                </div>
+                <div className="cf-lane">
+                  {st.agents.map((a) => (
+                    <article key={a.name} className="cf-node">
+                      <h3 className="cf-node-name">{a.name}</h3>
+                      <p className="cf-node-copy">{a.copy}</p>
+                    </article>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ol>
+
+          <p className="cf-pipe-foot">
+            Critical QA failures route back to Create automatically, capped at two retries — then it
+            comes back to you.
+          </p>
         </section>
 
         {/* Features */}
@@ -565,7 +633,74 @@ const CSS = `
 .cf-kicker { font-family: var(--font-mono), ui-monospace, monospace; font-size: 11.5px; letter-spacing: 0.08em; color: var(--accent-text); }
 .cf-kicker-violet { color: var(--violet); }
 .cf-kicker-muted { color: var(--ink-4); }
-.cf-flow { font-family: var(--font-mono), ui-monospace, monospace; font-size: 13px; color: var(--ink-3); margin: 18px 0 40px; overflow-x: auto; }
+
+/*
+ * Pipeline diagram. Five stages on one rail: .cf-pipe is a grid whose
+ * columns are sized so the two prose-heavy stages (Orchestrate, Review) get
+ * more room than the terse parallel pairs. Connectors are drawn as ::after
+ * chevrons sitting in the grid gap, so no extra markup carries them; on the
+ * stacked breakpoints they rotate a quarter turn and the rail reads downward.
+ */
+.cf-pipe {
+  display: grid; grid-template-columns: auto 1.25fr 1fr 1fr 1.25fr 1fr;
+  gap: 26px; align-items: stretch; list-style: none; margin: 0; padding: 0;
+}
+.cf-pipe > li { position: relative; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* Chevron in the gap to the right of every stage but the last. */
+.cf-pipe > li:not(:last-child)::after {
+  content: ""; position: absolute; top: 50%; right: -20px;
+  width: 8px; height: 8px; border-top: 1.5px solid var(--line-2); border-right: 1.5px solid var(--line-2);
+  transform: translateY(-50%) rotate(45deg);
+}
+/* Entry stub: the brief going in. */
+.cf-pipe-in { justify-content: center; }
+.cf-pipe-in-label {
+  font-family: var(--font-mono), ui-monospace, monospace; font-size: 11.5px;
+  letter-spacing: 0.08em; color: var(--ink-4); white-space: nowrap;
+  padding: 7px 12px; border: 1px dashed var(--line-2); border-radius: 99px;
+}
+.cf-stage-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding-bottom: 2px; }
+.cf-stage-id {
+  font-family: var(--font-mono), ui-monospace, monospace; font-size: 11.5px;
+  color: var(--accent-text); letter-spacing: 0.08em;
+}
+.cf-stage-name { font-family: var(--font-display), sans-serif; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+.cf-stage-note { font-family: var(--font-mono), ui-monospace, monospace; font-size: 11px; color: var(--ink-4); }
+/* The lane holds one node, or two stacked ones joined by the parallel rail. */
+.cf-lane { position: relative; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+.cf-stage-parallel .cf-lane { padding-left: 13px; }
+/* Bracket marking the two boxes as concurrent rather than sequential. */
+.cf-stage-parallel .cf-lane::before {
+  content: ""; position: absolute; left: 0; top: 18px; bottom: 18px; width: 5px;
+  border-left: 1.5px solid rgb(var(--c-accent) / 0.55);
+  border-top: 1.5px solid rgb(var(--c-accent) / 0.55);
+  border-bottom: 1.5px solid rgb(var(--c-accent) / 0.55);
+  border-radius: 4px 0 0 4px;
+}
+.cf-node {
+  flex: 1; display: flex; flex-direction: column; gap: 5px; justify-content: center;
+  padding: 18px; border-radius: 11px; border: 1px solid var(--line); background: var(--panel);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: var(--shadow);
+  transition: transform .2s cubic-bezier(.16,1,.3,1), border-color .2s ease;
+}
+.cf-node:hover { transform: translateY(-2px); border-color: rgb(var(--c-accent) / 0.5); }
+.cf-node-name { font-family: var(--font-display), sans-serif; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
+.cf-node-copy { font-size: 13.5px; line-height: 1.5; color: var(--ink-3); }
+/* Stage 01 anchors the rail; stage 04 is the human gate, so it reads violet. */
+.cf-stage-solo .cf-node {
+  border-color: rgb(var(--c-accent) / 0.45);
+  background: radial-gradient(320px 180px at 0% 0%, rgb(var(--c-accent) / 0.16), transparent 70%), var(--panel);
+}
+.cf-stage-gate .cf-stage-id { color: var(--violet); }
+.cf-stage-gate .cf-node {
+  border-style: dashed; border-color: rgb(var(--c-blue-600) / 0.55);
+  background: radial-gradient(320px 180px at 0% 0%, rgb(var(--c-blue-600) / 0.14), transparent 70%), var(--panel);
+}
+.cf-stage-gate .cf-node:hover { border-color: rgb(var(--c-blue-600) / 0.8); }
+.cf-pipe-foot {
+  font-family: var(--font-mono), ui-monospace, monospace; font-size: 11.5px; line-height: 1.6;
+  color: var(--ink-4); margin-top: 20px;
+}
 
 .cf-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .cf-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
@@ -580,15 +715,7 @@ const CSS = `
   transition: transform .2s cubic-bezier(.16,1,.3,1), border-color .2s ease;
 }
 .cf-card-step { padding: 30px; gap: 12px; }
-.cf-card-step:hover, .cf-card-agent:hover { transform: translateY(-2px); border-color: rgb(var(--c-accent) / 0.5); }
-.cf-card-lead {
-  grid-column: span 2; padding: 28px; gap: 10px; min-height: 170px;
-  border-color: rgb(var(--c-accent) / 0.45);
-  background:
-    radial-gradient(420px 220px at 0% 0%, rgb(var(--c-accent) / 0.16), transparent 70%),
-    var(--panel);
-}
-.cf-card-agent { padding: 26px; gap: 8px; }
+.cf-card-step:hover { transform: translateY(-2px); border-color: rgb(var(--c-accent) / 0.5); }
 
 /* Features — hairline grid via 1px gap over a rule-coloured backdrop */
 .cf-hairline {
@@ -656,8 +783,16 @@ const CSS = `
 /* Responsive — the design is desktop-first; these are the reflow points. */
 @media (max-width: 1080px) {
   .cf-grid-4 { grid-template-columns: repeat(2, 1fr); }
-  .cf-card-lead { grid-column: span 2; }
   .cf-hairline { grid-template-columns: repeat(2, 1fr); }
+  /* Two stages per row; the brief stub joins 01 instead of taking a column. */
+  .cf-pipe { grid-template-columns: repeat(2, 1fr); gap: 32px 26px; }
+  .cf-pipe-in { grid-column: 1 / -1; align-items: flex-start; }
+  /* Left column (01/03/05) keeps the sideways chevron; the right column
+     (02/04) turns the corner down into the next row. */
+  .cf-pipe > li:nth-child(odd)::after {
+    top: auto; bottom: -24px; right: 50%; transform: translateX(50%) rotate(135deg);
+  }
+  .cf-pipe-in::after { display: none; }
 }
 @media (max-width: 900px) {
   .cf-hero { grid-template-columns: 1fr; gap: 48px; padding-block: 56px 48px; }
@@ -671,7 +806,15 @@ const CSS = `
   .cf-header-cta { gap: 8px; }
   .cf-brand-name { font-size: 12px; letter-spacing: 0.1em; }
   .cf-grid-4, .cf-hairline { grid-template-columns: 1fr; }
-  .cf-card-lead { grid-column: span 1; }
+  /* Single column: the rail runs top to bottom, chevrons pointing down. */
+  .cf-pipe { grid-template-columns: 1fr; gap: 30px; }
+  .cf-pipe > li:nth-child(odd)::after,
+  .cf-pipe > li:nth-child(even):not(:last-child)::after,
+  .cf-pipe > li:not(:last-child)::after {
+    display: block; top: auto; bottom: -22px; right: auto; left: 20px;
+    transform: rotate(135deg);
+  }
+  .cf-pipe > li:last-child::after { display: none; }
   .cf-section { padding-block: 56px; }
   .cf-cta { padding: 48px 20px; }
   .cf-stats { gap: 24px; }
