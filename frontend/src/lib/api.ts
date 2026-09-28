@@ -383,9 +383,21 @@ export const api = {
       }),
     }),
 
-  // POST /api/v1/billing/webhook is intentionally absent: it is Stripe's
-  // server-to-server receiver, signature-verified against STRIPE_WEBHOOK_SECRET.
-  // A browser can never produce a valid call.
+  /**
+   * Opens the Dodo Payments customer portal: card details, invoices, receipts and
+   * plan changes all live there, not here. The link Dodo returns is single-use and
+   * expires, so it is fetched on click and never cached.
+   *
+   * `409` means the org has never had a Dodo customer created (a free workspace that
+   * has never checked out) — there is nothing to manage, so callers hide the entry
+   * point rather than surfacing the error.
+   */
+  createPortalSession: () =>
+    request<PortalResponse>("/api/v1/billing/portal", { method: "POST" }),
+
+  // POST /api/v1/billing/webhook is intentionally absent: it is Dodo Payments'
+  // server-to-server receiver, signature-verified (Standard Webhooks) against
+  // DODO_PAYMENTS_WEBHOOK_KEY. A browser can never produce a valid call.
 
   // --- Team ---
   getTeam: async () => {
@@ -1210,7 +1222,8 @@ export interface PublishedResponse {
 
 export interface Plan {
   tier: string;
-  price_id?: string;
+  /** The Dodo Payments product this tier checks out against (`pdt_…`). */
+  product_id?: string;
   clients_limit?: number;
   posts_limit?: number;
   campaigns_limit?: number;
@@ -1241,14 +1254,40 @@ export interface PricingResponse {
   profiles: WorkspaceProfileOption[];
 }
 
+/**
+ * Dodo Payments subscription states we store. `on_hold` and `past_due` are the
+ * recoverable ones — a renewal payment failed and Dodo is still retrying, so the
+ * customer can fix it by updating their card in the portal. `failed` is terminal
+ * (the initial mandate never took) and `cancelled` keeps access until `expired`.
+ * Kept open-ended: this is server data, and an unrecognised state must not break
+ * a screen that only ever compares it.
+ */
+export type SubscriptionStatus =
+  | "active"
+  | "trialing"
+  | "on_hold"
+  | "past_due"
+  | "paused"
+  | "cancelled"
+  | "expired"
+  | "failed"
+  | (string & {});
+
 export interface SubscriptionInfo {
   plan_tier: string;
-  status?: string;
+  status?: SubscriptionStatus;
   clients_limit?: number;
   posts_limit?: number;
   posts_used?: number;
   campaigns_limit?: number;
-  price_id?: string;
+  /** `get_subscription` spreads the matching `PLAN_CONFIG` entry, so this is the tier's Dodo product. */
+  product_id?: string;
+  /**
+   * Whether a Dodo customer portal can be opened for this org. Prefer this over
+   * inferring from `plan_tier`: an org that cancelled down to free still has a
+   * customer id, and the portal still serves its invoices and reactivation.
+   */
+  has_billing_customer?: boolean;
   amount?: number;
   features?: string[];
 }
@@ -1256,6 +1295,10 @@ export interface SubscriptionInfo {
 export interface CheckoutResponse {
   checkout_url: string;
   session_id?: string;
+}
+
+export interface PortalResponse {
+  portal_url: string;
 }
 
 export interface TeamMember {

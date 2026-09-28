@@ -300,8 +300,8 @@ async def create_subscription(
     generations_used: int = 0,
     generations_limit: int | None = None,
     status: str = "active",
-    stripe_customer_id: str | None = None,
-    stripe_subscription_id: str | None = None,
+    billing_customer_id: str | None = None,
+    billing_subscription_id: str | None = None,
 ) -> UUID:
     from agency.models.tables import Subscription
     from agency.services.billing import PLAN_CONFIG
@@ -319,8 +319,8 @@ async def create_subscription(
             plan["generations_limit"] if generations_limit is None else generations_limit
         ),
         status=status,
-        stripe_customer_id=stripe_customer_id,
-        stripe_subscription_id=stripe_subscription_id,
+        billing_customer_id=billing_customer_id,
+        billing_subscription_id=billing_subscription_id,
     )
     await _persist(session_factory, sub)
     return sub.id

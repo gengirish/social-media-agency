@@ -138,8 +138,10 @@ class Subscription(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False)
-    stripe_customer_id = Column(String(255))
-    stripe_subscription_id = Column(String(255))
+    # Named for the role, not the provider: these were Stripe's ids, are Dodo
+    # Payments' now, and a provider-shaped name is what forced the 260925 rename.
+    billing_customer_id = Column(String(255))
+    billing_subscription_id = Column(String(255))
     plan_tier = Column(String(50), nullable=False, default="free")
     clients_limit = Column(Integer, default=1)
     posts_limit = Column(Integer, default=30)
@@ -151,7 +153,27 @@ class Subscription(Base):
     current_period_start = Column(DateTime(timezone=True))
     current_period_end = Column(DateTime(timezone=True))
     status = Column(String(50), default="active")
+    # Newest billing event applied to this row. The provider does not guarantee
+    # delivery order, so anything older than this is dropped — otherwise a late
+    # 'active' re-grants a plan that was already cancelled.
+    last_event_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class BillingWebhookEvent(Base):
+    """One row per billing webhook already applied.
+
+    The primary key *is* the idempotency claim — the provider retries a non-2xx
+    eight times, and the insert is what makes the second delivery lose. Write it in
+    the same transaction as the entitlement change it guards, or a redelivered
+    renewal re-zeroes an org's usage and grants a free extra period of quota.
+    """
+
+    __tablename__ = "billing_webhook_event"
+
+    webhook_id = Column(Text, primary_key=True)
+    event_type = Column(Text, nullable=False)
+    received_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 
 class Client(Base):

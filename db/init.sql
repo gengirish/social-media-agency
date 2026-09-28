@@ -54,20 +54,38 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS subscription (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
-    stripe_customer_id VARCHAR(255),
-    stripe_subscription_id VARCHAR(255),
+    -- Payment-provider ids. Named for the role, not the provider: these were
+    -- Stripe's, are Dodo Payments' now, and a provider-shaped name is what forced
+    -- the 260925 rename.
+    billing_customer_id VARCHAR(255),
+    billing_subscription_id VARCHAR(255),
     plan_tier VARCHAR(50) NOT NULL DEFAULT 'free',
     clients_limit INTEGER DEFAULT 2,
     posts_limit INTEGER DEFAULT 30,
     posts_used INTEGER DEFAULT 0,
     -- Amplify packs generated this billing period (1 pack = 1 generation).
-    -- Reset alongside posts_used on invoice.paid; limit comes from PLAN_CONFIG.
+    -- Reset alongside posts_used on subscription renewal; limit comes from PLAN_CONFIG.
     generations_used INTEGER NOT NULL DEFAULT 0,
     generations_limit INTEGER,
     current_period_start TIMESTAMPTZ,
     current_period_end TIMESTAMPTZ,
     status VARCHAR(50) DEFAULT 'active',
+    -- Timestamp of the newest billing event applied to this row. The provider does
+    -- not guarantee delivery order, so an event older than this is dropped —
+    -- without it a late 'active' re-grants a plan that was already cancelled.
+    last_event_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Billing webhook events already applied.
+-- The PRIMARY KEY *is* the idempotency claim: the provider retries a non-2xx eight
+-- times, and the insert is what makes the second delivery lose. It has to be written
+-- in the same transaction as the entitlement change it guards, or a redelivered
+-- renewal re-zeroes an org's usage and hands out a free extra period of quota.
+CREATE TABLE IF NOT EXISTS billing_webhook_event (
+    webhook_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Clients / Brands

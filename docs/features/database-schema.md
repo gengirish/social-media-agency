@@ -1,7 +1,7 @@
 # Database Schema
-<!-- verified: 260923 -->
+<!-- verified: 260925 -->
 
-PostgreSQL (Neon serverless) via SQLAlchemy async. **24 tables** (23 without pgvector). `repurpose_pack` added 260921; `creative_asset` and `inbox_item_state` added 260923.
+PostgreSQL (Neon serverless) via SQLAlchemy async. **25 tables** (24 without pgvector). `repurpose_pack` added 260921; `creative_asset` and `inbox_item_state` added 260923; `billing_webhook_event` added 260925.
 
 > ### Pending Neon migrations — Cadence full parity (260923)
 >
@@ -18,6 +18,18 @@ PostgreSQL (Neon serverless) via SQLAlchemy async. **24 tables** (23 without pgv
 > 4. `db/migrations/260925_workspace_profile.sql` — adds `organization.workspace_profile`
 >    (nullable, CHECK-constrained). Without it `GET /api/v1/billing/plans` fails with
 >    `UndefinedColumn` and the pricing page cannot load. Independent of 1–3.
+>
+> 5. `db/migrations/260925_dodo_billing.sql` — the Dodo Payments swap: renames
+>    `subscription.stripe_customer_id` → `billing_customer_id` and
+>    `stripe_subscription_id` → `billing_subscription_id`, adds
+>    `subscription.last_event_at`, and creates `billing_webhook_event`. Without it every
+>    `/api/v1/billing/*` call fails with `UndefinedColumn` / `UndefinedTable`.
+>
+>    **The renames are only safe because every value is NULL.** Billing has never run in
+>    production, so there are no customer ids to lose. Run
+>    `SELECT count(*) FROM subscription WHERE stripe_customer_id IS NOT NULL;` first and
+>    **stop if it is non-zero** — the rename would then need to become an additive column
+>    pair plus a backfill.
 
 **File**: `backend/src/agency/models/tables.py`
 
@@ -83,18 +95,21 @@ Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations
 |--------|------|-------|
 | `id` | UUID PK | |
 | `org_id` | UUID FK → Organization | |
-| `stripe_customer_id` | String | |
-| `stripe_subscription_id` | String | |
+| `billing_customer_id` | String | Dodo customer id. Renamed from `stripe_customer_id` 260925 |
+| `billing_subscription_id` | String | Dodo subscription id. Renamed from `stripe_subscription_id` 260925 |
 | `plan_tier` | String | free, starter, growth, agency |
 | `clients_limit` | Integer | |
 | `posts_limit` | Integer | |
 | `posts_used` | Integer | |
-| `generations_used` | Integer NOT NULL, default 0 | Amplify packs generated this billing period (1 pack = 1 generation). Reset to 0 with `posts_used` on `invoice.paid`. Added 260921 |
+| `generations_used` | Integer NOT NULL, default 0 | Amplify packs generated this billing period (1 pack = 1 generation). Reset to 0 with `posts_used` on `subscription.renewed`. Added 260921 |
 | `generations_limit` | Integer, nullable | Set from `PLAN_CONFIG[tier]["generations_limit"]` on provisioning and every plan change. NULL falls back to the tier's value (`billing.generations_limit_for`). Added 260921 |
 | `period_start` | DateTime(tz) | |
 | `period_end` | DateTime(tz) | |
-| `status` | String | |
+| `status` | String | `active`, `cancelled`, `on_hold`, `past_due`, `paused`, `expired`, `failed`. **Recorded, never enforced** — no status blocks publishing or generation |
+| `last_event_at` | DateTime(tz), nullable | Timestamp of the most recent billing webhook applied to this row. Anything older is dropped, so an out-of-order `subscription.active` cannot resurrect a cancelled plan. Added 260925 |
 | `created_at` | DateTime(tz) | |
+
+**Migration:** `db/migrations/260925_dodo_billing.sql` (the two renames + `last_event_at`).
 
 ## Client
 **Status**: [LIVE]
@@ -311,6 +326,11 @@ In-app notification system. Fields: `user_id`, `org_id`, `type`, `title`, `body`
 
 ### AuditLog [LIVE]
 Enterprise audit trail. Fields: `org_id`, `user_id`, `action`, `resource_type`, `resource_id`, `details` JSONB, `ip_address`, `created_at`. First writer (260923): `POST /inbox/reply` (`inbox.reply`, `inbox.reply_failed`, `resource_type = "inbox_item"`). The Settings activity log reads rows whose `details.client_id` matches.
+
+### BillingWebhookEvent [LIVE]
+Idempotency claims for Dodo Payments webhooks. Fields: `webhook_id` (TEXT **PRIMARY KEY** — the claim itself, taken from the `webhook-id` header), `event_type`, `received_at` (default `NOW()`).
+
+The primary key **is** the guard: a redelivery fails the insert and `handle_webhook` returns `{"status": "duplicate"}` without touching entitlements. Dodo retries a non-2xx eight times, and a re-run `subscription.renewed` would otherwise re-zero `posts_used` each time. The claim and the entitlement write share one transaction, so a handler that raises rolls the claim back and the retry can still apply. Added 260925 by `db/migrations/260925_dodo_billing.sql`.
 
 ### ProductEvent [LIVE]
 Product-analytics event stream behind `GET /beta-metrics`. Fields: `org_id` (nullable), `user_id` (nullable), `session_id`, `name`, `category` (`pipeline` | `session` | `feature` | `error`), `path`, `campaign_id`, `duration_ms`, `properties` JSONB, `occurred_at`, `created_at`.

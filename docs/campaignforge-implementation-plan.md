@@ -54,7 +54,7 @@ Corrections applied to this document on 260817, second pass:
 6. ✅ `db/migrations/260818_schema_catchup.sql` applied to Neon. Closed four missing tables and two missing columns; a model-vs-database diff now reports zero drift in both directions.
 7. ✅ **LLM providers are live on Fly prod.** `anthropic`, `google`, `openrouter`, and `groq` are all keyed. Verified by resolving the chain inside the machine, not from the secret names: every tier serves `anthropic` primary (`claude-sonnet-5` for brain/worker, `claude-haiku-4-5` for ad_copy/lite) with `google → openrouter → groq` attached as fallbacks, and a real `invoke()` through the chain returned. **Production can run a campaign end-to-end.**
 8. ⬜ **`CORS_ORIGINS` was wrong until 260818** and took the app down in the browser while every server-side signal stayed green. It is correct now, with the canonical domain first (that first entry also builds OAuth redirect URIs). `main.py` logs the resolved list as `cors_allowed_origins` at boot — check it before debugging any CORS report.
-9. ⬜ **Still unset in prod:** `EXA_API_KEY` (trends + competitive intel stay dark), `TOKEN_ENCRYPTION_KEY` (**OAuth tokens at rest fall back to a built-in dev key — effectively unencrypted in production**), and the Stripe keys (no checkout). The `TOKEN_ENCRYPTION_KEY` gap is the sharpest of the three: it is silent, and it only matters once real users connect real social accounts.
+9. ⬜ **Still unset in prod:** `EXA_API_KEY` (trends + competitive intel stay dark), `TOKEN_ENCRYPTION_KEY` (**OAuth tokens at rest fall back to a built-in dev key — effectively unencrypted in production**), and the billing keys (no checkout — `DODO_API_KEY`, `DODO_WEBHOOK_KEY`, `DODO_ENVIRONMENT`, the three `DODO_PRODUCT_*` ids, plus `FRONTEND_URL`, which otherwise defaults to localhost and would return every checkout there; the `STRIPE_*` keys this line used to name were never set either, and Stripe was removed on 260925). The `TOKEN_ENCRYPTION_KEY` gap is the sharpest of the three: it is silent, and it only matters once real users connect real social accounts.
 
 ---
 
@@ -176,7 +176,7 @@ Corrections applied to this document on 260817, second pass:
 - 🔴 **`comments.py` and `notifications.py` were entirely non-functional.** `get_current_user` returns the **JWT payload dict** in both the Clerk and local paths, but both routers did `user.id` on it — `AttributeError` → 500 on every route in both files. `comments.py` also read `user.full_name`, a key the payload has never contained. Neither router had a single test, so this survived to `main`. Fixed by adding `get_current_user_id` to `dependencies.py`; this blocks T3.5, which is built entirely on the comments router.
 - `oauth_callback` called `UUID(client_id_fk)` unguarded — a malformed body field raised straight out of the handler as a 500 rather than a 400.
 
-**Also fixed:** `services/billing.py` `_handle_invoice_paid` returned `{"status": "usage_reset"}` even when no subscription matched the Stripe customer. Now returns `{"status": "ignored", "reason": "no_subscription_for_customer"}` and logs a warning.
+**Also fixed:** `services/billing.py` `_handle_invoice_paid` returned `{"status": "usage_reset"}` even when no subscription matched the Stripe customer. Now returns `{"status": "ignored", "reason": "no_subscription_for_customer"}` and logs a warning. *(260925: `_handle_invoice_paid` is gone with Stripe; its successor is `subscription.renewed`, which keeps the same no-match behaviour.)*
 
 **Schema change:** `organization.slug` (`VARCHAR(64) UNIQUE`, nullable) added to `db/init.sql`, `models/tables.py` and `db/seed.sql`; slug generation wired into both org-creation paths (`routers/auth.py` signup, `dependencies.py` Clerk auto-provision) via new `utils/slug.py`. Null slug = no portal, which is the fail-closed default. **`db/migrations/260817_org_slug.sql` must be run by hand on Neon** — see operator action 5. This is the first file in `db/migrations/`; the repo previously had nowhere to put a change that `init.sql` alone cannot deliver to an existing database.
 
@@ -326,13 +326,13 @@ Corrections applied to this document on 260817, second pass:
 
 - **T5.1** Confirm ICP: small agencies via white-label (makes T3.1 the flagship) vs self-serve solo marketers. Everything in Phase 3's priority order hinges on this.
 - **T5.2** Recruit 3–5 design partners → real logos/quotes to replace the placeholder block on the landing page (T1.6).
-- **T5.3** Decide payment rail: the code is Stripe end-to-end with verified webhook signatures (✅ the 260701 P0-3 item is done). If Razorpay is intended for India, that is a new Phase-2-sized workstream — scope it explicitly or drop it.
+- **T5.3** ~~Decide payment rail.~~ **Decided 260925: Dodo Payments**, replacing Stripe outright — merchant of record, so VAT/GST, invoices and receipts are handled for us and Razorpay is moot. The code is Dodo end-to-end with verified, idempotent webhooks. Remaining work is operational, not engineering: create the live catalogue, set the `DODO_*` secrets and `FRONTEND_URL` on Fly, run `db/migrations/260925_dodo_billing.sql` on Neon, and do one live smoke checkout. See [dodo-payments-plan-260925.md](dodo-payments-plan-260925.md) §8.
 
 ---
 
 ## Already done since the 260701 audit (do not re-scope)
 
-- ✅ Stripe webhook signature verification — `routers/billing.py:77` uses `stripe.Webhook.construct_event`.
+- ✅ Billing webhook signature verification — `routers/billing.py`. Stripe's `construct_event` until 260925, now Dodo's `client.webhooks.unwrap()` against the raw body (503 unconfigured, 401 on a missing or bad signature), plus idempotency and ordering guards the Stripe path never had.
 - ✅ **Now genuinely done (was ⚠️).** Billing / quota / tenancy tests run and pass — T0.3 built the fixture contract they expected. The earlier ⚠️ note stands as the record of why "test files exist" is not the same claim as "tests run": all three aborted at **collection**, taking the whole suite with them.
 - ✅ Real metric-fetching code written (`services/platform_metrics.py`) and **wired** by T1.1 — its three internal bugs are owned by T2.2.
 - ✅ Fabricated testimonials removed from the landing page. The placeholder-logo block on `frontend/src/app/page.tsx` is **also already gone** (verified 260817) — T1.6 inherits only the audit, not that deletion.
@@ -361,7 +361,7 @@ Struck through where complete. Remaining work only:
 1. ICP confirmed as white-label agencies? Decides whether T3.1 is P0 or P2. **Now the most expensive open question in the doc** — T1.7 cleared the portal's blocker, so this is the only thing standing between the agency wedge and being built.
 2. ~~Which LLM providers are keyed on Fly prod?~~ **Answered 260818: `anthropic`, `google`, `openrouter`, `groq`.** Anthropic is primary on every tier, the other three are the fallback chain. `GET /api/v1/health/llm` reports this without exposing key material.
 3. ~~Does Neon have `vector` enabled on your plan?~~ **Answered 260818: yes, and it is now enabled** — `knowledge_embedding` exists with its HNSW index. Remaining step is running `scripts/index_knowledge_base.py` (operator action 3).
-4. Stripe or Razorpay for launch? T5.3.
+4. ~~Stripe or Razorpay for launch?~~ **Answered 260925: Dodo Payments**, replacing both. T5.3.
 5. Do you have Meta app review approval for IG Content Publishing? Without it T2.1 cannot be demoed on a real account.
 6. ~~Is `docs/campaignforge-hardening-backlog.md` retired by this doc?~~ **Answered by inspection: the file still exists.** Recommendation — delete it. Every live item has been carried into a task block here, and two documents describing the same backlog is exactly how the 427-vs-413 and 23-vs-24 style drift started. Retained only if you want the 260701 audit as a historical record, in which case stamp it `SUPERSEDED — see campaignforge-implementation-plan.md` at the top.
 7. **New:** `organization.slug` is backfilled from `name`, so existing orgs get slugs like `campaignforge-demo`. Should agencies be able to edit their portal slug (T3.7's white-label editor), and is a slug change allowed to break existing portal links customers have already been sent?

@@ -18,7 +18,7 @@ Positioning as of 260817: the ICP is **small agencies and freelancers managing 3
 | AI Brain | Claude Sonnet (orchestrator/QA) | Anthropic |
 | AI Workers | Gemini 2.5 Flash (strategy/SEO/content) | Google |
 | LLM failover | 7 providers, per-tier fallback chain | Anthropic · Google · OpenAI · NVIDIA · OpenRouter · Bonsai · Groq |
-| Payments | Stripe subscriptions | — |
+| Payments | Dodo Payments subscriptions (merchant of record) — implemented, not yet live | — |
 | Email | AgentMail | — |
 | Images | fal.ai (flux/schnell) | — |
 
@@ -61,8 +61,10 @@ npm run dev
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk frontend key |
 | `GOOGLE_API_KEY` | Gemini (worker LLM); `GEMINI_API_KEY` accepted as alias |
 | `ANTHROPIC_API_KEY` | Claude (brain LLM) |
-| `STRIPE_SECRET_KEY` | Billing |
-| `STRIPE_WEBHOOK_SECRET` | Webhook signature verification; the endpoint returns 503 without it |
+| `DODO_API_KEY` | Dodo Payments billing. Server-side only — Dodo has no publishable key |
+| `DODO_WEBHOOK_KEY` | Webhook signature verification; the endpoint returns 503 without it |
+| `DODO_ENVIRONMENT` | `test_mode` (default) or `live_mode` |
+| `DODO_PRODUCT_STARTER` / `_GROWTH` / `_AGENCY` | Dodo `pdt_` product id per paid tier |
 
 At least one LLM provider key is required — with none set, `get_llm()` raises immediately naming the variables to set.
 

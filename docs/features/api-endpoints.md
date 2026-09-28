@@ -387,8 +387,9 @@ Every query filters on `org_id` and the org-resolved `client_id`. Tests: `tests/
 | GET | `/billing/workspace-profile` | Yes | `get_workspace_profile` | The org's chosen profile (`null` = never chosen) + the catalogue |
 | PUT | `/billing/workspace-profile` | `billing.manage` | `set_workspace_profile` | Set/clear the profile. Display only — reshapes the pricing page, moves no money |
 | GET | `/billing/subscription` | Yes | `get_subscription` | Org subscription + limits, incl. `generations_used` / `generations_limit` (Amplify quota — see [billing.md](billing.md#amplify-generation-quota)) |
-| POST | `/billing/checkout` | Yes | `create_checkout` | Stripe Checkout session |
-| POST | `/billing/webhook` | Stripe sig | `stripe_webhook` | Stripe webhook handler |
+| POST | `/billing/checkout` | `billing.manage` | `create_checkout` | Dodo Payments checkout session → `{checkout_url}`; 502 if Dodo returns no URL |
+| POST | `/billing/portal` | `billing.manage` | `create_portal` | Dodo customer portal link → `{portal_url}` (24h expiry). 409 when the org has no `billing_customer_id`, 503 when Dodo is unconfigured |
+| POST | `/billing/webhook` | Dodo signature | `dodo_webhook` | Dodo webhook handler. **Ungated by design** — the Standard Webhooks signature is the auth. 503 without `DODO_WEBHOOK_KEY`, 401 on missing/bad `webhook-id` / `webhook-signature` / `webhook-timestamp` |
 
 ## Publishing
 **Status**: [LIVE]

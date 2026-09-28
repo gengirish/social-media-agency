@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
@@ -94,12 +95,24 @@ class Settings(BaseSettings):
     # pii | full | off — see services/tracing.py. Unknown values mean "full".
     langfuse_mask_mode: str = "pii"
 
-    # Stripe
-    stripe_secret_key: str = ""
-    stripe_webhook_secret: str = ""
-    stripe_price_starter: str = ""
-    stripe_price_growth: str = ""
-    stripe_price_agency: str = ""
+    # Dodo Payments (merchant of record; replaced Stripe on 260925)
+    dodo_api_key: str = ""
+    dodo_webhook_key: str = ""
+    # Narrowed to a Literal, and defaulted to test_mode, on purpose: the SDK
+    # defaults to live_mode when `environment` is unset, so a deploy that simply
+    # forgot this var would charge real cards. A typo raises at client
+    # construction ("Unknown environment") instead of silently going live.
+    dodo_environment: Literal["test_mode", "live_mode"] = "test_mode"
+    # Dodo product ids (pdt_...), one recurring product per paid tier. Test mode
+    # and live mode are separate catalogues, so these change with the environment.
+    dodo_product_starter: str = ""
+    dodo_product_growth: str = ""
+    dodo_product_agency: str = ""
+    # The Dodo brand these products belong to. Webhook endpoints are scoped to the
+    # BUSINESS, not the brand, so a business selling more than one product delivers
+    # every brand's events to every endpoint. Set this and foreign-brand events are
+    # ignored quietly; leave it blank and nothing is filtered (fail open).
+    dodo_brand_id: str = ""
 
     # Storage
     s3_bucket_name: str = "campaignforge-media"
@@ -148,7 +161,7 @@ class Settings(BaseSettings):
     # CORS — accepts JSON array string or comma-separated string
     cors_origins: str = "http://localhost:3000"
 
-    # Stripe Checkout return URLs when the client omits success_url / cancel_url
+    # Dodo Checkout return URLs when the client omits success_url / cancel_url
     frontend_url: str = "http://localhost:3000"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

@@ -52,7 +52,11 @@ dependencies = [
     "langchain-anthropic>=0.3.0",
     "langfuse>=4.0.0",
     "sse-starlette>=2.2.0",
-    "stripe>=11.0.0",
+    # The [webhooks] extra is load-bearing, not cosmetic: webhooks.unwrap()
+    # imports standardwebhooks lazily and raises at call time without it, so a
+    # plain "dodopayments" gives a service that starts fine and then fails every
+    # webhook delivery in production.
+    "dodopayments[webhooks]>=1.117.0",
     "agentmail>=0.4.12",
     "python-dotenv>=1.0.0",
     "email-validator>=2.1.0",

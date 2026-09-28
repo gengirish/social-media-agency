@@ -1,22 +1,44 @@
 # Billing
-<!-- verified: 260923 -->
+<!-- verified: 260925 -->
 
-## Stripe Integration
-**Status**: [LIVE]
+## Dodo Payments Integration
+**Status**: [IN PROGRESS] — implemented, **not yet live**
 **File**: `backend/src/agency/services/billing.py`
+**Plan**: [dodo-payments-plan-260925.md](../dodo-payments-plan-260925.md)
+
+Dodo Payments replaces Stripe outright (260925). There is no second provider and no
+fallback path — the Stripe code, its five `STRIPE_*` settings and the `stripe` dependency
+are gone.
+
+**Billing has never run in production.** No `DODO_*` secret is set on Fly, no live
+catalogue exists, and nobody has ever checked out — the same was true of the Stripe path
+it replaces, which is why the swap needed no data migration. Read every `[LIVE]` below as
+"live in code"; the payment rail itself is not enabled until the go-live steps in §8 of the
+plan are done.
+
+**Dodo is merchant of record.** VAT/GST, invoices and receipts are Dodo's responsibility,
+not ours. There is no tax code in this repo and no invoice list in the app — the Dodo
+customer portal has both.
 
 ### Plan Tiers
 
-Source of truth is `PLAN_CONFIG` in `services/billing.py`. Price IDs come from `STRIPE_PRICE_STARTER` / `_GROWTH` / `_AGENCY` with `price_*` string fallbacks.
+Source of truth is `PLAN_CONFIG` in `services/billing.py`. **Pricing, tiers and limits are
+unchanged by the Dodo swap.** Each paid tier carries a `product_id` — a Dodo `pdt_` product
+id from `DODO_PRODUCT_STARTER` / `_GROWTH` / `_AGENCY`.
 
 | Tier | Monthly Price | Clients | Posts/mo | Campaigns/mo | Amplify packs/period | Target |
 |------|--------------|---------|----------|--------------|----------------------|--------|
 | Free | $0 | 1 | 30 | 5 | 10 | Trial users — no publishing |
-| Starter | $49 | 3 | 200 | 20 | 50 | Solo marketers |
-| Growth | $149 | 10 | 1000 | Unlimited | 250 | Growing teams |
-| Agency | $399 | Unlimited | Unlimited | Unlimited | Unlimited | Agencies |
+| Starter | $20 | 3 | 200 | 20 | 50 | Solo marketers |
+| Growth | $36 | 10 | 1000 | Unlimited | 250 | Growing teams |
+| Agency | $168 | Unlimited | Unlimited | Unlimited | Unlimited | Agencies |
 
 "Unlimited" is stored as a large sentinel integer (`999` clients, `99999` posts, `9999` campaigns, `9999` generations), not null — quota checks are plain integer comparisons.
+
+`amount` in `PLAN_CONFIG` is **display copy**, not the charged price — the real price lives
+on the Dodo product. The landing page mirrors the same numbers by hand. A go-live check
+reads each configured product back from Dodo and asserts its price matches `amount`;
+showing a price we do not charge is the "no invented numbers" rule applied to money.
 
 > **Plan copy is not consistent across surfaces.** The landing page (`src/app/page.tsx`) lists Free as "1 client / 30 posts / mo"; the in-app pricing page (`src/app/(dashboard)/pricing/page.tsx`) lists it as "1 client / 5 campaigns / mo / No publishing". Both numbers exist in `PLAN_CONFIG`, but a visitor sees two different headline allowances. Neither page mentions the Amplify allowance. Open decision — see `docs/cadence-port-plan-260921.md`.
 
@@ -39,7 +61,7 @@ nothing else.
 Three things this is **not**, each of which has a test in `tests/test_workspace_profile.py`:
 
 - **Not a price change.** Every profile bills against the same `PLAN_CONFIG` amounts and
-  the same Stripe `price_id`s. There are no per-profile Stripe products.
+  the same Dodo `product_id`s. There are no per-profile Dodo products.
 - **Not a permission.** It grants no capability and changes no limit; `subscription`
   remains the only source of truth for what an org may do. It is deliberately *not*
   `organization.account_type`, which is a one-way flip that drives `permissions.py` —
@@ -54,30 +76,102 @@ marked "Most Popular" as before. Setting it needs `billing.manage`.
 ### Checkout Flow
 
 1. Frontend calls `POST /api/v1/billing/checkout` with `plan_tier` (required); `success_url` / `cancel_url` optional — when omitted, defaults are `{FRONTEND_URL}/settings?checkout=success` and `{FRONTEND_URL}/pricing?checkout=cancel`
-2. Backend creates Stripe Checkout Session via `billing.create_checkout_session()`
-3. Returns `{checkout_url}` — frontend redirects to Stripe
-4. On completion, Stripe sends webhook to `POST /api/v1/billing/webhook`
+2. Backend creates a Dodo checkout session via `billing.create_checkout_session()` — one `checkout_sessions.create` with the tier's `product_cart`, a `customer` (`{customer_id}` when the row already has one, otherwise `{email, name}` from the caller's JWT payload) and `metadata` `{org_id, plan_tier}`
+3. Returns `{checkout_url}` — frontend redirects to Dodo. `CheckoutSessionResponse.checkout_url` is optional in the SDK; a `None` is refused with a **502** rather than returned
+4. On completion, Dodo sends `subscription.active` to `POST /api/v1/billing/webhook`
+
+The request and response shape is unchanged from the Stripe path — `{checkout_url}` in,
+redirect out — so no frontend contract moved. Dodo appends
+`?status=success|failed&session_id=…` to the return URL, so `?checkout=cancel` no longer
+occurs; the pricing page still handles it harmlessly.
+
+All Dodo API calls use `AsyncDodoPayments`. The Stripe client was synchronous and blocked
+the event loop (and with it every concurrent SSE campaign stream) on each checkout; do not
+reintroduce a sync client.
+
+### Customer Portal
+**Status**: [IN PROGRESS] — new capability; no Stripe equivalent was ever wired
+
+`POST /api/v1/billing/portal` (needs `billing.manage`) returns `{portal_url}` from
+`customers.customer_portal.create(customer_id, return_url=...)`. The link expires after
+24h. Cancelling, changing a card, and reading invoices and receipts all happen there —
+there is no in-app equivalent and none is planned.
+
+An org with no `billing_customer_id` (one that never checked out) gets **409**, not a 500; an unconfigured deploy gets **503**.
+Plan changes also go through the portal in v1; `subscriptions.change_plan` needs an
+explicit proration mode and a preview screen to be honest about what we charge, and is out
+of scope.
 
 ### Webhook Signature Verification
 **Status**: [LIVE] — `routers/billing.py`
 
-`POST /api/v1/billing/webhook` verifies every request before it can mutate a subscription:
+`POST /api/v1/billing/webhook` verifies every request before it can mutate a subscription.
+Dodo follows the **Standard Webhooks** spec: three headers, and a signed message of
+`id.timestamp.raw_body`.
 
-1. No `STRIPE_WEBHOOK_SECRET` configured → **503**, so an unconfigured deploy fails closed rather than accepting anything
-2. Missing `stripe-signature` header → **400**
-3. `stripe.Webhook.construct_event(payload, sig_header, secret)` against the **raw request body** (`await request.body()`, not the parsed JSON)
-4. `ValueError` → **400** invalid payload; `SignatureVerificationError` → **400** invalid signature
+1. No `DODO_WEBHOOK_KEY` configured → **503**, so an unconfigured deploy fails closed rather than accepting anything
+2. Missing `webhook-id` / `webhook-signature` / `webhook-timestamp` → **401**
+3. `client.webhooks.unwrap(raw_body, headers=..., key=...)` against the **raw request body** (`await request.body()`, not the parsed JSON). It is a sync call even on the async client — pure HMAC, no I/O
+4. A bad signature raises → **401**, and nothing is written
 
-Only a verified event reaches `billing.handle_webhook()`. This closes the "anyone can grant themselves a paid plan" hole — hardening backlog P0-3 is satisfied in code, though `tests/test_billing.py` asserting it does not yet run (P0-2).
+The route is deliberately **ungated** (no `require_permission`) because the caller is Dodo,
+not a session — the signature *is* the authentication. Keep it that way.
+
+`unwrap()` lives behind the `webhooks` extra, so the dependency is
+**`dodopayments[webhooks]>=1.117.0`**. A plain `dodopayments` install starts fine and then
+fails *every* webhook at runtime with "You need to install dodopayments[webhooks]".
 
 ### Webhook Events
 
+Twelve events are subscribed in the Dodo dashboard. Everything else in Dodo's catalogue is
+left unsubscribed.
+
 | Event | Handler | Action |
 |-------|---------|--------|
-| `checkout.session.completed` | `_handle_checkout_completed` | Update subscription tier + limits |
-| `invoice.paid` | `_handle_invoice_paid` | Reset usage counters |
-| `customer.subscription.deleted` | `_handle_subscription_cancelled` | Downgrade to free |
-| `customer.subscription.updated` | `_handle_subscription_updated` | Sync plan changes |
+| `subscription.active` | `_handle_subscription_active` | Grant the tier + limits. Fires on first activation **and** on recovery from `on_hold`, so it must be idempotent on re-entry |
+| `subscription.renewed` | `_handle_subscription_renewed` | **Reset `posts_used` and `generations_used`.** Successor to Stripe's `invoice.paid`; Dodo emits no invoice event. Miss it and a paying org's quota never resets |
+| `subscription.plan_changed` | `_handle_subscription_plan_changed` | Re-read `product_id` and re-derive the tier. Also fires when `cancel_at_next_billing_date` toggles and when add-ons change — not every one is an upgrade |
+| `subscription.cancelled` | `_handle_subscription_cancelled` | `status='cancelled'`. With `cancel_at_next_billing_date: true` the **tier is kept** until `subscription.expired` — downgrading here bills for a month the customer cannot use |
+| `subscription.expired` | `_handle_subscription_expired` | Downgrade to free |
+| `subscription.failed` | `_handle_subscription_failed` | Terminal: the initial mandate never took. The org never had access; leave it on free |
+| `subscription.on_hold` | `_handle_subscription_status_only` | Renewal payment failed but recoverable. Record `status` only — **do not revoke**; Dodo retries and dunning may recover it |
+| `subscription.past_due` | `_handle_subscription_status_only` | Record `status` only |
+| `subscription.paused` / `.unpaused` | `_handle_subscription_status_only` | Record `status` only |
+| `refund.succeeded` | `_handle_refund_succeeded` | Downgrade to free **only on a full refund**. A partial refund has no representation in `PLAN_CONFIG` and changes nothing |
+| `dispute.lost` | `_handle_dispute_lost` | Downgrade to free |
+
+**Nothing enforces on `subscription.status`.** `on_hold`, `past_due` and `paused` are
+recorded and surfaced as a banner; they do not block publishing or generation. Deliberate,
+not an oversight.
+
+**Org resolution** prefers `metadata.org_id` — a required field on the `Subscription` model
+that every `subscription.*` event carries — and falls back to `billing_customer_id`.
+Neither alone is enough: a subscription re-created by support in the Dodo dashboard carries
+no `org_id`, and the customer id is absent on the very first `subscription.active` if the
+row was never written.
+
+`_tier_for_product_id` returns `None` for an unknown id, and the caller logs loudly and
+touches nothing. That guard is what stops a misconfigured `DODO_PRODUCT_*` var from
+mass-downgrading paying customers.
+
+### Webhook Idempotency and Ordering
+**Status**: [LIVE] — new with the Dodo swap; the Stripe path had neither guard
+
+Dodo retries a non-2xx **eight times** (immediately, 5s, 5m, 30m, 2h, 5h, 10h, 10h), and
+states that events can arrive out of order. Two guards, both in `handle_webhook`:
+
+- **Idempotency:** the `webhook-id` is inserted into `billing_webhook_event` (TEXT primary
+  key). A duplicate insert fails and the call returns `{"status": "duplicate"}` having done
+  nothing. Without this, a redelivered `subscription.renewed` re-zeroes `posts_used` and
+  hands the org a free extra period of quota on every retry.
+- **Ordering:** the event's own timestamp is compared against `subscription.last_event_at`
+  and anything older is dropped. Without this, a `subscription.active` arriving after
+  `subscription.cancelled` silently re-grants a cancelled plan.
+
+The claim and the entitlement write land in **one transaction** — `handle_webhook` commits
+once, at the end, and individual handlers no longer commit themselves. Claiming in a
+separate transaction is the classic way to drop an event permanently: if the handler then
+raises, the retry sees the claim and skips the work.
 
 ### Quota Enforcement
 
@@ -95,12 +189,12 @@ Only a verified event reaches `billing.handle_webhook()`. This closes the "anyon
 
 - **Columns:** `subscription.generations_used` (NOT NULL, default 0) and `subscription.generations_limit` (nullable). See [database-schema.md](database-schema.md#subscription).
 - **Limit resolution:** `generations_limit_for(sub)` — the row's `generations_limit`; if NULL, the tier's `PLAN_CONFIG["generations_limit"]`; if the tier is unknown, the free tier's. Never unlimited by default.
-- **Where the limit is written:** on signup (`routers/auth.py`), Clerk auto-provisioning (`dependencies.py`), `checkout.session.completed`, `customer.subscription.updated`, and downgrade to free on `customer.subscription.deleted` — the same places `posts_limit` is written.
+- **Where the limit is written:** on signup (`routers/auth.py`), Clerk auto-provisioning (`dependencies.py`), `subscription.active`, `subscription.plan_changed`, and downgrade to free on `subscription.expired` / `refund.succeeded` (full) / `dispute.lost` — the same places `posts_limit` is written.
 - **Enforcement:** preview checks `generations_used >= limit` → **402** `{"code": "generation_quota_exceeded", "message"}` before calling the LLM. A missing subscription row is also a 402.
 - **Charging:** only after a successful generation — `UPDATE subscription SET generations_used = generations_used + 1` in the same transaction as the `repurpose_pack` insert. An LLM error or an empty result is a 502 and charges nothing. Commit never charges.
 - **Known race:** the limit check and the increment are separate statements, so concurrent previews by the same org at the boundary can each pass the check and overshoot the limit.
 - **Cancel does not refund:** the UI's Cancel aborts the browser request; the server does not observe the abort, so a generation that completes server-side is still charged.
-- **Reset:** `invoice.paid` sets `generations_used = 0` alongside `posts_used = 0`. There is no other reset — Free orgs, which never receive `invoice.paid`, are never reset.
+- **Reset:** `subscription.renewed` sets `generations_used = 0` alongside `posts_used = 0`. There is no other reset — Free orgs, which never receive a renewal event, are never reset. (Before 260925 this was Stripe's `invoice.paid`; Dodo emits no invoice event, so `renewed` is the only reset trigger.)
 - **Reporting:** `GET /billing/subscription` returns `generations_used` and `generations_limit` (the row's values, placed after the `PLAN_CONFIG` spread so a per-org override is not hidden). With no subscription row it returns the free plan and `generations_used: 0`. The Amplify screen's `QuotaHint` reads these and renders nothing if either is missing.
 - **Migration:** `db/migrations/260921_amplify.sql` backfills `generations_limit` by tier for existing rows.
 
@@ -113,17 +207,32 @@ Only a verified event reaches `billing.handle_webhook()`. This closes the "anyon
 - A profile picker above the grid (`ProfilePicker`); choosing one saves immediately via `PUT /billing/workspace-profile` and reshapes the grid. Re-clicking the selected card clears it back to the full grid. Disabled without `billing.manage`.
 - Displays the tiers the server returned (2–4 of Free, Starter, Growth, Agency); the recommended one is highlighted and carries the profile's one-line reason
 - Current plan badge on active tier
-- Upgrade buttons call `api.createCheckout()` and redirect
+- Upgrade buttons call `api.createCheckout()` and redirect to Dodo
+
+**Route**: `/settings` → Plan & usage (`components/settings/cadence-settings.tsx`)
+
+- **Manage billing** button → `api.createPortalSession()` → `POST /billing/portal`, redirects to the Dodo customer portal. Hidden/disabled for an org that has never checked out.
+- An `on_hold` banner — "Your last payment failed — update your card to keep publishing". `SubscriptionInfo.status` gained `on_hold` for this. It is the one failure state a customer can fix themselves, and nothing else in the app surfaces it.
 
 ### Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
-| `STRIPE_SECRET_KEY` | Stripe API key |
-| `STRIPE_WEBHOOK_SECRET` | Webhook signature verification — endpoint returns 503 without it |
-| `STRIPE_PRICE_STARTER` | Price ID for the starter tier (falls back to the literal `price_starter`) |
-| `STRIPE_PRICE_GROWTH` | Price ID for the growth tier (falls back to `price_growth`) |
-| `STRIPE_PRICE_AGENCY` | Price ID for the agency tier (falls back to `price_agency`) |
-| `FRONTEND_URL` | Base URL for default Stripe Checkout return URLs (default `http://localhost:3000`) |
+| `DODO_API_KEY` | Dodo Payments API key. Server-side only — Dodo has no publishable key |
+| `DODO_WEBHOOK_KEY` | Webhook signing secret — endpoint returns 503 without it |
+| `DODO_ENVIRONMENT` | `test_mode` \| `live_mode`. **Defaults to `test_mode` here**; the SDK's own default is `live_mode`, which is why `config.py` narrows it to a `Literal` and defaults it down |
+| `DODO_PRODUCT_STARTER` | Dodo `pdt_` product id for the starter tier |
+| `DODO_PRODUCT_GROWTH` | Dodo `pdt_` product id for the growth tier |
+| `DODO_PRODUCT_AGENCY` | Dodo `pdt_` product id for the agency tier |
+| `FRONTEND_URL` | Base URL for the checkout `return_url` and the portal's return link (default `http://localhost:3000`) |
 
-> The three `STRIPE_PRICE_*` variables are read by `config.py` but are **missing from `.env.example`**. Without them, checkout builds sessions against nonexistent `price_starter`-style IDs and Stripe rejects them.
+The five `STRIPE_*` settings are removed from `config.py` and `.env.example`.
+
+> **None of these is set in production yet.** `flyctl secrets list -a campaignforge-api`
+> carries no `DODO_*` secret, and `FRONTEND_URL` is absent too — so it defaults to
+> `http://localhost:3000` and a checkout would return the customer to localhost. Set
+> `FRONTEND_URL=https://campaignforge.intelliforge.tech` in the same `flyctl secrets set`
+> as the Dodo keys.
+>
+> Test mode and live mode are **separate catalogues** with separate `pdt_` ids and separate
+> API keys. There is no staging Fly app, so test-mode checkout is only reachable locally.

@@ -43,7 +43,7 @@ Env vars: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (`GEMINI_API_KEY` accepted as al
 **Status**: [LIVE]
 **File**: `services/billing.py`
 
-Stripe subscription management. Singleton: `billing = BillingService()`.
+Dodo Payments subscription management (replaced Stripe 260925). Singleton: `billing = BillingService()`. All Dodo calls go through `AsyncDodoPayments` — no sync client, which is what stopped checkout blocking the event loop.
 
 ### Plan Config
 
@@ -60,8 +60,10 @@ Source of truth is `PLAN_CONFIG` in `services/billing.py`.
 
 ### Methods
 
-- `create_checkout_session(db, org_id, plan_tier, success_url, cancel_url)` — Stripe Checkout
-- `handle_webhook(db, event)` — Routes: checkout.completed, invoice.paid, subscription.cancelled/updated
+- `create_checkout_session(db, org_id, plan_tier, success_url, cancel_url, email, name)` — Dodo checkout session; a `None` `checkout_url` is refused with a 502
+- `create_portal_session(db, org_id)` — Dodo customer portal link; 409 when the org has no `billing_customer_id`
+- `handle_webhook(db, event, webhook_id)` — claims `webhook_id` in `billing_webhook_event`, drops events older than `subscription.last_event_at`, dispatches, and **commits once at the end**. Routes: `subscription.active` / `.renewed` / `.plan_changed` / `.cancelled` / `.expired` / `.failed` / `.on_hold` / `.past_due` / `.paused` / `.unpaused`, `refund.succeeded`, `dispute.lost`
+- `_tier_for_product_id(product_id)` — unknown id returns `None`; the caller logs and touches nothing, so a misconfigured `DODO_PRODUCT_*` cannot mass-downgrade paying orgs
 - `get_subscription(db, org_id)` — Current subscription + limits; also `generations_used` and `generations_limit` (the row's values, not the tier default)
 - `generations_limit_for(sub)` (module function) — the org's Amplify allowance: the row's `generations_limit`, or the tier's `PLAN_CONFIG` value when it is NULL, then the free tier — never unlimited
 - `check_quota(db, org_id, resource="posts")` — Quota enforcement

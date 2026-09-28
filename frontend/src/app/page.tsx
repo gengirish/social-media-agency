@@ -30,7 +30,7 @@ export const metadata: Metadata = {
  * here that the backend does not enforce is a refund claim waiting to happen.
  *
  * The design also carried an annual/monthly switch. It is rendered in its
- * default (monthly) state only: the backend has no annual Stripe prices, so a
+ * default (monthly) state only: the backend has no annual Dodo products, so a
  * working toggle would quote a number nobody can actually be charged.
  */
 const PLANS = [
@@ -46,7 +46,7 @@ const PLANS = [
   {
     name: "Starter",
     blurb: "Freelancers with a few retainers",
-    price: "$49",
+    price: "$20",
     period: "/mo",
     cta: "Get Starter",
     features: ["3 clients", "200 posts / mo", "Brand profiles"],
@@ -55,7 +55,7 @@ const PLANS = [
   {
     name: "Growth",
     blurb: "Small agencies",
-    price: "$149",
+    price: "$36",
     period: "/mo",
     cta: "Get Growth",
     features: ["10 clients", "1,000 posts / mo", "Priority support", "Team workspaces"],
@@ -64,7 +64,7 @@ const PLANS = [
   {
     name: "Agency",
     blurb: "Scale without headcount",
-    price: "$399",
+    price: "$168",
     period: "/mo",
     cta: "Talk to us",
     features: ["Unlimited clients", "Unlimited posts", "White-label", "API access"],

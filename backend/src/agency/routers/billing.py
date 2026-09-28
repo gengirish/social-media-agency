@@ -1,11 +1,10 @@
-"""Billing API — plans, subscription, Stripe checkout and webhooks."""
+"""Billing API — plans, subscription, Dodo checkout, portal and webhooks."""
 
 from uuid import UUID
 
-import stripe
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from stripe import SignatureVerificationError
 
 from agency.config import get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
@@ -15,6 +14,8 @@ from agency.services.billing import (
     plans_for_profile,
     workspace_profile_catalog,
 )
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
 
@@ -119,50 +120,90 @@ async def create_checkout(
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
+    # ``get_current_user`` returns the JWT *payload dict* in both auth modes, not
+    # an ORM User — ``user.email`` raises AttributeError and surfaces as a 500.
     result = await billing.create_checkout_session(
         db,
         org_id,
         body.plan_tier,
         body.success_url,
         body.cancel_url,
+        email=user.get("email"),
+        full_name=user.get("full_name"),
     )
     if result.get("error"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, result["error"])
+        raise HTTPException(
+            result.get("error_status", status.HTTP_400_BAD_REQUEST), result["error"]
+        )
+    return result
+
+
+@router.post("/portal", dependencies=[Depends(require_cap(Capability.BILLING_MANAGE))])
+async def create_portal(
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """A link into Dodo's customer portal: cancel, change card, fetch invoices.
+
+    Dodo is the merchant of record, so this replaces a whole class of
+    "email support to cancel" work rather than being a convenience.
+    """
+    result = await billing.create_portal_session(db, org_id)
+    if result.get("error"):
+        raise HTTPException(
+            result.get("error_status", status.HTTP_400_BAD_REQUEST), result["error"]
+        )
     return result
 
 
 @router.post("/webhook")
-async def stripe_webhook(request: Request, db=Depends(get_db)):
-    """Stripe's callback. **Deliberately ungated.**
+async def dodo_webhook(request: Request, db=Depends(get_db)):
+    """Dodo's callback. **Deliberately ungated.**
 
-    Stripe authenticates itself with the `stripe-signature` header, verified
-    below; there is no bearer token, no user and no org on the request. A
-    ``require_cap`` here would 403 every callback Stripe makes and silently
+    Dodo authenticates itself with the Standard Webhooks signature headers,
+    verified below; there is no bearer token, no user and no org on the request.
+    A ``require_cap`` here would 403 every callback Dodo makes and silently
     strand every subscription change.
     """
     settings = get_settings()
-    if not settings.stripe_webhook_secret:
+    if not settings.dodo_webhook_key:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Stripe webhook secret not configured",
+            "Dodo webhook key not configured",
         )
 
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
-    if not sig_header:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing stripe-signature header")
+    headers = {
+        name: request.headers.get(name, "")
+        for name in ("webhook-id", "webhook-signature", "webhook-timestamp")
+    }
+    if not all(headers.values()):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing webhook signature headers")
+
+    client = billing.client()
+    if client is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Dodo API key not configured",
+        )
 
     try:
-        event_obj = stripe.Webhook.construct_event(
-            payload,
-            sig_header,
-            settings.stripe_webhook_secret,
+        # `unwrap` is sync even on the async client — it is pure HMAC, no I/O.
+        # Awaiting it would raise on a str.
+        event = client.webhooks.unwrap(
+            payload.decode("utf-8"),
+            headers=headers,
+            key=settings.dodo_webhook_key,
         )
-    except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid payload") from e
-    except SignatureVerificationError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid signature") from e
+    except Exception as exc:
+        # A bad signature must not be a 4xx Dodo retries forever, and must not
+        # leak which part failed. 401 and nothing written.
+        logger.warning("dodo_webhook_signature_rejected", error=str(exc))
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid webhook signature") from exc
 
-    event_dict = event_obj.to_dict() if hasattr(event_obj, "to_dict") else dict(event_obj)
-    result = await billing.handle_webhook(db, event_dict)
-    return result
+    return await billing.handle_webhook(
+        db,
+        event.model_dump(mode="json"),
+        headers["webhook-id"],
+    )

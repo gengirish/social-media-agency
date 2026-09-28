@@ -91,7 +91,8 @@ CampaignForge is an AI-powered marketing platform with 7 specialized agents that
 | Test ID | Scenario | Steps | Expected Result |
 |---------|----------|-------|----------------|
 | TC-16 | Free tier limits | Create 2 clients → Attempt 3rd | Upgrade prompt shown |
-| TC-17 | Stripe checkout | Click upgrade → Complete Stripe checkout | Plan upgraded, features unlocked |
+| TC-17 | Dodo Payments checkout | Click upgrade → complete Dodo checkout → `subscription.active` webhook lands | Plan upgraded, limits raised, features unlocked. **Blocked until the Dodo keys are set on Fly** — billing is implemented but not provisioned in production |
+| TC-17b | Customer portal | Settings → Plan & usage → **Manage billing** → cancel in the Dodo portal | Portal opens; after cancelling, access is kept until the period end (`subscription.cancelled` keeps the tier; `subscription.expired` downgrades) |
 | TC-18 | Campaign quota enforcement | Exceed monthly limit → Attempt new campaign | Upgrade prompt with usage stats |
 | TC-19 | Team invite | Settings → Invite team member → Accept invite | New member has access |
 | TC-20 | White-label setup | Settings → Configure branding → View portal | Client portal shows custom branding |
@@ -169,7 +170,7 @@ CampaignForge is an AI-powered marketing platform with 7 specialized agents that
 
 **Week 4 — Final Assessment**
 - NPS: How likely to recommend? (0–10)
-- Would you pay $49/month for this? (Y/N)
+- Would you pay $20/month for this? (Y/N)
 - Top 3 things to improve?
 - Would you switch from your current tool? (Y/N + what tool)
 
@@ -205,7 +206,7 @@ Events land in the `product_event` table; see `services/product_analytics.py`.
 | **Week 0** | Pre-beta prep | Seed demo data, test all flows internally, set up monitoring |
 | **Week 1** | Onboarding + core flow | Invite Cohort 1 (10 users). Focus: signup → first campaign |
 | **Week 2** | Publishing + scheduling | Invite Cohort 2 (10 users). Focus: multi-platform publishing |
-| **Week 3** | Integrations + billing | Enable Stripe live mode. Focus: upgrades, Slack, API |
+| **Week 3** | Integrations + billing | Provision Dodo Payments: create the live catalogue, set the `DODO_*` secrets and `FRONTEND_URL` on Fly, run `db/migrations/260925_dodo_billing.sql` on Neon, then one live smoke checkout + refund. Focus: upgrades, Slack, API |
 | **Week 4** | Stress test + final feedback | Full cohort active. Focus: scale, reliability, final NPS |
 
 ---
@@ -220,7 +221,7 @@ Events land in the `product_event` table; see `services/product_analytics.py`.
 | P0 bugs outstanding | 0 | GitHub Issues |
 | P1 bugs outstanding | < 3 | GitHub Issues |
 | Time-to-value | < 5 minutes | In-app analytics |
-| Trial → Paid conversion | > 50% | Stripe dashboard |
+| Trial → Paid conversion | > 50% | Dodo Payments dashboard (only measurable once live mode is enabled in week 3) |
 | User retention (14-day) | > 40% | Return rate |
 
 ### Exit Decision Matrix
