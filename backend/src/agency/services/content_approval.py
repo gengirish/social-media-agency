@@ -8,6 +8,8 @@ Status lifecycle enforced here (DB values; the UI labels ``draft`` as *Pending*)
 - :func:`approve_content_piece` is the single approval path (dashboard and portal).
   It runs :func:`~agency.services.moderation.moderate_content` first.
 - :func:`ensure_publishable` guards schedule and publish-now.
+- :func:`ensure_schedulable` adds the scheduler's own precondition, which depends on
+  whether the piece's channel is manual (:func:`is_manual_channel`).
 - :func:`ensure_client_active` refuses both for an archived client.
 - :func:`apply_content_edit` is the PATCH logic: it refuses status moves that belong to
   the dedicated endpoints, and sends edited approved/scheduled content back to ``draft``
@@ -27,7 +29,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agency.models.tables import Client
+from agency.models.tables import Client, PlatformAccount
 from agency.services import product_analytics as pa
 from agency.services.moderation import load_brand_context, moderate_content
 from agency.services.publishing import UNAVAILABLE_PUBLISH_PLATFORMS
@@ -262,6 +264,19 @@ def ensure_publishable(piece: ContentRow) -> None:
         raise ContentGateError(409, {"code": "not_approved", "status": piece.status})
 
 
+def ensure_published(piece: ContentRow) -> None:
+    """Post-URL gate: only a piece that is already ``published`` may be linked.
+
+    The link records *where the post ended up*, so there is nothing to record until
+    the post exists. Anything else — ``draft``, ``approved``, ``scheduled``,
+    ``failed``, ``rejected`` — is 409 ``not_published``, deliberately a different
+    code from ``not_approved``: "this is not live yet" and "this was never approved"
+    are different problems and the UI says different things about them.
+    """
+    if piece.status != "published":
+        raise ContentGateError(409, {"code": "not_published", "status": piece.status})
+
+
 async def ensure_client_active(db: AsyncSession, piece: ContentRow) -> None:
     """Schedule / publish-now gate: nothing goes live on an archived client's accounts.
 
@@ -279,18 +294,64 @@ async def ensure_client_active(db: AsyncSession, piece: ContentRow) -> None:
         raise ContentGateError(409, {"code": "client_archived"})
 
 
-def ensure_schedulable(piece: ContentRow) -> None:
-    """Schedule gate: publishable *and* on a platform the scheduler can publish to.
+async def is_manual_channel(
+    db: AsyncSession,
+    *,
+    org_id: UUID,
+    client_id: UUID,
+    platform: str | None,
+) -> bool:
+    """Does this org hold a ``status = 'manual'`` channel for that client + platform?
 
-    A scheduled Instagram/TikTok post would only turn into a ``failed`` row when it
-    comes due, so refuse it up front with 409 ``platform_unavailable``.
+    A manual channel is a page the operator created outside CampaignForge and posts to
+    by hand: a ``platform_account`` row with no tokens. Nothing in the product ever
+    publishes to one, which is what makes an otherwise unpublishable platform
+    schedulable (:func:`ensure_schedulable`) and what routes a due piece to a reminder
+    instead of the publisher (``services/scheduler.py``).
+
+    TENANCY: the ``org_id`` filter is load-bearing, not defence-in-depth. Without it
+    another tenant's manual row carrying this client's id would answer ``True`` here,
+    and this org could schedule Instagram/TikTok — or silently divert a post away from
+    its publisher — on the strength of a channel it never registered.
+
+    ``first()`` rather than ``scalar_one_or_none`` because an org may legitimately hold
+    more than one row per client + platform.
+    """
+    result = await db.execute(
+        select(PlatformAccount.id).where(
+            PlatformAccount.org_id == org_id,
+            PlatformAccount.client_id == client_id,
+            PlatformAccount.platform == platform,
+            PlatformAccount.status == "manual",
+        )
+    )
+    return result.scalars().first() is not None
+
+
+async def ensure_schedulable(db: AsyncSession, piece: ContentRow) -> None:
+    """Schedule gate: publishable *and* on a channel whose due time means something.
+
+    A scheduled Instagram/TikTok post on a *connected* (or absent) channel would only
+    turn into a ``failed`` row when it comes due, so it is refused up front with
+    409 ``platform_unavailable``.
+
+    On a **manual** channel that reasoning does not hold: the scheduler never publishes
+    a manual piece, it reminds a human at the due time (see
+    ``services/scheduler.py::_remind_due_manual``). There is no publisher to be missing,
+    so Instagram and TikTok are schedulable there. The refusal stays intact for a
+    connected or absent channel — that is still a post that could never go out.
     """
     ensure_publishable(piece)
     reason = UNAVAILABLE_PUBLISH_PLATFORMS.get((piece.platform or "").lower())
-    if reason:
-        raise ContentGateError(
-            409, {"code": "platform_unavailable", "platform": piece.platform, "reason": reason}
-        )
+    if not reason:
+        return
+    if await is_manual_channel(
+        db, org_id=piece.org_id, client_id=piece.client_id, platform=piece.platform
+    ):
+        return
+    raise ContentGateError(
+        409, {"code": "platform_unavailable", "platform": piece.platform, "reason": reason}
+    )
 
 
 def apply_content_edit(

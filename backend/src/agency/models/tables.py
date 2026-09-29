@@ -230,7 +230,14 @@ class PlatformAccount(Base):
     refresh_token_enc = Column(Text)
     token_expires_at = Column(DateTime(timezone=True))
     followers_count = Column(Integer, default=0)
+    #: ``connected`` (OAuth, tokens present) | ``manual`` (the operator posts it
+    #: themselves — no tokens, and every token-requiring query filters it out) |
+    #: ``disconnected``.
     status = Column(String(30), default="connected")
+    #: Public address of the page. Manual channels only, optional: it is rendered
+    #: as a link and opened in a new tab, so it is validated through
+    #: ``services/url_safety.py`` before it is written.
+    profile_url = Column(Text)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 

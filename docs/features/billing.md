@@ -197,6 +197,13 @@ raises, the retry sees the claim and skips the work.
 
 `billing.check_quota(db, org_id, resource="posts")` — Checks `posts_used < posts_limit` before publishing (immediate and scheduled). On successful publish, `billing.record_post_published()` increments `posts_used`.
 
+<!-- verified: 260929 --> **A hand-posted post counts too.** `POST /publishing/{content_id}/mark-posted` runs the same check and the same increment, because `posts_limit` is the product's only usage meter and the plan copy sells it as published posts — a free manual post would make manual mode an unlimited free tier. Consequences worth knowing:
+
+- Charged **on confirm only**, never on the open-composer click, so an abandoned tab costs nothing. The 402 is raised before anything is written, so an exhausted plan leaves the piece untouched. The Queue also checks the remaining allowance at click time, so nobody composes into a tab and then eats a 402.
+- The **meter counts posts the product did not send.** The wording on Billing and in plan copy has to survive that; "published posts" is doing double duty for "posts you posted yourself and told us about".
+- Insights agrees with the meter by construction: a link-less manual post stays inside the published count and is only excluded from *averages* (`engagement.manual_unlinked`).
+- The check and the increment are not atomic, same as the generation quota — two concurrent confirms can overshoot by one.
+
 ### Amplify Generation Quota
 <!-- verified: 260921 -->
 
@@ -205,7 +212,7 @@ raises, the retry sees the claim and skips the work.
 1 Amplify pack (one `POST /amplify/preview` that returns at least one draft) = 1 generation, regardless of how many drafts are in it or how many are later committed.
 
 <!-- verified: 260923 -->
-**Since 260923 the same allowance covers every generator**, through `services/generation_quota.py` (`require_generation_quota` before the model, `charge_generation` after a usable result). 1 generation each: Amplify pack; Queue generate / regenerate / creative brief (`/content/generate`, `/content/{id}/regenerate`, `/content/{id}/creative-brief`); Setup brand-voice draft and strategy lens; Create › Content blog / comparison / niche scan / video script / blog-from-gap / AI-SEO pack; Create › Email campaign; Create › Launch kit and PRFAQ stress-test; Create › Ads set; Insights advocacy; Inbox reply suggestion. **Free:** intake answer coaching, manual posts, approvals, asset list/rename/delete. The new screens' `QuotaHint` / `UsageMeter` say "generations left"; Amplify's still says "packs left this period", which now overstates it — the same pool is spent by every other screen. Post Studio is the one path that refunds on cancel: it checks `request.is_disconnected()` after the model returns and charges nothing if the caller has gone.
+**Since 260923 the same allowance covers every generator**, through `services/generation_quota.py` (`require_generation_quota` before the model, `charge_generation` after a usable result). 1 generation each: Amplify pack; Queue generate / regenerate / creative brief (`/content/generate`, `/content/{id}/regenerate`, `/content/{id}/creative-brief`); Setup brand-voice draft and strategy lens; Create › Content blog / comparison / niche scan / video script / blog-from-gap / AI-SEO pack; Create › Email campaign; Create › Launch kit and PRFAQ stress-test; Create › Ads set; Insights advocacy; Inbox reply suggestion. **Free of *generation* quota:** intake answer coaching, hand-written posts (`POST /content`), approvals, asset list/rename/delete, and `mark-posted` — which costs a **post** instead (above); "manual" means two different meters in this product, so name which one. The new screens' `QuotaHint` / `UsageMeter` say "generations left"; Amplify's still says "packs left this period", which now overstates it — the same pool is spent by every other screen. Post Studio is the one path that refunds on cancel: it checks `request.is_disconnected()` after the model returns and charges nothing if the caller has gone.
 
 - **Columns:** `subscription.generations_used` (NOT NULL, default 0) and `subscription.generations_limit` (nullable). See [database-schema.md](database-schema.md#subscription).
 - **Limit resolution:** `generations_limit_for(sub)` — the row's `generations_limit`; if NULL, the tier's `PLAN_CONFIG["generations_limit"]`; if the tier is unknown, the free tier's. Never unlimited by default.

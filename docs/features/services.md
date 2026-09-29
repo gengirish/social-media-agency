@@ -100,7 +100,10 @@ Pre-approval moderation (product rule 3).
 The approval gate; raises `ContentGateError(status_code, detail)` which routers map to HTTP errors.
 
 - `approve_content_piece(db, piece, *, org_id, override, user_id)` — `draft`/`rejected` only; moderates; records `metadata.moderation`; commits. Used by `/content/{id}/approve` and the portal (override always false).
-- `ensure_publishable(piece)` — `approved`/`scheduled` only; used by schedule and publish-now.
+- `ensure_publishable(piece)` — `approved`/`scheduled` only; used by schedule, publish-now and `mark-posted`.
+- <!-- verified: 260929 --> `ensure_published(piece)` — `published` only; 409 `not_published`. Used by `PATCH /publishing/{id}/post-url`, the one edit that may touch an `approved`-or-later piece without resetting it to `draft` (a link records reality, not copy).
+- <!-- verified: 260929 --> `is_manual_channel(db, *, org_id, client_id, platform)` — async; does this org hold a `status = 'manual'` `platform_account` for that client + platform. `org_id` is load-bearing: without it another tenant's manual row carrying this client's id would answer `True` and silently divert a post away from its publisher. Uses `first()`, not `scalar_one_or_none` — an org may legitimately hold more than one row per client + platform.
+- <!-- verified: 260929 --> `ensure_schedulable(db, piece)` — **now async and takes `db`** (it was sync). Publishable, and on a platform whose due time means something: the 409 `platform_unavailable` refusal is lifted when the channel is manual, because the scheduler reminds a human there instead of publishing. Intact for a connected or absent channel.
 - `ensure_client_active(db, piece)` — async; 409 `client_archived` when the piece's client is archived. Used by schedule, publish-now and the scheduler's `_publish_piece` (added 260922).
 - `apply_content_edit(piece, ...)` — PATCH logic: refuses gated statuses; body/hashtag edits reset approved/scheduled content to `draft`.
 - <!-- verified: 260923 --> Since 260923: a moderation refusal (no override) tracks a server-authored `moderation_flagged` product event and commits it before raising the 409; a body/hashtag edit to a still-Pending piece sets `metadata.edited_before_approval = true`. Both are inputs to `services/insights.py` and `services/activity.py`.
@@ -204,7 +207,7 @@ Queue / Calendar actions on a single post: `generate_draft`, `regenerate_draft`,
 **Status**: [LIVE] · **Files**: `services/insights.py`, `agents/advocacy.py`
 <!-- verified: 260923 -->
 
-Counts and ratios over real rows only — no LLM, no estimate. `build_summary(db, org_id, client)`, `gated_rate` (below `MIN_SAMPLE = 3` → `insufficient_data`), `tally_content_signal` / `summarize_content_signal` (kept / edited / flagged per platform), `recommendations_for` (rules with `BACKLOG_MIN = 5`, `RATE_FLOOR = 70`, `ENGAGEMENT_MIN_PLATFORMS = 2`), `moderation_flag_count`, `latest_engagement` (from `analytics_snapshot`), `advocacy_facts` (the only numbers `agents/advocacy.py` may cite; a reply citing any other number is rejected).
+Counts and ratios over real rows only — no LLM, no estimate. `build_summary(db, org_id, client)`, `gated_rate` (below `MIN_SAMPLE = 3` → `insufficient_data`), `tally_content_signal` / `summarize_content_signal` (kept / edited / flagged per platform), `recommendations_for` (rules with `BACKLOG_MIN = 5`, `RATE_FLOOR = 70`, `ENGAGEMENT_MIN_PLATFORMS = 2`), `moderation_flag_count`, `latest_engagement` (from `analytics_snapshot`), <!-- verified: 260929 --> `is_unmeasurable_manual(metadata)` (a `publish_mode == "manual"` piece with no `post_url` — no platform post id, no token, so no number exists now or ever; skipped in `latest_engagement` and reported as `engagement.manual_unlinked`, never averaged in as a zero, while staying inside `funnel.published` so Insights and the Billing post meter agree), `advocacy_facts` (the only numbers `agents/advocacy.py` may cite; a reply citing any other number is rejected).
 
 ## Activity + Workspace Export
 **Status**: [LIVE] · **Files**: `services/activity.py`, `services/workspace_export.py`
@@ -228,7 +231,8 @@ Asyncio-based content scheduler. Singleton: `scheduler = SchedulerEngine()`. Sta
 - `start()` / `stop()` — Lifecycle
 - `schedule_content(db, content_id, scheduled_at)` — Set publish time
 - `get_calendar(db, org_id, start, end, *, client_id=None, include_pending=False)` — Calendar view by `scheduled_at`. Default `scheduled`/`published`; `include_pending` adds `draft`/`approved` posts with a planned day and `failed` ones (260923). The due-content loop still only ever picks `status == "scheduled"`, so a planned draft is never published
-- `_process_due_content()` — Minute loop, publishes content where `scheduled_at <= now`
+- `_process_due_content()` — Minute loop over content where `scheduled_at <= now`. <!-- verified: 260929 --> Since 260929 it runs **two** capped queries, split in SQL by a correlated `EXISTS` on a `status='manual'` `platform_account` (correlated on `org_id` too). One query publishes; the other reminds. Two queries and not one because a manual piece stays `scheduled` with a past due time forever — sharing a single `LIMIT 10` would let a handful of already-reminded manual pieces occupy every slot and no connected post would ever publish again
+- <!-- verified: 260929 --> `_remind_due_manual()` / `_send_manual_digest()` / `_slack_manual_digest()` — a due manual piece **never reaches `_publish_piece`**. It stays `scheduled`, and recipients get one `posts_due` notification per `(org, client)` per batch (twelve due posts are not twelve pings), linking to `/content?client=…&status=scheduled`. Recipients are the org's active `owner`/`admin` users (`REMINDER_ROLES`) — a judgement, not a setting, since there is no notification-preference column and no per-post assignee; a `member` may hold `publish.manual` and do the posting but cannot be addressed. Slack goes to `organization.settings["slack_channel"]` when the org already has one (connected-ness *is* the opt-in; no new column, no new setup step) and never fails the reminder. **No email** — a per-post due reminder would be the highest-volume mail this product ever sent. `metadata.reminder_sent_at` is written **only when something was actually delivered**, so a workspace with no active owner/admin is retried on the next wake and logs `manual_reminder_no_recipient`. The `.as_string().is_(None)` on that JSON key is deliberate: the plain JSON index compiles to `JSON_QUOTE(JSON_EXTRACT(...))` on SQLite, where `JSON_QUOTE(NULL)` is the *string* `'null'`, so `IS NULL` would never match and every manual piece would be reminded on every wake. Tests: `tests/test_manual_reminders.py`, `tests/test_scheduler_wake.py`, `tests/test_scheduler_publish.py`
 - `_publish_piece()` — refuses an archived client's post first (`ensure_client_active`) and marks it `failed`; only reachable if a schedule raced an archive, since archiving refuses while posts are scheduled. Its account lookup is scoped to the post's `org_id` and takes the newest connected account (fixed 260922; previously unscoped, and `scalar_one_or_none` raised on duplicates)
 
 ## Brand Learning
@@ -249,9 +253,10 @@ Called automatically after campaign completion in `_persist_campaign_results`. S
 **Status**: [LIVE]
 **File**: `services/url_safety.py`
 
-Guard for server-side fetches of user-typed URLs (SSRF). Use it for any new code that fetches a URL a user supplied.
+Guard for user-typed URLs. Two levels, and picking the wrong one is the mistake to avoid: `assert_safe_link` for a link only the browser opens, `assert_public_url` for anything the **server** fetches (SSRF). Use the latter for any new code that fetches a URL a user supplied.
 
-- `assert_public_url(url)` — http/https only, ports 80/443 only, no credentials in the URL, and **every** resolved address must be public (`ipaddress.is_global`; IPv4-mapped IPv6 unwrapped). Refuses loopback, RFC 1918, link-local/metadata `169.254.x`, CGNAT, and Fly's `fdaa::/16`. Raises `UnsafeURLError`, whose message is safe to show the user.
+- <!-- verified: 260929 --> `assert_safe_link(url)` — the **shape** check for a URL the *browser* will open (a manual channel's `profile_url`, a manual post's `post_url`): http/https, no credentials, a valid host, port 80/443, and no private/loopback literal or `localhost`. Returns the stripped URL. It resolves **nothing** — the server never fetches these, so there is no SSRF to close and no reason to make a DNS lookup part of a write request, where a momentarily unresolvable name would reject a link that is fine. Do not substitute it where the server does fetch.
+- `assert_public_url(url)` — calls `assert_safe_link` first (so the two cannot disagree about what a URL even is), then requires that **every** resolved address be public (`ipaddress.is_global`; IPv4-mapped IPv6 unwrapped). Refuses loopback, RFC 1918, link-local/metadata `169.254.x`, CGNAT, and Fly's `fdaa::/16`. Raises `UnsafeURLError`, whose message is safe to show the user.
 - `fetch_public_page(url, client)` — GET with redirects followed **by hand**, re-checking each hop (max 5); body truncated at 2 MB.
 - Not closed: DNS rebinding between the check and httpx's own resolution (see the module docstring).
 - Not yet adopted by `webhook_dispatcher` or `slack_integration`, which POST to user-configured URLs.
@@ -291,7 +296,7 @@ Guard for server-side fetches of user-typed URLs (SSRF). Use it for any new code
 **Status**: [LIVE]
 **File**: `services/notifications.py`
 
-- `create_notification()` — In-app notification creation
+- `create_notification()` — In-app notification creation. <!-- verified: 260929 --> It has exactly **one** caller since 260929: the scheduler's `posts_due` digest for hand-posted content coming due. `GET /notifications` therefore reports `producers_wired: true` and no longer carries a `reason`. Nothing else in the product writes notifications, so the bell is still near-empty for a workspace with no manual channels.
 
 ## Trends
 **Status**: [STUB]

@@ -342,6 +342,38 @@ export const api = {
   publishContent: (contentId: string) =>
     request<PublishedResponse>(`/api/v1/publishing/${contentId}/publish`, { method: "POST" }),
 
+  /**
+   * Record a post a human made by hand ("Post it yourself"). **Publishes nothing** —
+   * it only moves the piece to `published` with `publish_mode: "manual"`, and still
+   * costs one post against the plan.
+   *
+   * The link is optional. Failures carry no `detail.code`, so branch on the HTTP
+   * status: 400 the client has no manual channel for that platform (or the link is
+   * unsafe), 402 the plan's post limit is used up and nothing was written, 409 the
+   * piece is not `approved`/`scheduled` any more.
+   */
+  markPosted: (contentId: string, postUrl?: string | null) =>
+    request<{ status: string; content_id: string; publish_mode: string; post_url: string | null }>(
+      `/api/v1/publishing/${contentId}/mark-posted`,
+      { method: "POST", body: JSON.stringify({ post_url: postUrl ?? null }) }
+    ),
+
+  /**
+   * Attach (or correct) the link to a post a human made by hand — "Add link".
+   *
+   * The one field an edit may change on a `published` piece without sending it
+   * back to `draft`: it records where the post ended up, it does not touch the
+   * copy, so there is nothing for moderation to re-check.
+   *
+   * Failures: 409 `not_published` the piece is not `published`, 400 the URL did
+   * not pass the safety check, 403 the caller lacks `publish.manual`.
+   */
+  setPostUrl: (contentId: string, postUrl: string) =>
+    request<{ content_id: string; post_url: string | null }>(`/api/v1/publishing/${contentId}/post-url`, {
+      method: "PATCH",
+      body: JSON.stringify({ post_url: postUrl }),
+    }),
+
   // Feature 12: Calendar reschedule — same endpoint as scheduleContent, kept as a
   // separate name because the calendar UI reads as "reschedule" at the call site.
   rescheduleContent: (contentId: string, scheduledAt: string) =>
@@ -930,6 +962,22 @@ export interface ContentMetadata {
   };
   post_url?: string | null;
   publish_error?: string | null;
+  /**
+   * `"manual"` when a human posted this piece by hand and the product sent
+   * nothing ("Post it yourself"); absent otherwise. UI must not say the product
+   * published it.
+   */
+  publish_mode?: string | null;
+  /** User id that recorded a manual post. Self-reported, so attribution matters. */
+  posted_by?: string | null;
+  /**
+   * When the scheduler notified someone that a hand-posted piece was due.
+   *
+   * Set once, so a due manual piece is not re-notified on every wake. It also
+   * means the piece is still `scheduled` because nobody has confirmed posting
+   * it — the Queue says so rather than leaving it looking like it will go out.
+   */
+  reminder_sent_at?: string | null;
   /**
    * Why a scheduled post could not go out, when the cause is the workspace
    * rather than the post (CF-01) — today, no connected account for its platform.

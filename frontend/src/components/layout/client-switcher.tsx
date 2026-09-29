@@ -173,7 +173,7 @@ function ClientStatusLine({ c }: { c: ClientOverview }) {
   return (
     <span className="mt-1 flex flex-wrap items-center gap-2 text-[10px]">
       {!c.has_brand_profile && <span className="text-red-600">Profile needed</span>}
-      {c.has_brand_profile && c.connected_accounts === 0 && <span className="text-accent-text">No accounts connected</span>}
+      {c.has_brand_profile && c.connected_accounts === 0 && <span className="text-accent-text">No channels yet</span>}
       {c.connected_accounts > 0 && (
         <span className="text-muted">
           {c.connected_accounts} channel{c.connected_accounts === 1 ? "" : "s"}

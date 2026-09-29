@@ -10,6 +10,10 @@ Every ratio and every recommendation has a minimum sample. Below it the value
 is ``None`` / the rule reports ``insufficient_data`` with ``have`` and
 ``needed`` — never a conclusion drawn from one or two data points. The UI shows
 those thresholds verbatim (Cadence's "How this works" explainer).
+
+A post a human published by hand with no link recorded has no metric and never will
+(:func:`is_unmeasurable_manual`). It is left out of every average and reported as its
+own count, ``engagement.manual_unlinked`` — an unknown, not a zero.
 """
 
 from __future__ import annotations
@@ -308,13 +312,31 @@ async def moderation_flag_count(db: AsyncSession, org_id: UUID, client_id: UUID)
     return sum(1 for props in rows if isinstance(props, dict) and props.get("client_id") == target)
 
 
+def is_unmeasurable_manual(metadata: dict[str, Any] | None) -> bool:
+    """A post a human made by hand and never linked — so no metric can exist for it.
+
+    Manual mode posts nothing and stores no platform ``post_id``, and with no link
+    there is not even a URL to identify the post by. There is therefore no number to
+    fetch, now or ever. Product rule 4: such a post is **excluded** from every
+    average rather than averaged in as a zero, which would read as "nobody engaged"
+    when the truth is "nobody measured". The UI says "Posted manually — no link,
+    metrics unavailable".
+    """
+    meta = metadata or {}
+    return meta.get("publish_mode") == "manual" and not meta.get("post_url")
+
+
 async def latest_engagement(
     db: AsyncSession, org_id: UUID, client_id: UUID
 ) -> dict[str, dict[str, Any]]:
     """Per platform: posts with a measured engagement value, and their average.
 
     Snapshots hold lifetime totals per day, so only each post's latest snapshot
-    counts. ``engagement IS NULL`` means not measured and is skipped, never 0.
+    counts. ``engagement IS NULL`` means not measured and is skipped, never 0. So is
+    a link-less manual post (:func:`is_unmeasurable_manual`) — belt and braces, since
+    nothing should ever write a snapshot for one, but a zero that slipped in here
+    would silently drag a platform's average down and be indistinguishable from a
+    real measurement once averaged.
     """
     latest = (
         select(AnalyticsSnapshot.content_id, func.max(AnalyticsSnapshot.date).label("d"))
@@ -324,7 +346,7 @@ async def latest_engagement(
     )
     rows = (
         await db.execute(
-            select(ContentPiece.platform, AnalyticsSnapshot.engagement)
+            select(ContentPiece.platform, ContentPiece.metadata_, AnalyticsSnapshot.engagement)
             .join(AnalyticsSnapshot, AnalyticsSnapshot.content_id == ContentPiece.id)
             .join(
                 latest,
@@ -339,7 +361,9 @@ async def latest_engagement(
         )
     ).all()
     sums: dict[str, list[int]] = defaultdict(list)
-    for platform, engagement in rows:
+    for platform, metadata, engagement in rows:
+        if is_unmeasurable_manual(metadata):
+            continue
         sums[platform].append(int(engagement))
     return {
         p: {"posts": len(v), "avg_engagement": round(sum(v) / len(v)), "total_engagement": sum(v)}
@@ -409,6 +433,13 @@ async def build_summary(db: AsyncSession, org_id: UUID, client: Client) -> dict[
     )
 
     measured_posts = sum(e["posts"] for e in engagement.values())
+    # Published-by-hand and never linked: no metric exists for these, and none ever
+    # will. Reported as their own number so the Insights screen can say why the
+    # engagement panel is thinner than the published count, instead of the UI having
+    # to infer it from a silence.
+    manual_unlinked = sum(
+        1 for _, s, m in pieces if str(s or "") == "published" and is_unmeasurable_manual(m)
+    )
     return {
         "client_id": str(client.id),
         "min_sample": MIN_SAMPLE,
@@ -448,6 +479,8 @@ async def build_summary(db: AsyncSession, org_id: UUID, client: Client) -> dict[
         "engagement": {
             "status": "available" if measured_posts else "unavailable",
             "posts_measured": measured_posts,
+            # Excluded from every average above, never counted as a zero.
+            "manual_unlinked": manual_unlinked,
             "by_platform": [{"platform": p, **e} for p, e in sorted(engagement.items())],
         },
         "recommendations": recs,

@@ -5,14 +5,18 @@ import Link from "next/link";
 import { format, formatDistanceToNow, isValid, parseISO } from "date-fns";
 import {
   AlertTriangle,
+  BellRing,
   CalendarClock,
   Check,
   CheckCircle2,
   ChevronDown,
+  ClipboardCheck,
   Copy,
   ExternalLink,
+  Hand,
   Image as ImageIcon,
   Layers,
+  Link2,
   Loader2,
   Palette,
   PenLine,
@@ -34,7 +38,13 @@ import {
   overdueLabel,
   renderedLength,
 } from "@/lib/api-posts";
-import { publishUnavailableReason } from "@/lib/platforms";
+import {
+  manualComposerUrl,
+  manualPostText,
+  prefillsBody,
+  publishUnavailableReason,
+  scheduleUnavailableReason,
+} from "@/lib/platforms";
 import { useSession } from "@/lib/session";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -48,7 +58,23 @@ export type PostAction =
   | "publish"
   | "regenerate"
   | "brief"
-  | "retry";
+  | "retry"
+  /** Recording a post a human made by hand — never publishing. */
+  | "mark-posted"
+  /** Attaching the link to an already-recorded hand-made post. */
+  | "post-url";
+
+/**
+ * The client's manual, tokenless channel for this post's platform.
+ *
+ * `null` means the channel is OAuth-connected (or unregistered), and the card
+ * keeps its normal Schedule / Publish now controls. When it is present the
+ * product cannot post for this channel at all, so those controls are replaced
+ * rather than added to.
+ */
+export interface ManualChannel {
+  profileUrl: string | null;
+}
 
 export interface PostEdit {
   title: string;
@@ -313,6 +339,274 @@ function BriefPanel({ post }: { post: QueuePost }) {
   );
 }
 
+/**
+ * "Post it yourself" — the whole flow for a channel the product cannot post to.
+ *
+ * CampaignForge publishes nothing here, so no word on this panel may say
+ * "publish" (product rule 1). One click puts the text on the clipboard and opens
+ * the channel's composer; a second, deliberate step records that a human posted
+ * it. Nothing is written or charged until that second step.
+ */
+function ManualPostActions({
+  post,
+  channel,
+  busy,
+  disabled,
+  quotaReason,
+  maySchedule,
+  scheduling,
+  onMarkPosted,
+  onSchedule,
+}: {
+  post: QueuePost;
+  channel: ManualChannel;
+  busy: boolean;
+  disabled: boolean;
+  /** Why the plan cannot take another post, checked before a composer is opened. */
+  quotaReason: string | null;
+  /**
+   * `publish.write`, not `publish.manual`.
+   *
+   * The server gates `POST /publishing/{id}/schedule` on `PUBLISH_WRITE` and nothing
+   * about Phase 4 changed that, so a `member` — who holds `publish.manual` and can
+   * record a post by hand — gets a 403 from the reminder endpoint. The button is
+   * therefore hidden for them rather than offered and refused, which leaves a
+   * `member` able to post and record but not to ask to be reminded.
+   */
+  maySchedule: boolean;
+  scheduling: boolean;
+  onMarkPosted: (post: QueuePost, postUrl: string | null) => void;
+  onSchedule: (post: QueuePost) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [openedTab, setOpenedTab] = useState(false);
+  const [link, setLink] = useState("");
+  const label = platformLabel(post.platform);
+  const prefilled = prefillsBody(post.platform);
+
+  function start() {
+    // Checked here rather than on confirm as well, so nobody composes into a tab
+    // and only then learns the plan is full.
+    if (quotaReason) {
+      toast.error(quotaReason);
+      return;
+    }
+    const text = manualPostText(post.body ?? "", post.hashtags ?? []);
+    const url = manualComposerUrl(post.platform, {
+      body: post.body ?? "",
+      hashtags: post.hashtags ?? [],
+      profileUrl: channel.profileUrl,
+    });
+    /*
+     * ORDER IS LOAD-BEARING. The clipboard write and the window.open both happen
+     * in this handler, synchronously, before any await: a popup opened after an
+     * await has lost the user gesture and the browser blocks it.
+     */
+    let wrote = false;
+    try {
+      const p = navigator.clipboard?.writeText(text);
+      if (p) {
+        wrote = true;
+        void p.catch(() => {
+          setCopied(false);
+          toast.error("Couldn't reach the clipboard — copy the post text from the card instead.");
+        });
+      }
+    } catch {
+      wrote = false;
+    }
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+    setCopied(wrote);
+    setOpenedTab(!!url);
+    setConfirming(true);
+  }
+
+  if (!confirming) {
+    return (
+      <>
+        <Button size="sm" onClick={start} disabled={disabled}>
+          <Hand className="h-3.5 w-3.5" aria-hidden />
+          Post it yourself
+        </Button>
+        {/*
+          Phase 4's other half. The backend lets a manual piece be scheduled — the
+          scheduler notifies and leaves it `scheduled`, never publishing it — and the
+          card already words a scheduled manual piece as "Reminder around <time>", but
+          until this button there was no way to reach any of it.
+
+          Deliberately secondary to "Post it yourself": the reminder defers the work,
+          it does not do it, and the piece still comes back through this same panel to
+          be recorded. The label says "as a reminder" rather than "Schedule", because
+          on a card that publishes nothing the bare word promises a send.
+        */}
+        {maySchedule && (
+          <Button variant="secondary" size="sm" onClick={() => onSchedule(post)} disabled={disabled}>
+            {scheduling ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <BellRing className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {post.status === "scheduled" ? "Move the reminder" : "Schedule as a reminder"}
+          </Button>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div className="w-full rounded-lg border border-line bg-panel/80 p-3 motion-safe:animate-screen-in">
+      <p className="flex items-start gap-2 text-xs leading-snug text-slate-700" aria-live="polite">
+        <ClipboardCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-text" aria-hidden />
+        <span>
+          {prefilled && openedTab ? (
+            <>
+              Your post is <strong>prefilled</strong> in the {label} composer that just opened — check it there and
+              post it. {copied ? "It's on your clipboard too." : ""}
+            </>
+          ) : openedTab ? (
+            <>
+              {copied ? "Copied" : "Copy the post text from the card"} — paste it into the {label} composer that just
+              opened, then post it.
+            </>
+          ) : (
+            <>
+              {copied ? "Copied" : "Copy the post text from the card"} — open {label} yourself and paste it in. We
+              have no verified composer link for {label}; add the page&apos;s address under Setup › Accounts and this
+              will open it for you next time.
+            </>
+          )}
+        </span>
+      </p>
+      <label className="mt-3 block space-y-1">
+        <span className="text-xs font-medium text-muted">Link to the post (optional)</span>
+        <input
+          value={link}
+          onChange={(e) => setLink(e.target.value)}
+          placeholder="https://…"
+          inputMode="url"
+          className={cn(fieldClass, "border-line font-mono text-xs focus:border-accent")}
+        />
+      </label>
+      <p className="mt-2 text-[11px] leading-snug text-muted">
+        CampaignForge posted nothing — this only records that you did, and it counts one post against your plan. You
+        can add the link later if you don&apos;t have it now.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" onClick={() => onMarkPosted(post, link.trim() || null)} disabled={busy}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          {busy ? "Recording…" : "I posted it"}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setConfirming(false);
+            setLink("");
+          }}
+          disabled={busy}
+        >
+          Cancel
+        </Button>
+        {/* "Schedule as a reminder" sits beside "Post it yourself" on the collapsed
+            panel above, not here: once the composer is open the choice is record it or
+            back out, and offering a future time in the middle of that is noise. */}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A hand-posted piece with no link on file: the honest state, plus a way out of it.
+ *
+ * Two rules meet here. Product rule 1 — the product posted nothing, so this may not
+ * read as "Published". Product rule 4 — nothing here may stand a `0` in for a number
+ * nobody has: there is no token for this page, so impressions and engagement are not
+ * unknown-and-coming, they are unavailable, and the card says exactly that.
+ *
+ * The "Add link" affordance is permanent, not a one-time prompt. Someone who posted
+ * from their phone may only have the link days later, and a prompt that expires would
+ * leave the record wrong for good. It disappears only once a link is actually on file.
+ */
+function MissingPostLink({
+  post,
+  busy,
+  mayEdit,
+  onSetPostUrl,
+}: {
+  post: QueuePost;
+  busy: boolean;
+  /** `publish.manual` — the same capability the server requires on the PATCH. */
+  mayEdit: boolean;
+  onSetPostUrl: (post: QueuePost, postUrl: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [link, setLink] = useState("");
+
+  return (
+    <div className="mt-3 rounded-lg border border-line bg-canvas/40 p-3">
+      <p className="flex items-start gap-2 text-xs leading-snug text-slate-700">
+        <Hand className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
+        <span>Posted manually — no link, metrics unavailable</span>
+      </p>
+      <p className="mt-1.5 pl-[1.375rem] text-[11px] leading-snug text-muted">
+        CampaignForge didn&apos;t post this and holds no access to the page, so it can&apos;t read impressions or
+        engagement for it — and it won&apos;t show a zero instead. Adding the link doesn&apos;t change that; it makes
+        the record complete and openable from here.
+      </p>
+      {mayEdit && !open && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="mt-2 ml-[1.375rem] inline-flex items-center gap-1 font-mono text-[10.5px] text-accent-text underline hover:no-underline"
+        >
+          <Link2 className="h-3 w-3" aria-hidden /> Add link
+        </button>
+      )}
+      {mayEdit && open && (
+        <form
+          className="mt-2.5 space-y-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const value = link.trim();
+            if (value) onSetPostUrl(post, value);
+          }}
+        >
+          <label className="block space-y-1">
+            <span className="text-xs font-medium text-muted">Link to the post</span>
+            <input
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="https://…"
+              inputMode="url"
+              autoFocus
+              className={cn(fieldClass, "border-line font-mono text-xs focus:border-accent")}
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="submit" size="sm" disabled={busy || !link.trim()}>
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+              {busy ? "Saving…" : "Save link"}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setOpen(false);
+                setLink("");
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 export interface PostCardProps {
   post: QueuePost;
   clientName: string | null;
@@ -328,6 +622,14 @@ export interface PostCardProps {
   onEditSave: (post: QueuePost, edit: PostEdit) => Promise<void>;
   onSchedule: (post: QueuePost) => void;
   onPublish: (post: QueuePost) => void;
+  /** Set when this post's channel is registered manually — see {@link ManualChannel}. */
+  manual?: ManualChannel | null;
+  /** Why the plan cannot take another post, or null. Pre-checked on the click that opens a composer. */
+  quotaReason?: string | null;
+  /** Record a post the user made by hand (`POST /publishing/{id}/mark-posted`). */
+  onMarkPosted: (post: QueuePost, postUrl: string | null) => void;
+  /** Attach the link to an already-recorded hand-made post (`PATCH /publishing/{id}/post-url`). */
+  onSetPostUrl: (post: QueuePost, postUrl: string) => void;
   onDelete: (post: QueuePost) => void;
   /** Send a failed post back to Approved so publishing can be tried again (CF-06). */
   onRetry: (post: QueuePost) => void;
@@ -357,6 +659,10 @@ export const PostCard = memo(function PostCard({
   onEditSave,
   onSchedule,
   onPublish,
+  manual,
+  quotaReason = null,
+  onMarkPosted,
+  onSetPostUrl,
   onDelete,
   onRetry,
   onRegenerate,
@@ -373,6 +679,10 @@ export const PostCard = memo(function PostCard({
   const { can } = useSession();
   const mayApprove = can("content.approve");
   const mayPublish = can("publish.write");
+  // A separate capability: recording a post nobody's account was touched for is
+  // bookkeeping, so a `member` holds it while `publish.write` stays owner/admin.
+  const mayPostManually = can("publish.manual");
+  const isManual = manual != null;
 
   const tone = platformTone(post.platform);
   const created = parse(post.created_at);
@@ -380,9 +690,32 @@ export const PostCard = memo(function PostCard({
   const publishedAt = parse(post.published_at);
   const overdue = isOverdue(post, now);
   const blocked = publishUnavailableReason(post.platform);
+  /*
+   * Whether a time can be set at all, which is no longer the same question as
+   * whether the product can publish. For a connected channel it still is — a
+   * scheduled post there IS a publish, so this equals `blocked`. On a manual
+   * channel the scheduler only ever notifies a human, so Instagram and TikTok,
+   * which have no publisher, can still be given a reminder. `ensure_schedulable`
+   * makes the same exception server-side.
+   */
+  const scheduleBlocked = scheduleUnavailableReason(post.platform, { manual: isManual });
   const postUrl = post.metadata_?.post_url;
+  // A hand-made post: the product sent nothing, so the card must not say it published it.
+  const manuallyPosted = post.metadata_?.publish_mode === "manual";
   const publishError = post.metadata_?.publish_error;
   const publishBlocked = post.metadata_?.publish_blocked;
+  /*
+   * A due reminder that nobody has confirmed. Read from the metadata rather than
+   * from `isManual`, because the manual-channel map comes from a separate request
+   * that can fail — and if it does, this notice must still appear: a piece the
+   * scheduler has already refused to publish must never read as "will publish".
+   */
+  const reminderSentAt = parse(post.metadata_?.reminder_sent_at);
+  const reminderAwaitingConfirm =
+    post.status === "scheduled" && reminderSentAt !== null && reminderSentAt.getTime() <= now;
+  // A scheduled piece on a manual channel is a reminder, not a job: the scheduler
+  // notifies and leaves it alone (Phase 4), so no copy here may promise a publish.
+  const isReminder = isManual || reminderSentAt !== null;
   const ad = adVariantOf(post);
   // Why this post cannot be approved, or null. Kept in step with the server's
   // `empty_content_reason` — the button is hidden here, refused there.
@@ -451,8 +784,17 @@ export const PostCard = memo(function PostCard({
         <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-300/60 bg-amber-50/60 px-2.5 py-2">
           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-600" aria-hidden />
           <span className="text-[11px] leading-snug text-slate-600">
-            This was due to publish and hasn&apos;t gone out. The scheduler checks every minute — if it stays here,
-            publish it now or check the account under Setup › Accounts.
+            {isReminder ? (
+              <>
+                This reminder&apos;s time has passed. Nothing publishes it — this is a page you post yourself, so post
+                it and then record it here with &ldquo;Post it yourself&rdquo;.
+              </>
+            ) : (
+              <>
+                This was due to publish and hasn&apos;t gone out. The scheduler checks every minute — if it stays here,
+                publish it now or check the account under Setup › Accounts.
+              </>
+            )}
           </span>
         </div>
       )}
@@ -507,10 +849,47 @@ export const PostCard = memo(function PostCard({
         </p>
       )}
 
+      {/*
+        A scheduled manual post is a reminder and nothing else — the scheduler sees
+        it is due, notifies, and leaves it `scheduled`. "Publishes <time>" would be
+        a straight falsehood there.
+
+        "around", not "at", on purpose: the scheduler's wake interval is capped at up
+        to an hour, so a 09:00 reminder can arrive at 09:59. The copy must not promise
+        punctuality the scheduler does not deliver.
+      */}
       {post.status === "scheduled" && scheduledAt && !overdue && (
         <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
           <CalendarClock className="h-3.5 w-3.5" aria-hidden />
-          Publishes <span className="font-mono">{format(scheduledAt, "EEE d MMM, HH:mm")}</span>
+          {isReminder ? (
+            <>
+              Reminder around <span className="font-mono">{format(scheduledAt, "EEE d MMM, HH:mm")}</span> — nothing
+              goes out on its own; you post it yourself
+            </>
+          ) : (
+            <>
+              Publishes <span className="font-mono">{format(scheduledAt, "EEE d MMM, HH:mm")}</span>
+            </>
+          )}
+        </p>
+      )}
+
+      {/*
+        Reminded, still unconfirmed. The scheduler records `reminder_sent_at` once and
+        then never touches the piece again, so without this it sits in Scheduled
+        indefinitely looking like it is waiting its turn. Display only — no new status,
+        and no call: confirming is still "Post it yourself" → "I posted it".
+      */}
+      {reminderAwaitingConfirm && reminderSentAt && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
+          <BellRing className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
+          <span>
+            Reminder sent{" "}
+            <span className="font-mono" title={format(reminderSentAt, "PPpp")}>
+              {formatDistanceToNow(reminderSentAt, { addSuffix: true })}
+            </span>{" "}
+            — not yet confirmed. If you have posted it, record it below; if you have not, it is still waiting on you.
+          </span>
         </p>
       )}
 
@@ -519,7 +898,8 @@ export const PostCard = memo(function PostCard({
           {publishedAt && (
             <span className="flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
-              Published <span className="font-mono">{format(publishedAt, "EEE d MMM, HH:mm")}</span>
+              {manuallyPosted ? "Posted by hand" : "Published"}{" "}
+              <span className="font-mono">{format(publishedAt, "EEE d MMM, HH:mm")}</span>
             </span>
           )}
           {postUrl && (
@@ -533,6 +913,15 @@ export const PostCard = memo(function PostCard({
             </a>
           )}
         </p>
+      )}
+
+      {post.status === "published" && manuallyPosted && !postUrl && (
+        <MissingPostLink
+          post={post}
+          busy={busy === "post-url"}
+          mayEdit={mayPostManually}
+          onSetPostUrl={onSetPostUrl}
+        />
       )}
 
       {post.status === "failed" && (
@@ -554,7 +943,10 @@ export const PostCard = memo(function PostCard({
 
       {!editing && post.status !== "published" && (
         <div className="mt-4 border-t border-line pt-3">
-          {mayPublish && blocked && !isDraft && post.status !== "failed" && (
+          {/* Irrelevant on a manual channel: nothing here was ever going to be
+              published by the product, so "publishing isn't available yet" would
+              be answering a question the card no longer asks. */}
+          {mayPublish && !isManual && blocked && !isDraft && post.status !== "failed" && (
             <p className="mb-3 flex gap-2 text-xs text-amber-800">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               {blocked}
@@ -593,14 +985,36 @@ export const PostCard = memo(function PostCard({
               </>
             )}
 
-            {mayPublish && (post.status === "approved" || post.status === "scheduled") && (
+            {/*
+              A manual channel has no tokens, so Publish now is replaced — not
+              supplemented. It would fail server-side, and offering it would claim
+              the product posts to a page it cannot reach. Scheduling survives, but
+              as a reminder: `ManualPostActions` offers it in those words and the
+              dialog, the "Reminder around <time>" line and the overdue notice all
+              branch to match. The OAuth path below is untouched.
+            */}
+            {isManual && mayPostManually && (post.status === "approved" || post.status === "scheduled") && (
+              <ManualPostActions
+                post={post}
+                channel={manual}
+                busy={busy === "mark-posted"}
+                disabled={anyBusy}
+                quotaReason={quotaReason}
+                maySchedule={mayPublish && scheduleBlocked === null}
+                scheduling={busy === "schedule"}
+                onMarkPosted={onMarkPosted}
+                onSchedule={onSchedule}
+              />
+            )}
+
+            {!isManual && mayPublish && (post.status === "approved" || post.status === "scheduled") && (
               <>
                 <Button
                   size="sm"
                   variant={post.status === "approved" ? "primary" : "secondary"}
                   onClick={() => onSchedule(post)}
-                  disabled={anyBusy || blocked !== null}
-                  title={blocked ?? undefined}
+                  disabled={anyBusy || scheduleBlocked !== null}
+                  title={scheduleBlocked ?? undefined}
                 >
                   {busy === "schedule" ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />

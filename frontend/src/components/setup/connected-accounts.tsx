@@ -15,7 +15,9 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock,
+  ExternalLink,
   Facebook,
+  Hand,
   Instagram,
   Link2,
   Linkedin,
@@ -23,8 +25,10 @@ import {
   Lock,
   MessageCircle,
   Music2,
+  Plus,
   ShieldCheck,
   Sparkle,
+  Trash2,
   Twitter,
   Unplug,
   Youtube,
@@ -33,14 +37,21 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Field, Input, Select } from "@/components/ui/field";
 import { ConfirmDialog, ErrorBanner } from "@/components/ui/feedback";
 import { Eyebrow, Panel } from "@/components/ui/panel";
 import { PostDialog } from "@/components/posts/dialog";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
-import { publishUnavailableReason } from "@/lib/platforms";
+import { platformLabel, publishUnavailableReason } from "@/lib/platforms";
 import { useSession } from "@/lib/session";
 import { trackFeature } from "@/lib/analytics";
-import { setupApi, createPkce, type ClientAccount, type ClientAccountsResponse } from "@/lib/api-setup";
+import {
+  setupApi,
+  createPkce,
+  MANUAL_PLATFORMS,
+  type ClientAccount,
+  type ClientAccountsResponse,
+} from "@/lib/api-setup";
 import { cn } from "@/lib/utils";
 
 type Icon = ComponentType<{ className?: string }>;
@@ -156,9 +167,18 @@ export function ConnectedAccounts({ showContinue = true }: { showContinue?: bool
     void load();
   }, [load]);
 
-  const byPlatform = (id: string) => (data?.accounts ?? []).filter((a) => a.platform === id);
+  /*
+   * A manual channel is NOT a connection: it has no tokens and nothing publishes
+   * to it. Keeping the two lists apart is what stops a manual row rendering as a
+   * green "Connected" card with a Disconnect button that would hit the OAuth route.
+   */
+  const all = data?.accounts ?? [];
+  const manualAccounts = all.filter((a) => a.status === "manual");
+  const byPlatform = (id: string) =>
+    all.filter((a) => a.platform === id && a.status !== "manual");
   const connectable = PLATFORMS.filter((p) => !p.unavailable);
   const connectedCount = connectable.filter((p) => byPlatform(p.id).length > 0).length;
+  const hasAnyChannel = connectedCount > 0 || manualAccounts.length > 0;
 
   const beginConnect = async () => {
     if (!consentFor || !activeId) return;
@@ -250,9 +270,18 @@ export function ConnectedAccounts({ showContinue = true }: { showContinue?: bool
         </div>
       )}
 
+      <ManualChannels
+        clientId={activeId}
+        accounts={manualAccounts}
+        mayManage={mayConnect}
+        onChanged={async () => {
+          await Promise.all([load(), refresh()]);
+        }}
+      />
+
       {showContinue && (
         <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-5">
-          {connectedCount > 0 ? (
+          {hasAnyChannel ? (
             <Link href="/content" className={buttonVariants()}>
               Continue to posts <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -262,11 +291,11 @@ export function ConnectedAccounts({ showContinue = true }: { showContinue?: bool
             </Button>
           )}
           <span className="text-[11.5px] text-muted">
-            {connectedCount > 0
+            {hasAnyChannel
               ? "Nice — you're ready to post"
               : mayConnect
-                ? "Connect at least one channel to continue"
-                : "No channels connected yet — an owner or admin connects them"}
+                ? "Connect a channel, or add a page you manage yourself, to continue"
+                : "No channels yet — an owner or admin adds them"}
           </span>
         </div>
       )}
@@ -344,6 +373,217 @@ export function ConnectedAccounts({ showContinue = true }: { showContinue?: bool
         onCancel={() => setDisconnecting(null)}
       />
     </Panel>
+  );
+}
+
+/* -------------------------------------------------------------- manual channels */
+
+/**
+ * "Add a page you manage yourself" — Phase 1 of the manual-publishing plan.
+ *
+ * These rows are written with `status: "manual"` and no tokens, so the product
+ * publishes nothing to them: the operator opens the platform and posts. The badge
+ * says exactly that and is deliberately **not** the green "Connected" pill — a
+ * channel the product cannot post to must never look like one it can.
+ */
+function ManualChannels({
+  clientId,
+  accounts,
+  mayManage,
+  onChanged,
+}: {
+  clientId: string | null;
+  accounts: ClientAccount[];
+  mayManage: boolean;
+  onChanged: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [platform, setPlatform] = useState<string>("instagram");
+  const [handle, setHandle] = useState("");
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<ClientAccount | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+
+  const reset = () => {
+    setOpen(false);
+    setHandle("");
+    setUrl("");
+    setError(null);
+  };
+
+  const submit = async () => {
+    if (!clientId || !handle.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await setupApi.addManualAccount(clientId, {
+        platform,
+        account_handle: handle.trim(),
+        profile_url: url.trim() || null,
+      });
+      reset();
+      toast.success(`Added ${platformLabel(platform)} as a page you post yourself`);
+      trackFeature("add-manual-channel");
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not add that page.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmRemove = async () => {
+    if (!clientId || !removing) return;
+    setRemoveBusy(true);
+    try {
+      await setupApi.removeManualAccount(clientId, removing.id);
+      setRemoving(null);
+      await onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not remove that page");
+    } finally {
+      setRemoveBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-6 rounded-xl border border-dashed border-line bg-canvas/40 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink">
+            <Hand className="h-3.5 w-3.5 text-accent-text" />
+            Pages you manage yourself
+          </div>
+          <p className="mt-1 max-w-xl text-[11.5px] leading-relaxed text-muted">
+            Already run the account and would rather we kept out of it? Add it here without
+            connecting anything. We write, moderate and track the posts — you open the platform and
+            post them. Nothing is published for you.
+          </p>
+        </div>
+        {mayManage && !open && (
+          <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
+            <Plus className="h-3.5 w-3.5" /> Add a page
+          </Button>
+        )}
+      </div>
+
+      {accounts.length > 0 && (
+        <ul className="mt-4 space-y-2">
+          {accounts.map((a) => (
+            <li
+              key={a.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-panel/70 px-3 py-2"
+            >
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="text-[12.5px] font-medium text-ink">{platformLabel(a.platform)}</span>
+                <span className="truncate font-mono text-[11px] text-slate-600">
+                  {a.account_handle || a.display_name || "Page"}
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-mono text-[10.5px] font-medium text-amber-800">
+                  <Hand className="h-2.5 w-2.5" aria-hidden />
+                  You post it
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-3">
+                {a.profile_url && (
+                  <a
+                    href={a.profile_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[11px] font-medium text-muted hover:text-ink"
+                  >
+                    <ExternalLink className="h-3 w-3" /> Open
+                  </a>
+                )}
+                {mayManage && (
+                  <button
+                    type="button"
+                    onClick={() => setRemoving(a)}
+                    className="press-scale flex items-center gap-1 text-[11px] font-medium text-muted hover:text-ink"
+                  >
+                    <Trash2 className="h-3 w-3" /> Remove
+                  </button>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {open && (
+        <div className="mt-4 space-y-3 rounded-lg border border-line bg-panel/70 p-3.5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Platform" htmlFor="manual-platform">
+              <Select
+                id="manual-platform"
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value)}
+                disabled={busy}
+              >
+                {MANUAL_PLATFORMS.map((id) => (
+                  <option key={id} value={id}>
+                    {platformLabel(id)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Handle or page name" htmlFor="manual-handle">
+              <Input
+                id="manual-handle"
+                value={handle}
+                onChange={(e) => setHandle(e.target.value)}
+                placeholder="@yourbrand"
+                maxLength={255}
+                disabled={busy}
+              />
+            </Field>
+          </div>
+          <Field
+            label="Link to the page (optional)"
+            htmlFor="manual-url"
+            hint="Used to open the right page when you post. Leave it blank if you're not sure."
+          >
+            <Input
+              id="manual-url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://www.instagram.com/yourbrand"
+              maxLength={500}
+              disabled={busy}
+            />
+          </Field>
+          {error && <ErrorBanner message={error} />}
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => void submit()} disabled={busy || !handle.trim()}>
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+              Add page
+            </Button>
+            <Button size="sm" variant="secondary" onClick={reset} disabled={busy}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {!mayManage && accounts.length === 0 && (
+        <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-relaxed text-muted">
+          <Lock className="mt-0.5 h-3 w-3 shrink-0" />
+          Adding a page is limited to workspace owners and admins.
+        </p>
+      )}
+
+      <ConfirmDialog
+        open={removing !== null}
+        title={removing ? `Remove ${platformLabel(removing.platform)}?` : ""}
+        message="Posts already written for this channel are kept. You just won't see it listed as a place to post."
+        confirmLabel="Remove"
+        busy={removeBusy}
+        onConfirm={() => void confirmRemove()}
+        onCancel={() => setRemoving(null)}
+      />
+    </div>
   );
 }
 

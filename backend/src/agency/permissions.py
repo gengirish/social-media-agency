@@ -51,6 +51,11 @@ class Capability(StrEnum):
     CAMPAIGN_RUN = "campaign.run"
     CONTENT_APPROVE = "content.approve"
     PUBLISH_WRITE = "publish.write"
+    #: Record that a human posted a piece by hand, on a channel the org registered
+    #: manually (``platform_account.status == 'manual'``). Deliberately *not* the
+    #: same capability as ``publish.write``: nothing is sent anywhere, so the risk
+    #: that keeps ``publish.write`` away from ``member`` does not exist here.
+    PUBLISH_MANUAL = "publish.manual"
     CONTENT_OVERRIDE = "content.override"
     OAUTH_CONNECT = "oauth.connect"
     TEAM_MANAGE = "team.manage"
@@ -71,6 +76,13 @@ ACCOUNT_TYPES: tuple[AccountType, ...] = get_args(AccountType)
 #: The matrix. ``member`` may approve because approving is a human saying the copy
 #: is fine and a member is a human; it may not publish or override, because publish
 #: posts to a live client account and override bypasses moderation entirely.
+#:
+#: ``member`` *does* hold ``publish.manual``. The reason ``publish.write`` is withheld
+#: is the live account; manual mode removes that premise — the product posts nothing,
+#: a human already did, and what is left is bookkeeping. A ``member`` who already holds
+#: ``content.approve`` is trusted to say the copy is fine, so trusting the same seat to
+#: say "I posted it" adds no new power over a client's account. ``posted_by`` keeps it
+#: attributable. ``viewer`` still gets nothing: recording a post is a write.
 CAPS: dict[Role, frozenset[Capability]] = {
     "owner": frozenset(
         {
@@ -78,6 +90,7 @@ CAPS: dict[Role, frozenset[Capability]] = {
             Capability.CAMPAIGN_RUN,
             Capability.CONTENT_APPROVE,
             Capability.PUBLISH_WRITE,
+            Capability.PUBLISH_MANUAL,
             Capability.CONTENT_OVERRIDE,
             Capability.OAUTH_CONNECT,
             Capability.TEAM_MANAGE,
@@ -91,6 +104,7 @@ CAPS: dict[Role, frozenset[Capability]] = {
             Capability.CAMPAIGN_RUN,
             Capability.CONTENT_APPROVE,
             Capability.PUBLISH_WRITE,
+            Capability.PUBLISH_MANUAL,
             Capability.CONTENT_OVERRIDE,
             Capability.OAUTH_CONNECT,
             Capability.TEAM_MANAGE,
@@ -102,6 +116,7 @@ CAPS: dict[Role, frozenset[Capability]] = {
             Capability.READ,
             Capability.CAMPAIGN_RUN,
             Capability.CONTENT_APPROVE,
+            Capability.PUBLISH_MANUAL,
         }
     ),
     "viewer": frozenset({Capability.READ}),

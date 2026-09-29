@@ -105,6 +105,28 @@ async def test_overdue_item_floors_at_min_sleep(session_factory, seeded):
     assert delay == float(MIN_SLEEP_SECONDS)
 
 
+async def test_a_permanently_overdue_manual_piece_does_not_spin_the_loop(
+    session_factory, seeded
+):
+    """A reminded manual piece stays ``scheduled`` with a past due time forever.
+
+    That is by design — only ``mark-posted`` moves it — but it is exactly the shape that
+    could pin a scale-to-zero database awake if the wake calculation ever started
+    counting overdue rows. ``_compute_next_wake`` looks only at ``scheduled_at > now``,
+    so an indefinitely overdue row contributes nothing and the sleep stays at the cap.
+    """
+    org_id, client_id = seeded
+    now = datetime.now(UTC)
+    await _schedule(session_factory, org_id, client_id, now - timedelta(days=3))
+
+    engine = SchedulerEngine()
+    engine._last_metrics_refresh_day = now.date()
+
+    delay = await engine._compute_next_wake(now=now)
+
+    assert delay == float(MAX_SLEEP_SECONDS)
+
+
 async def test_pending_daily_refresh_wins_over_the_cap(session_factory):
     """A refresh that has not run today is due immediately."""
     engine = SchedulerEngine()

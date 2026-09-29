@@ -31,7 +31,8 @@ import {
 import { clientLabel, useActiveClient } from "@/lib/active-client";
 import { useClientScope, type ClientScope } from "@/lib/client-scope";
 import { trackFeature } from "@/lib/analytics";
-import { publishUnavailableReason } from "@/lib/platforms";
+import { scheduleUnavailableReason } from "@/lib/platforms";
+import { useManualChannels } from "@/lib/manual-channels";
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -99,18 +100,23 @@ function EventChip({
   onOpen,
   onDragStart,
   onDragEnd,
+  manual,
 }: {
   event: CalendarPost;
   delay: number;
   dragging: boolean;
   justMoved: boolean;
+  manual: boolean;
   onOpen: () => void;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
 }) {
   const tone = toneOf(event.status);
   const at = atOf(event);
-  const blocked = publishUnavailableReason(event.platform);
+  // On a manual channel the platform's "can't publish, can't schedule" warning is
+  // false: nothing publishes it either way, and a reminder is allowed. See
+  // `scheduleUnavailableReason`.
+  const blocked = scheduleUnavailableReason(event.platform, { manual });
   const draggable = event.status !== "published" && event.status !== "failed";
   return (
     <button
@@ -158,9 +164,11 @@ function DayColumn({
   onDragStart,
   onDragEnd,
   onDrop,
+  isManual,
 }: {
   day: Date;
   events: CalendarPost[];
+  isManual: (e: CalendarPost) => boolean;
   dragging: string | null;
   draggingStatus: string | null;
   flashId: string | null;
@@ -226,6 +234,7 @@ function DayColumn({
             onOpen={() => onOpen(e)}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
+            manual={isManual(e)}
           />
         ))}
       </div>
@@ -250,6 +259,7 @@ function DayColumn({
 export default function CalendarPage() {
   const router = useRouter();
   const { active, activeId, clients, loading: clientsLoading, refresh: refreshClients } = useActiveClient();
+
   // CF-10: shared with the Queue (see lib/client-scope.ts).
   const [scope, setScope] = useClientScope();
   const [view, setView] = useState<View>("month");
@@ -257,6 +267,13 @@ export default function CalendarPage() {
   const [selectedDay, setSelectedDay] = useState(() => startOfDay(new Date()));
 
   const [entries, setEntries] = useState<CalendarPost[]>([]);
+  // Manual channels ("you post it") for every client with an entry on the board. Shared
+  // with the Queue so the two screens cannot disagree about what the product can post.
+  const manualChannelAt = useManualChannels(entries.map((e) => e.client_id));
+  const isManualPost = useCallback(
+    (e: CalendarPost) => manualChannelAt(e.client_id, e.platform) !== null,
+    [manualChannelAt]
+  );
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -403,7 +420,8 @@ export default function CalendarPage() {
       return;
     }
     if (post.status !== "approved" && post.status !== "scheduled") return;
-    const blocked = publishUnavailableReason(post.platform);
+    const manual = isManualPost(post);
+    const blocked = scheduleUnavailableReason(post.platform, { manual });
     if (blocked) {
       toast.error(blocked);
       return;
@@ -417,7 +435,8 @@ export default function CalendarPage() {
       return;
     }
     if (post.status === "approved") {
-      // First time it goes live: confirm the exact time (and the live-publish warning).
+      // First time: confirm the exact time, with the live-publish warning for a connected
+      // channel and the reminder wording for one the operator posts themselves.
       setScheduleFor({ post, at: target.toISOString() });
       return;
     }
@@ -425,7 +444,11 @@ export default function CalendarPage() {
       await api.rescheduleContent(post.id, target.toISOString());
       setEntries((list) => list.map((e) => (e.id === post.id ? { ...e, scheduled_at: target.toISOString() } : e)));
       flash(post.id);
-      toast.success(`Rescheduled to ${format(target, "EEE d MMM, HH:mm")}`);
+      toast.success(
+        manual
+          ? `Reminder moved to around ${format(target, "EEE d MMM, HH:mm")} — nothing goes out on its own.`
+          : `Rescheduled to ${format(target, "EEE d MMM, HH:mm")}`
+      );
       trackFeature("post-reschedule", { platform: post.platform, via: "drag" });
       reload();
     } catch (err) {
@@ -443,7 +466,12 @@ export default function CalendarPage() {
       setScheduleFor(null);
       setSelected(null);
       flash(post.id);
-      toast.success(`${post.status === "scheduled" ? "Rescheduled" : "Scheduled"} for ${format(new Date(iso), "EEE d MMM, HH:mm")}`);
+      const when = format(new Date(iso), "EEE d MMM, HH:mm");
+      toast.success(
+        isManualPost(post)
+          ? `Reminder ${post.status === "scheduled" ? "moved to" : "set for"} around ${when} — nothing goes out on its own.`
+          : `${post.status === "scheduled" ? "Rescheduled" : "Scheduled"} for ${when}`
+      );
       trackFeature(post.status === "scheduled" ? "post-reschedule" : "post-schedule", { platform: post.platform });
       reload();
       void refreshClients();
@@ -843,6 +871,7 @@ export default function CalendarPage() {
                         onDragStart={setDragging}
                         onDragEnd={() => setDragging(null)}
                         onDrop={(day) => void dropOn(day)}
+                        isManual={isManualPost}
                       />
                     ))}
                   </div>
@@ -944,6 +973,7 @@ export default function CalendarPage() {
         open={scheduleFor !== null}
         mode={scheduleFor?.post.status === "scheduled" ? "reschedule" : "schedule"}
         platform={scheduleFor?.post.platform ?? ""}
+        manual={scheduleFor ? isManualPost(scheduleFor.post) : false}
         clientName={scheduleFor ? clientNames.get(scheduleFor.post.client_id) ?? null : null}
         currentAt={scheduleFor?.at}
         busy={scheduleBusy}

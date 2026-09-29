@@ -35,16 +35,14 @@ async def list_notifications(
     unread = count_result.scalar() or 0
 
     return {
-        # `services/notifications.py::create_notification` is never called by any
-        # route or agent, so nothing produces notifications today. Flag it rather
-        # than let a permanently empty bell read as "you are all caught up".
-        "producers_wired": False,
-        # User-facing. The previous wording named the function that is missing a
-        # caller, which told a marketer nothing and leaked the internals into the
-        # bell (CF-16). The fact worth stating is only that the list will stay
-        # empty, so nobody waits on it; ``producers_wired`` carries the detail for
-        # anyone reading the API.
-        "reason": "Notifications aren't switched on yet — this list stays empty for now.",
+        # There *is* a producer now: ``services/scheduler.py::_remind_due_manual``
+        # writes a ``posts_due`` digest when manual posts come due. This flag was
+        # ``False`` while nothing called ``create_notification``, so a permanently
+        # empty bell would not read as "you are all caught up"; the frontend also
+        # skips re-fetching on it, so leaving it ``False`` would hide the very
+        # reminders this exists to deliver. No ``reason`` either — an empty list is
+        # now genuinely an empty list.
+        "producers_wired": True,
         "items": [
             {
                 "id": str(n.id),

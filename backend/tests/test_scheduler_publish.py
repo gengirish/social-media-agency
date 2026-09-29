@@ -144,6 +144,32 @@ async def test_duplicate_accounts_do_not_crash(session_factory, tenants, publish
     assert len(published) == 1
 
 
+async def test_manual_channel_is_not_a_publishable_account(
+    session_factory, tenants, published
+):
+    """``_publish_piece``'s ``status == "connected"`` filter must never be widened.
+
+    A manual row has ``access_token_enc IS NULL``. If this lookup accepted one, the
+    publisher would be handed ``access_token: None`` — the single worst outcome of the
+    manual-publish work. Manual pieces are kept away from here by
+    ``_process_due_content`` (see ``test_manual_reminders.py``); this asserts the floor
+    under that: even called directly, ``_publish_piece`` does not see a manual row.
+    """
+    await create_platform_account(
+        session_factory,
+        tenants["org_a"],
+        tenants["client_a"],
+        status="manual",
+        account_handle="by-hand",
+    )
+
+    piece = await _run(session_factory, tenants["content_a"])
+
+    assert published == []
+    assert piece.status != "published"
+    assert piece.metadata_["publish_blocked"]["code"] == "no_connected_account"
+
+
 async def test_archived_client_is_not_published(session_factory, tenants, published):
     await create_platform_account(session_factory, tenants["org_a"], tenants["client_a"])
     async with session_factory() as db:

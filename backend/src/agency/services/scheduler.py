@@ -1,6 +1,16 @@
-"""Content scheduling engine — manages timed publishing queue."""
+"""Content scheduling engine — manages timed publishing queue.
+
+Two kinds of due content, split in SQL by whether the piece's channel is *manual*:
+
+- a connected channel → :meth:`SchedulerEngine._publish_piece`, which posts it;
+- a manual channel (``platform_account.status = 'manual'``, no tokens) → it stays
+  ``scheduled`` and a human gets a digest reminder. Nothing here ever publishes to a
+  manual channel; only ``POST /publishing/{id}/mark-posted`` marks one posted, and only
+  after a human says they did it.
+"""
 
 import asyncio
+from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Final
 from uuid import UUID
@@ -10,13 +20,30 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agency.models.database import get_session_factory
-from agency.models.tables import ContentPiece, PlatformAccount
+from agency.models.tables import (
+    Client,
+    ContentPiece,
+    Organization,
+    PlatformAccount,
+    User,
+)
 from agency.services.analytics_fetcher import refresh_published_metrics
 from agency.services.billing import billing
 from agency.services.content_approval import ContentGateError, ensure_client_active
+from agency.services.notifications import create_notification
 from agency.services.publishing import publisher
+from agency.services.slack_integration import send_slack_message
 
 logger = structlog.get_logger()
+
+#: Who gets a "your manual posts are due" digest.
+#:
+#: ``create_notification`` is per user and there is no notification-preference column,
+#: so this is a judgement, not a setting: the roles that hold ``publish.write`` and are
+#: therefore accountable for a post going out. A ``member`` may hold ``publish.manual``
+#: and do the actual posting, but addressing them would need a per-post assignee the
+#: schema does not have — so they are not guessed at here.
+REMINDER_ROLES: Final = ("owner", "admin")
 
 #: Longest the loop may sleep when nothing is due.
 #:
@@ -176,11 +203,32 @@ class SchedulerEngine:
         async with factory() as db:
             now = datetime.now(UTC)
 
+            # Whether a *manual* channel exists for the piece's client + platform, as a
+            # correlated EXISTS so the split happens in SQL rather than after a shared
+            # ``LIMIT``. Two separate queries matter: a manual piece stays ``scheduled``
+            # with its due time in the past forever, so if both kinds shared one capped
+            # query, a handful of already-reminded manual pieces would occupy every slot
+            # and no connected post would ever be published again.
+            #
+            # TENANCY: correlated on ``org_id`` as well as ``client_id``. Without it,
+            # another tenant's manual row carrying this client's id would divert this
+            # org's post away from its publisher — silently, and forever.
+            manual_channel = (
+                select(PlatformAccount.id)
+                .where(
+                    PlatformAccount.org_id == ContentPiece.org_id,
+                    PlatformAccount.client_id == ContentPiece.client_id,
+                    PlatformAccount.platform == ContentPiece.platform,
+                    PlatformAccount.status == "manual",
+                )
+                .exists()
+            )
+
             # ``min_machines_running = 1`` keeps one machine warm, but
             # ``auto_start_machines`` can add more under load and each runs its
             # own engine. Without the lock, two machines select the same rows and
             # publish the same post twice.
-            result = await db.execute(
+            due = (
                 select(ContentPiece)
                 .where(
                     ContentPiece.status == "scheduled",
@@ -189,10 +237,196 @@ class SchedulerEngine:
                 .limit(10)
                 .with_for_update(skip_locked=True)
             )
-            pieces = result.scalars().all()
 
-            for piece in pieces:
+            autopost = (await db.execute(due.where(~manual_channel))).scalars().all()
+            for piece in autopost:
                 await self._publish_piece(db, piece)
+
+            # A manual piece must never reach ``_publish_piece``: nothing in the product
+            # posts to a tokenless channel, and a due time on one is a reminder to a
+            # human, not an instruction to the publisher. Already-reminded pieces are
+            # excluded here, not after the fact, so a long-standing backlog cannot crowd
+            # out a newly due one.
+            reminders = (
+                (
+                    await db.execute(
+                        due.where(
+                            manual_channel,
+                            # ``as_string()`` matters: the plain JSON index compiles to
+                            # ``JSON_QUOTE(JSON_EXTRACT(...))`` on SQLite, and
+                            # ``JSON_QUOTE(NULL)`` is the *string* ``'null'``, so
+                            # ``IS NULL`` would never match and every manual piece
+                            # would be reminded on every wake. ``->>`` / bare
+                            # ``JSON_EXTRACT`` give SQL NULL for a missing key on both
+                            # Postgres and SQLite.
+                            ContentPiece.metadata_["reminder_sent_at"]
+                            .as_string()
+                            .is_(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if reminders:
+                await self._remind_due_manual(db, list(reminders))
+
+    async def _remind_due_manual(
+        self, db: AsyncSession, pieces: list[ContentPiece]
+    ) -> None:
+        """Tell a human that manual posts have come due. Never publishes anything.
+
+        The pieces stay ``scheduled`` — only ``POST /publishing/{id}/mark-posted`` moves
+        a manual piece to ``published``, and only after a human says they posted it.
+
+        **A digest, not a ping per post.** Twelve due posts for one client are one
+        notification. Grouping is by ``(org, client)``: a marketer works one brand at a
+        time and the Queue is client-scoped, so a cross-client digest would link
+        somewhere that cannot show all of it.
+
+        **Who receives it.** ``create_notification`` is per user, and there is no
+        notification-preference column to read (and inventing one is not this phase's
+        job), so the recipients are the org's active ``owner``/``admin`` users — the
+        roles that hold ``publish.write``, i.e. the people accountable for a post going
+        out. A ``member`` may hold ``publish.manual`` and do the posting, but choosing
+        *them* would need a per-post assignee the schema does not have.
+
+        ``metadata.reminder_sent_at`` is written **only when the digest actually reached
+        someone**. Writing it after a no-op would silence the reminder for a post nobody
+        was ever told about; leaving it unset means the next wake tries again, which is
+        right — a workspace with no active owner or admin today may have one tomorrow.
+        """
+        by_client: dict[tuple[UUID, UUID], list[ContentPiece]] = defaultdict(list)
+        for piece in pieces:
+            by_client[(piece.org_id, piece.client_id)].append(piece)
+
+        now = datetime.now(UTC).isoformat()
+        for (org_id, client_id), group in by_client.items():
+            delivered = await self._send_manual_digest(db, org_id, client_id, group)
+            if not delivered:
+                continue
+            for piece in group:
+                _merge_metadata(piece, {"reminder_sent_at": now})
+
+        await db.commit()
+
+    async def _send_manual_digest(
+        self,
+        db: AsyncSession,
+        org_id: UUID,
+        client_id: UUID,
+        group: list[ContentPiece],
+    ) -> bool:
+        """One digest for one client's due manual posts. True if anyone was told."""
+        client_name = (
+            await db.execute(
+                select(Client.brand_name).where(
+                    Client.id == client_id, Client.org_id == org_id
+                )
+            )
+        ).scalar_one_or_none() or "this client"
+
+        count = len(group)
+        title = (
+            f"{count} post{'s' if count != 1 else ''} ready for you to post "
+            f"for {client_name}"
+        )
+        platforms = sorted({(p.platform or "unknown").lower() for p in group})
+        body = (
+            f"The scheduled time has arrived for {count} "
+            f"{'post' if count == 1 else 'posts'} on "
+            f"{', '.join(platforms)}. CampaignForge does not publish to a channel you "
+            "manage yourself — open the Queue, copy the post and post it, then mark it "
+            "as posted."
+        )
+        data = {
+            "client_id": str(client_id),
+            "content_ids": [str(p.id) for p in group],
+            "count": count,
+            "platforms": platforms,
+            # The Queue honours ``?client=`` and ``?status=`` on load, so the digest
+            # lands on exactly the posts it is about. A reminder that drops you on an
+            # unfiltered list is a reminder you have to re-find the work from.
+            "url": f"/content?client={client_id}&status=scheduled",
+        }
+
+        # TENANCY: recipients are resolved from the piece's own org. There is no RLS, so
+        # an unfiltered ``users`` query here would mail another tenant's staff a digest
+        # naming this org's client.
+        recipients = (
+            (
+                await db.execute(
+                    select(User.id).where(
+                        User.org_id == org_id,
+                        User.role.in_(REMINDER_ROLES),
+                        User.is_active.is_(True),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        for user_id in recipients:
+            await create_notification(
+                db,
+                user_id=user_id,
+                org_id=org_id,
+                type="posts_due",
+                title=title,
+                body=body,
+                data=data,
+            )
+
+        if not recipients:
+            # Nothing was delivered, so nothing is recorded as delivered. Say so rather
+            # than letting a silent workspace look like a working one.
+            logger.warning(
+                "manual_reminder_no_recipient",
+                org_id=str(org_id),
+                client_id=str(client_id),
+                count=count,
+            )
+
+        slack_ok = await self._slack_manual_digest(db, org_id, f"{title}\n{body}")
+        return bool(recipients) or slack_ok
+
+    async def _slack_manual_digest(self, db: AsyncSession, org_id: UUID, text: str) -> bool:
+        """Post the digest to the org's Slack channel, if it already has one.
+
+        Connected-ness *is* the opt-in — there is no new setup step and no new column.
+        The channel lives in ``organization.settings["slack_channel"]``, which the
+        existing ``PATCH /api/v1/integrations/settings`` already writes. No channel, or
+        no workspace bot token on the server, means skip and log: this is an extra
+        delivery path, never the reason a reminder fails.
+
+        No email. A due-time reminder per post would be the highest-volume mail this
+        product ever sent, and it has claimed absent email before.
+        """
+        settings = (
+            await db.execute(
+                select(Organization.settings).where(Organization.id == org_id)
+            )
+        ).scalar_one_or_none()
+        # ``settings`` is free-form JSONB written by ``PATCH /integrations/settings``,
+        # so it is not guaranteed to be an object at all.
+        channel = settings.get("slack_channel") if isinstance(settings, dict) else None
+        if not channel:
+            logger.info("manual_reminder_slack_skipped", org_id=str(org_id), reason="no_channel")
+            return False
+
+        try:
+            result = await send_slack_message(str(channel), text)
+        except Exception as exc:  # noqa: BLE001 - Slack must never break the reminder
+            logger.warning("manual_reminder_slack_failed", org_id=str(org_id), error=str(exc))
+            return False
+
+        if result.get("error"):
+            logger.warning(
+                "manual_reminder_slack_failed", org_id=str(org_id), error=result["error"]
+            )
+            return False
+        return True
 
     async def _publish_piece(self, db: AsyncSession, piece: ContentPiece):
         try:

@@ -28,16 +28,27 @@ strings map `manager` → `admin`, `content_creator` → `member`.
 
 **Capability matrix** (the single source of truth — `agency/permissions.py`):
 
-| | read | campaign.run | content.approve | publish.write | content.override | oauth.connect | team.manage | billing.manage |
-|---|---|---|---|---|---|---|---|---|
-| owner  | Y | Y | Y | Y | Y | Y | Y | Y |
-| admin  | Y | Y | Y | Y | Y | Y | Y | - |
-| member | Y | Y | Y | - | - | - | - | - |
-| viewer | Y | - | - | - | - | - | - | - |
+| | read | campaign.run | content.approve | publish.write | publish.manual | content.override | oauth.connect | team.manage | billing.manage | workspace.manage |
+|---|---|---|---|---|---|---|---|---|---|---|
+| owner  | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| admin  | Y | Y | Y | Y | Y | Y | Y | Y | - | Y |
+| member | Y | Y | Y | - | Y | - | - | - | - | - |
+| viewer | Y | - | - | - | - | - | - | - | - | - |
+
+(`workspace.manage` was added by CF-17 and `publish.manual` on 260929; the columns are listed
+here so the table still matches `permissions.py`, which remains the source of truth.)
 
 Rationale for the `member` row: approve is a human saying the copy is fine (product rule 2
 wants a human, and a member is one); publish posts to a live client account and override
 bypasses moderation, so both stay owner/admin.
+
+`publish.manual` is the one exception, and it is one because the premise differs, not because
+the rule was relaxed. `POST /publishing/{id}/mark-posted` calls no publisher and needs no
+connected account: a human opened the platform and posted, and the product only writes the
+record. The risk that keeps `publish.write` away from `member` — reaching a live client
+account — is absent, and a seat already trusted with `content.approve` is trusted to say "I
+posted it". `metadata.posted_by` keeps it attributable. `viewer` is still denied: recording a
+post is a write, and it charges the plan's post quota.
 
 **`account_type` subtracts nothing. Capabilities depend on role alone.** (Revised 260924 —
 it originally subtracted `team.manage`, which deadlocked the model: a new org starts

@@ -56,6 +56,7 @@ EXPECTED_MATRIX: dict[str, set[str]] = {
         "campaign.run",
         "content.approve",
         "publish.write",
+        "publish.manual",
         "content.override",
         "oauth.connect",
         "team.manage",
@@ -67,12 +68,16 @@ EXPECTED_MATRIX: dict[str, set[str]] = {
         "campaign.run",
         "content.approve",
         "publish.write",
+        "publish.manual",
         "content.override",
         "oauth.connect",
         "team.manage",
         "workspace.manage",
     },
-    "member": {"read", "campaign.run", "content.approve"},
+    # ``publish.manual`` but not ``publish.write``: a member may record that a human
+    # posted a piece by hand (nothing is sent anywhere) but may not push to a live
+    # account. See the note on ``CAPS``.
+    "member": {"read", "campaign.run", "content.approve", "publish.manual"},
     "viewer": {"read"},
 }
 
@@ -130,6 +135,26 @@ def test_personal_owner_keeps_billing_and_seats() -> None:
     assert Capability.BILLING_MANAGE in caps
     assert Capability.PUBLISH_WRITE in caps
     assert Capability.TEAM_MANAGE in caps
+
+
+def test_member_may_record_a_manual_post_but_not_publish() -> None:
+    """The one distinction manual mode introduces, asserted on its own.
+
+    ``publish.write`` is withheld from ``member`` because publishing posts to a live
+    client account. ``publish.manual`` sends nothing — a human already posted and the
+    product only writes the record — so the same seat holds it. If someone ever widens
+    ``member`` to ``publish.write``, this is the test that should have to be edited.
+    """
+    caps = capabilities_for("member", "business")
+    assert Capability.PUBLISH_MANUAL in caps
+    assert Capability.PUBLISH_WRITE not in caps
+
+
+def test_viewer_holds_neither_publish_capability() -> None:
+    """Recording a post is a write, and a viewer does not write."""
+    caps = capabilities_for("viewer", "business")
+    assert Capability.PUBLISH_MANUAL not in caps
+    assert Capability.PUBLISH_WRITE not in caps
 
 
 @pytest.mark.parametrize("legacy, modern", sorted(LEGACY_ROLE_MAP.items()))
