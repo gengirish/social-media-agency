@@ -65,6 +65,7 @@ npm run dev
 | `DODO_WEBHOOK_KEY` | Webhook signature verification; the endpoint returns 503 without it |
 | `DODO_ENVIRONMENT` | `test_mode` (default) or `live_mode` |
 | `DODO_PRODUCT_STARTER` / `_GROWTH` / `_AGENCY` | Dodo `pdt_` product id per paid tier |
+| `DODO_BRAND_ID` | Dodo `brnd_` brand owning those products. Webhooks are scoped to the business, not the brand, so another product's events arrive here too; blank filters nothing |
 
 At least one LLM provider key is required — with none set, `get_llm()` raises immediately naming the variables to set.
 

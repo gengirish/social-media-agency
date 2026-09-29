@@ -349,6 +349,30 @@ its own piece of work.
 
 ## 8. Go-live
 
+> **Status 260929 — steps 1-5 are DONE; step 6 (the live smoke test) is NOT.**
+>
+> | Step | State |
+> |---|---|
+> | Neon precheck + migration | Applied. `stripe_*` gone, `billing_*` + `last_event_at` present, `billing_webhook_event` exists (0 rows), 48 orgs |
+> | Backend deploy | Live (v64+). `POST /billing/portal` answers 401, not 404 |
+> | Frontend | Merged to `main` as PR #10; pricing page shows $20 / $36 / $168 |
+> | Dodo catalogue | Brand `brnd_0NoaEFOLvJ66awNxR4nVP`; products `pdt_0NoaS4Lzldp0Oif1k6gxB` / `pdt_0NoaS4PJzcSCUbjlpQl0z` / `pdt_0NoaS4QHgtnAbtN2kLUMg`; webhook `ep_3JxcNOKdvf9JsOAsis8qiIvY5Kd` |
+> | Fly secrets | All eight set, `FRONTEND_URL` included |
+> | **Live smoke test** | **Not run. No payment has ever completed.** |
+>
+> Two things learned doing it, both worth keeping:
+>
+> * **The brand id prefix is `brnd_`, not `brd_`.** And a brand created through the Dodo UI
+>   put the URL into `name`, which generated the card-statement descriptor
+>   `DODOPAY_HTTPSCAMPAIGNF`. Fixed via `brands.update`; there is **no brand delete**, so a
+>   mistaken brand can only be renamed, never removed.
+> * Sequencing drifted from this plan and got away with it: the migration and the backend
+>   deploy happened close together, and the frontend merged before the secrets were set —
+>   so for a period the public pricing page advertised plans whose checkout returned 503.
+>   Nobody appears to have hit it, but the ordering in this section exists precisely to
+>   avoid that, and it is the one step worth being pedantic about next time.
+
+
 1. Run the NULL check from phase 2 on Neon. Non-zero → stop; the rename becomes an additive
    `billing_*` column pair plus a backfill, and this plan needs a Stripe-wind-down section.
 2. Apply `db/migrations/260925_dodo_billing.sql` to Neon by hand.

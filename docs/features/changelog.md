@@ -4,6 +4,16 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 260929 — Dodo Payments provisioned in production
+
+- **Provisioned**: `CampaignForge` brand (`brnd_0NoaEFOLvJ66awNxR4nVP`), three recurring USD monthly products (Starter `pdt_0NoaS4Lzldp0Oif1k6gxB` $20, Growth `pdt_0NoaS4PJzcSCUbjlpQl0z` $36, Agency `pdt_0NoaS4QHgtnAbtN2kLUMg` $168), and the webhook endpoint `ep_3JxcNOKdvf9JsOAsis8qiIvY5Kd` subscribed to 12 event types. All eight `DODO_*` / `FRONTEND_URL` secrets set on Fly.
+- **Verified**: every product's price was read back from the Dodo API and asserted equal to its `PLAN_CONFIG` `amount`, so the pricing page cannot advertise a figure we do not charge. `POST /billing/webhook` now answers **400** (signature headers missing) instead of **503** (key absent) — the difference between configured and not.
+- **Not yet proven.** No customer has checked out, no `subscription.active` has been received, and the cancel/refund/dispute paths have never run against real money. Billing is *configured*, not *working*, until the §8 smoke test passes.
+- **Fixed**: the two brands created through the Dodo UI had the URL in the `name` field, generating the card-statement descriptor `DODOPAY_HTTPSCAMPAIGNF`. An unrecognisable descriptor is a leading cause of chargebacks, which under a merchant of record affect the whole business's standing — including CertForge's. Repaired via `brands.update` to `DODOPAY_CAMPAIGNFORGE`. Dodo has no brand delete, so the duplicate `brnd_0NoaC3TaVRG9yKCXjNHMX` was renamed `UNUSED duplicate` rather than removed.
+- **Corrected**: `FRONTEND_URL` was never set on Fly. Left alone it defaults to `http://localhost:3000`, so every completed checkout would have returned the customer to localhost.
+
+---
+
 ## 260927 — Langfuse tracing for the agent pipeline
 
 - **Added**: `services/tracing.py` — optional Langfuse tracing over the LangGraph pipeline. Every node run attaches a per-run `CallbackHandler`; a campaign's start and its post-review resume share one trace id, so a paused-then-resumed campaign reads as a single trace rather than two.

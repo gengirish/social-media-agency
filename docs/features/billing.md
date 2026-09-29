@@ -1,8 +1,8 @@
 # Billing
-<!-- verified: 260925 -->
+<!-- verified: 260929 -->
 
 ## Dodo Payments Integration
-**Status**: [IN PROGRESS] — implemented, **not yet live**
+**Status**: [LIVE] — provisioned in production 260929; **no live transaction yet**
 **File**: `backend/src/agency/services/billing.py`
 **Plan**: [dodo-payments-plan-260925.md](../dodo-payments-plan-260925.md)
 
@@ -10,11 +10,31 @@ Dodo Payments replaces Stripe outright (260925). There is no second provider and
 fallback path — the Stripe code, its five `STRIPE_*` settings and the `stripe` dependency
 are gone.
 
-**Billing has never run in production.** No `DODO_*` secret is set on Fly, no live
-catalogue exists, and nobody has ever checked out — the same was true of the Stripe path
-it replaces, which is why the swap needed no data migration. Read every `[LIVE]` below as
-"live in code"; the payment rail itself is not enabled until the go-live steps in §8 of the
-plan are done.
+**Provisioned in production on 260929 — but no money has moved through it yet.** The live
+catalogue, the webhook endpoint and all eight secrets are in place, and the API answers on
+them: `POST /billing/webhook` returns **400** (signature headers missing) rather than
+**503** (key absent), which is exactly the difference between configured and not.
+
+What has *not* happened is a completed payment. No customer has checked out, no
+`subscription.active` has ever been received, and the cancel, refund and dispute paths have
+never run against real money — every guard covering them is proven by unit tests and by
+mutation, not by a transaction. The smoke test in §8 of the plan is what turns "configured"
+into "working"; until it passes, do not describe billing as proven.
+
+The live resources:
+
+| Resource | Id | Note |
+|---|---|---|
+| Brand | `brnd_0NoaEFOLvJ66awNxR4nVP` | Card statement reads `DODOPAY_CAMPAIGNFORGE` |
+| Starter | `pdt_0NoaS4Lzldp0Oif1k6gxB` | USD 2000 |
+| Growth | `pdt_0NoaS4PJzcSCUbjlpQl0z` | USD 3600 |
+| Agency | `pdt_0NoaS4QHgtnAbtN2kLUMg` | USD 16800 |
+| Webhook | `ep_3JxcNOKdvf9JsOAsis8qiIvY5Kd` | 12 subscribed event types |
+
+Each product's price was read back from the Dodo API and asserted equal to its `PLAN_CONFIG`
+`amount`, so the app cannot be advertising a price it does not charge. A second brand,
+`brnd_0NoaC3TaVRG9yKCXjNHMX`, is a duplicate created by mistake and renamed `UNUSED
+duplicate`; Dodo has no brand delete, so it cannot be removed — never attach products to it.
 
 **Dodo is merchant of record.** VAT/GST, invoices and receipts are Dodo's responsibility,
 not ours. There is no tax code in this repo and no invoice list in the app — the Dodo
@@ -90,7 +110,7 @@ the event loop (and with it every concurrent SSE campaign stream) on each checko
 reintroduce a sync client.
 
 ### Customer Portal
-**Status**: [IN PROGRESS] — new capability; no Stripe equivalent was ever wired
+**Status**: [LIVE] (260929) — new capability; no Stripe equivalent was ever wired
 
 `POST /api/v1/billing/portal` (needs `billing.manage`) returns `{portal_url}` from
 `customers.customer_portal.create(customer_id, return_url=...)`. The link expires after
@@ -224,15 +244,14 @@ raises, the retry sees the claim and skips the work.
 | `DODO_PRODUCT_STARTER` | Dodo `pdt_` product id for the starter tier |
 | `DODO_PRODUCT_GROWTH` | Dodo `pdt_` product id for the growth tier |
 | `DODO_PRODUCT_AGENCY` | Dodo `pdt_` product id for the agency tier |
+| `DODO_BRAND_ID` | Dodo `brnd_` brand owning those products. Webhook endpoints are scoped to the **business**, not the brand, so this account's other product (CertForge) delivers its events here too; events from another brand are ignored at debug. Blank filters nothing (fail open) |
 | `FRONTEND_URL` | Base URL for the checkout `return_url` and the portal's return link (default `http://localhost:3000`) |
 
 The five `STRIPE_*` settings are removed from `config.py` and `.env.example`.
 
-> **None of these is set in production yet.** `flyctl secrets list -a campaignforge-api`
-> carries no `DODO_*` secret, and `FRONTEND_URL` is absent too — so it defaults to
-> `http://localhost:3000` and a checkout would return the customer to localhost. Set
-> `FRONTEND_URL=https://campaignforge.intelliforge.tech` in the same `flyctl secrets set`
-> as the Dodo keys.
+> **All eight are set in production** (`flyctl secrets list -a campaignforge-api`, 260929),
+> `FRONTEND_URL` included — without it the default `http://localhost:3000` would have
+> returned every paying customer to localhost after checkout.
 >
 > Test mode and live mode are **separate catalogues** with separate `pdt_` ids and separate
 > API keys. There is no staging Fly app, so test-mode checkout is only reachable locally.
