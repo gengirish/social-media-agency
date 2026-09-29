@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/panel";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
 import { setupApi, type OAuthPlatformStatus } from "@/lib/api-setup";
+import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 interface Step {
@@ -34,6 +35,13 @@ const HUB_LINKS = [
  */
 export default function WelcomePage() {
   const { clients, active, loading, error, refresh } = useActiveClient();
+  /*
+   * A personal account manages its own brand; an agency account manages other
+   * people's. The first screen either one sees has to say which it is — the
+   * empty state used to talk about "the first client you manage" to everybody,
+   * including solo users who have no clients and never will.
+   */
+  const { isPersonal, loading: sessionLoading } = useSession();
 
   // Which platforms have app credentials on this server. `null` means "not
   // known yet" — see `publishable` below, which treats that as the old
@@ -55,7 +63,7 @@ export default function WelcomePage() {
     };
   }, [activeId]);
 
-  if (loading) {
+  if (loading || sessionLoading) {
     return (
       <div className="flex items-center justify-center gap-2 py-24 font-mono text-xs text-muted">
         <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading your workspace…
@@ -80,16 +88,19 @@ export default function WelcomePage() {
       <div className="mx-auto max-w-2xl animate-screen-in px-2 py-14">
         <Eyebrow>Welcome to CampaignForge</Eyebrow>
         <h1 className="mt-3 text-[27px] leading-snug text-ink">
-          Your clients built something worth talking about.
+          {isPersonal ? "You built something worth talking about." : "Your clients built something worth talking about."}
           <br />
           <span className="text-muted">Now let&apos;s get it in front of people.</span>
         </h1>
         <p className="mt-3 max-w-[480px] text-[13.5px] leading-relaxed text-slate-600">
-          CampaignForge reads each client&apos;s brand, writes and manages their social presence, and keeps a human — you —
-          in control of everything that goes out. Start by adding the first client you manage.
+          {isPersonal
+            ? "CampaignForge reads your brand, writes and manages your social presence, and keeps a human — you — in control of everything that goes out. Start by setting up your brand."
+            : "CampaignForge reads each client's brand, writes and manages their social presence, and keeps a human — you — in control of everything that goes out. Start by adding the first client you manage."}
         </p>
+        {/* Both land on the same form; ?new=1 opens it. */}
         <Link href="/clients?new=1" className={cn(buttonVariants(), "mt-8 w-fit animate-breathe")}>
-          <UserPlus className="h-3.5 w-3.5" /> Add your first client <ArrowRight className="h-3.5 w-3.5" />
+          {isPersonal ? <Wand2 className="h-3.5 w-3.5" /> : <UserPlus className="h-3.5 w-3.5" />}
+          {isPersonal ? "Set up your brand" : "Add your first client"} <ArrowRight className="h-3.5 w-3.5" />
         </Link>
       </div>
     );

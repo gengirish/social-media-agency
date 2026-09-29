@@ -14,6 +14,7 @@ from agency.models.schemas import LoginRequest, SignupRequest, TokenResponse
 from agency.models.tables import Client, Organization, Subscription, User
 from agency.permissions import capabilities_for, normalize_role
 from agency.services.billing import PLAN_CONFIG
+from agency.services.provisioning import ensure_personal_brand
 from agency.utils.slug import unique_org_slug
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -127,6 +128,13 @@ async def me(
     no row-level security here, so an id alone could resolve another tenant's
     user. No match is a 404, not a degraded payload — a caller with no row has no
     capabilities and the frontend should treat that as broken, not as a viewer.
+
+    A personal account with no client gets its brand record recreated here. This
+    is the "sign out and back in to have it restored" that Setup › Clients used
+    to promise and nothing delivered: re-authenticating finds the existing user
+    row, so neither provisioning path runs a second time. The frontend calls this
+    endpoint on every load, which makes it the one place the repair reliably
+    happens before any screen reads the client list.
     """
     result = await db.execute(
         select(User.email, User.role, Organization.account_type)
@@ -145,6 +153,9 @@ async def me(
         )
 
     email, role, account_type = row
+    if account_type == "personal":
+        await ensure_personal_brand(db, org_id)
+
     return MeResponse(
         user_id=str(user_id),
         email=email,
