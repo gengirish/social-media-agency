@@ -33,7 +33,7 @@ export default function ClientsPage() {
    * a solo user still edits their own brand. The picker returns when the org
    * flips to `business` on its first team invite.
    */
-  const { isPersonal } = useSession();
+  const { isPersonal, loading: sessionLoading } = useSession();
   const router = useRouter();
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,12 +110,28 @@ export default function ClientsPage() {
     }
   }
 
-  // The client switcher links here with ?new=1. Read once on mount; window
-  // avoids a useSearchParams Suspense boundary for a one-shot flag.
+  // The client switcher links here with ?new=1, and so does Welcome's "Set up
+  // your brand" / "Add your first client" CTA. Read once on mount; window avoids
+  // a useSearchParams Suspense boundary for a one-shot flag.
+  //
+  // Personal accounts are included now: this page is where their one brand
+  // record gets created, so the flag has to open the form there as well. It used
+  // to return early for them, which turned the CTA into a no-op.
   useEffect(() => {
-    if (isPersonal) return;
     if (new URLSearchParams(window.location.search).get("new") === "1") setShowForm(true);
-  }, [isPersonal]);
+  }, []);
+
+  /*
+   * A personal account with no brand record is a workspace mid-onboarding, not a
+   * broken one — the backend recreates the record on /auth/me, but an account
+   * that arrives here without one should land in the form rather than on a
+   * message telling it to contact support. Waits for the session so the
+   * still-loading `isPersonal === false` does not read as "business".
+   */
+  useEffect(() => {
+    if (loading || sessionLoading) return;
+    if (isPersonal && view === "active" && clients.length === 0) setShowForm(true);
+  }, [loading, sessionLoading, isPersonal, view, clients.length]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -190,9 +206,13 @@ export default function ClientsPage() {
         }
       />
 
-      {!isPersonal && showForm && (
+      {showForm && (
         <form onSubmit={handleCreate}>
-          <SectionCard eyebrow="Onboard a brand" title={<span className="text-lg">New Client</span>} bodyClassName="space-y-4">
+          <SectionCard
+            eyebrow={isPersonal ? "Set up your brand" : "Onboard a brand"}
+            title={<span className="text-lg">{isPersonal ? "Your brand" : "New Client"}</span>}
+            bodyClassName="space-y-4"
+          >
             <Field label="Website" htmlFor="website_url">
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Input
@@ -259,7 +279,9 @@ export default function ClientsPage() {
             </Field>
             <div className="flex justify-end gap-2 border-t border-line pt-4">
               <Button variant="secondary" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</Button>
-              <Button type="submit" disabled={creating || reading}>{creating ? "Creating..." : "Create Client"}</Button>
+              <Button type="submit" disabled={creating || reading}>
+                {creating ? "Creating..." : isPersonal ? "Create brand" : "Create Client"}
+              </Button>
             </div>
           </SectionCard>
         </form>
@@ -278,7 +300,7 @@ export default function ClientsPage() {
       )}
 
       {isPersonal ? (
-        <BrandRecord client={clients[0] ?? null} />
+        <BrandRecord client={clients[0] ?? null} onSetUp={() => setShowForm(true)} formOpen={showForm} />
       ) : clients.length === 0 ? (
         view === "archived" ? (
           <EmptyState icon={Archive} title="No archived clients" description="Clients you archive are kept here and can be restored" />
@@ -336,13 +358,30 @@ export default function ClientsPage() {
  * tile in a roster. No archive and no "add another" — there is only ever one
  * until the workspace becomes a business account.
  */
-function BrandRecord({ client }: { client: Client | null }) {
+function BrandRecord({
+  client,
+  onSetUp,
+  formOpen,
+}: {
+  client: Client | null;
+  onSetUp: () => void;
+  formOpen: boolean;
+}) {
   if (!client) {
+    // The form above is already open in this case (and opens itself on mount),
+    // so there is nothing to say twice. It is only when someone closes it that
+    // the way back in has to exist — as an action, not as "contact support".
+    if (formOpen) return null;
     return (
       <EmptyState
         icon={Users}
-        title="Your brand record is missing"
-        description="Every account is set up with one brand. Sign out and back in to have it restored, or contact support."
+        title="Set up your brand"
+        description="Every campaign, post and ad is written for your brand. Tell us about it to get started."
+        action={
+          <Button onClick={onSetUp}>
+            <Plus className="h-4 w-4" /> Set up your brand
+          </Button>
+        }
       />
     );
   }

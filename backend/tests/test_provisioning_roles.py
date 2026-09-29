@@ -352,6 +352,84 @@ async def test_me_returns_the_capability_set_for_each_role_and_account_type(
     }
 
 
+# ---------------------------------------------------------------------------
+# GET /auth/me restores a personal account's missing brand record
+# ---------------------------------------------------------------------------
+async def test_me_recreates_the_missing_brand_of_a_personal_account(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """The restore step Setup › Clients used to promise and nobody performed.
+
+    Signing out and back in cannot fix this on its own: the Clerk resolver finds
+    the existing user row and never reaches its provisioning branch, so the org
+    stays clientless and every campaign screen stays unusable.
+    """
+    org_id = await create_org(session_factory, name="Solo Brand", account_type="personal")
+    user_id = await create_user_row(
+        session_factory, org_id, email="solo-restore@test.com", role="owner"
+    )
+    assert await _clients_for(session_factory, org_id) == []
+
+    resp = await client.get("/api/v1/auth/me", headers=auth_header_for(org_id, user_id=user_id))
+    assert resp.status_code == 200, resp.text
+
+    clients = await _clients_for(session_factory, org_id)
+    assert len(clients) == 1
+    assert clients[0].brand_name == "Solo Brand"
+
+
+async def test_me_does_not_add_a_second_brand_on_every_call(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """The frontend calls ``/auth/me`` on every load and in every tab."""
+    org_id = await create_org(session_factory, name="Repeat Brand", account_type="personal")
+    user_id = await create_user_row(
+        session_factory, org_id, email="solo-repeat@test.com", role="owner"
+    )
+    headers = auth_header_for(org_id, user_id=user_id)
+
+    for _ in range(3):
+        assert (await client.get("/api/v1/auth/me", headers=headers)).status_code == 200
+
+    assert len(await _clients_for(session_factory, org_id)) == 1
+
+
+async def test_me_counts_an_archived_brand_so_it_is_not_replaced(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Archiving the brand is not losing it — restoring it is the user's call."""
+    from agency.models.tables import Client
+
+    org_id = await create_org(session_factory, name="Archived Brand", account_type="personal")
+    user_id = await create_user_row(
+        session_factory, org_id, email="solo-archived@test.com", role="owner"
+    )
+    async with session_factory() as session:
+        session.add(Client(org_id=org_id, brand_name="Old Brand", is_active=False))
+        await session.commit()
+
+    assert (
+        await client.get("/api/v1/auth/me", headers=auth_header_for(org_id, user_id=user_id))
+    ).status_code == 200
+
+    clients = await _clients_for(session_factory, org_id)
+    assert [c.brand_name for c in clients] == ["Old Brand"]
+
+
+async def test_me_leaves_a_business_account_with_an_empty_roster_alone(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """An agency with no clients yet is a normal state it fills itself."""
+    org_id = await create_org(session_factory, name="Agency Org", account_type="business")
+    user_id = await create_user_row(
+        session_factory, org_id, email="agency-empty@test.com", role="owner"
+    )
+
+    resp = await client.get("/api/v1/auth/me", headers=auth_header_for(org_id, user_id=user_id))
+    assert resp.status_code == 200
+    assert await _clients_for(session_factory, org_id) == []
+
+
 async def test_me_is_reachable_by_a_viewer(
     client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
