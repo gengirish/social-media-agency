@@ -134,7 +134,14 @@ CREATE TABLE IF NOT EXISTS platform_account (
     refresh_token_enc TEXT,
     token_expires_at TIMESTAMPTZ,
     followers_count INTEGER DEFAULT 0,
+    -- 'connected' (OAuth, tokens present) | 'manual' (the operator posts it
+    -- themselves, no tokens) | 'disconnected'. Every publisher, the scheduler,
+    -- the inbox and the analytics fetchers filter on 'connected', so a manual
+    -- row can never reach a path that needs a token.
     status VARCHAR(30) DEFAULT 'connected',
+    -- Public address of the page, for manual channels: rendered as a link and
+    -- used as the per-channel composer override. Optional.
+    profile_url TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

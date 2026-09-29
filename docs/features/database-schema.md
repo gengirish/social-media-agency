@@ -1,5 +1,5 @@
 # Database Schema
-<!-- verified: 260925 -->
+<!-- verified: 260929 -->
 
 PostgreSQL (Neon serverless) via SQLAlchemy async. **25 tables** (24 without pgvector). `repurpose_pack` added 260921; `creative_asset` and `inbox_item_state` added 260923; `billing_webhook_event` added 260925.
 
@@ -30,6 +30,14 @@ PostgreSQL (Neon serverless) via SQLAlchemy async. **25 tables** (24 without pgv
 >    `SELECT count(*) FROM subscription WHERE stripe_customer_id IS NOT NULL;` first and
 >    **stop if it is non-zero** — the rename would then need to become an additive column
 >    pair plus a backfill.
+>
+> ### Pending Neon migration (260929)
+>
+> 6. `db/migrations/260929_manual_channels.sql` — adds `platform_account.profile_url`
+>    (nullable TEXT) for manual channels. Independent of 1–5 and idempotent. Without it
+>    **every** route that reads a `platform_account` fails with `UndefinedColumn`, not just
+>    the manual ones: SQLAlchemy names every mapped column in its `SELECT`, so publishing,
+>    the inbox and the analytics fetchers go down with it.
 
 **File**: `backend/src/agency/models/tables.py`
 
@@ -84,7 +92,7 @@ Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations
 | `email` | String | Unique |
 | `password_hash` | String | `"clerk-managed"` for Clerk users |
 | `full_name` | String | |
-| `role` | String | admin, member, viewer |
+| `role` | String | `owner`, `admin`, `member`, `viewer`. Legacy strings `manager` / `content_creator` are normalised to `admin` / `member` on read. Capabilities per role: [auth-and-rbac.md](auth-and-rbac.md#capability-matrix) |
 | `is_active` | Boolean | |
 | `created_at` | DateTime(tz) | |
 
@@ -191,7 +199,7 @@ Setup › Profile (`services/setup_profile.py`) writes the intake into `target_a
 | `platform` | String | twitter, linkedin, instagram, etc. |
 | `title` / `body` | String / Text | |
 | `hashtags` | JSONB | |
-| `metadata_` | JSONB | Keys written by the gate and Amplify: `moderation` (`status`, `issues`, `override_by`, `at`), `amplify_pack_id`, `source_id`, `angle`; by publishing: `post_url`, `publish_error` |
+| `metadata_` | JSONB | Keys written by the gate and Amplify: `moderation` (`status`, `issues`, `override_by`, `at`), `edited_before_approval`, `amplify_pack_id`, `source_id`, `angle`; by publishing: `post_url`, `publish_error`, `publish_blocked`; <!-- verified: 260929 --> by manual publishing: `publish_mode` (`"manual"`), `posted_by` (user id), `post_url_by` (user id, when the link was attached later), `reminder_sent_at` (ISO timestamp, written once so a due manual piece is not re-notified on every scheduler wake) |
 | `media_urls` | JSONB | |
 | `ai_generated` | Boolean | |
 | `status` | String | `draft` (shown as **Pending** in the UI), `approved`, `scheduled`, `published`, `failed`, `rejected`. Transitions are gated — see [api-endpoints.md › Approval gate](api-endpoints.md#approval-gate) |
@@ -304,7 +312,22 @@ Unique `(org_id, client_id, item_key)`.
 ## Other Tables
 
 ### PlatformAccount [LIVE]
-Social platform OAuth credentials per client. Fields: platform, account_handle, display_name, encrypted tokens, followers_count, status.
+<!-- verified: 260929 -->
+One social channel per client. Fields: `platform`, `account_handle`, `display_name`, `access_token_enc` / `refresh_token_enc` (nullable), `token_expires_at`, `followers_count`, `status`, `profile_url`, `created_at`.
+
+`status` carries the connection *mode*, which is why there is no `connection_type` column:
+
+| `status` | Meaning |
+|---|---|
+| `connected` | Real OAuth tokens. The product publishes, reads the inbox and fetches metrics through it |
+| `manual` | A page the operator created outside CampaignForge and posts to by hand. **No tokens** (260929) |
+| `disconnected` | Revoked or removed OAuth account |
+
+Eight call sites filter `status == "connected"`; six of them need a real token, so `manual` rows are excluded **by default** and only the two display paths were widened to `("connected", "manual")` — `routers/setup.py::client_accounts` and the `clients/overview` counts, both via `setup.DISPLAYED_ACCOUNT_STATUSES`. A `connection_type` column would have inverted that: all eight would keep matching and six would silently select a row with `access_token_enc IS NULL`. Reasoning and the full table: [manual-publish-plan-260929.md](../manual-publish-plan-260929.md) §1.
+
+`profile_url` (260929, nullable TEXT) is the page's public address — the link Setup renders with `target="_blank"` and the per-channel override for a composer deep link that has rotted. Validated through `services/url_safety.py::assert_safe_link` before it is written, because a browser opens it.
+
+**Migration:** `db/migrations/260929_manual_channels.sql` — `ALTER TABLE platform_account ADD COLUMN IF NOT EXISTS profile_url TEXT;`. Forward-only and idempotent; mirrored in `db/init.sql` and `models/tables.py`. `init.sql` only runs on a fresh database, so **this must be run by hand on Neon.**
 
 ### AnalyticsSnapshot [LIVE]
 Per-content per-platform metrics. Fields: date, impressions, reach, engagement, clicks, shares, likes, followers_delta, extra JSONB.

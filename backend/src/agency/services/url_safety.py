@@ -46,15 +46,28 @@ def _is_public(address: str) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-async def assert_public_url(url: str) -> None:
-    """Raise :class:`UnsafeURLError` unless every address ``url`` resolves to is public."""
+def assert_safe_link(url: str) -> str:
+    """Check a URL the *browser* will open, and return it stripped.
+
+    For a link rendered with ``target="_blank"`` the danger is the scheme —
+    ``javascript:``, ``data:``, ``file:`` — not where the name resolves: the
+    server never fetches it, so there is no SSRF to close and no reason to make a
+    DNS lookup part of a write request. A loopback or private *literal* and
+    ``localhost`` are still refused, since neither is a page a colleague could open.
+    This is the shape check that :func:`assert_public_url` also performs before it
+    resolves anything, so the two cannot disagree about what a URL even is.
+
+    Raises :class:`UnsafeURLError`, whose message is safe to show the user.
+    """
+    url = url.strip()
+    if not url:
+        raise UnsafeURLError("That is not a valid website address")
     parts = urlsplit(url)
     if parts.scheme not in ALLOWED_SCHEMES:
-        raise UnsafeURLError("Only http and https websites can be read")
+        raise UnsafeURLError("Only http and https links are allowed")
     if parts.username or parts.password:
         raise UnsafeURLError("Website addresses with a username or password are not supported")
-    host = parts.hostname
-    if not host:
+    if not parts.hostname:
         raise UnsafeURLError("That is not a valid website address")
     try:
         port = parts.port
@@ -62,7 +75,28 @@ async def assert_public_url(url: str) -> None:
         raise UnsafeURLError("That is not a valid website address") from e
     if port is not None and port not in ALLOWED_PORTS:
         raise UnsafeURLError("Only websites on the standard ports (80 and 443) can be read")
+    # A literal address or ``localhost`` is refused here without resolving anything: it
+    # is not a page anyone else can open, so it is junk in a shared workspace whichever
+    # way you read it. Only names are left to ``assert_public_url``, which resolves.
+    host = parts.hostname
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None and not _is_public(host):
+        raise UnsafeURLError("That address is not a public website")
+    if host == "localhost" or host.endswith((".localhost", ".local")):
+        raise UnsafeURLError("That address is not a public website")
+    return url
 
+
+async def assert_public_url(url: str) -> None:
+    """Raise :class:`UnsafeURLError` unless every address ``url`` resolves to is public."""
+    url = assert_safe_link(url)
+    parts = urlsplit(url)
+    # Non-empty: ``assert_safe_link`` rejects a URL with no host.
+    host = parts.hostname or ""
+    port = parts.port
     try:
         addresses = await _resolve(host, port or (443 if parts.scheme == "https" else 80))
     except (socket.gaierror, UnicodeError) as e:

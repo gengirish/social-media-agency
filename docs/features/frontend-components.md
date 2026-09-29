@@ -82,7 +82,7 @@ Sticky top bar replacing the old sidebar. Props `{pathname, queryTab, lastVisite
 
 | Component | File | Notes |
 |---|---|---|
-| `PostCard`, `PostAction`, `PostEdit` | `post-card.tsx` | One queue item: client, platform chip, `StatusBadge`, body/hashtags, inline edit; actions by status (Pending: edit + approve; Approved/Scheduled: edit, schedule/reschedule, publish now); overdue badge; publish error on Failed; published link; Amplify link `/amplify?source=<id>` |
+| `PostCard`, `PostAction`, `PostEdit`, `ManualChannel` | `post-card.tsx` | One queue item: client, platform chip, `StatusBadge`, body/hashtags, inline edit; actions by status (Pending: edit + approve; Approved/Scheduled: edit, schedule/reschedule, publish now); overdue badge; publish error on Failed; published link; Amplify link `/amplify?source=<id>`. <!-- verified: 260929 --> Given a `manual` channel it swaps Schedule/Publish now for **Post it yourself** (`ManualPostActions`: clipboard + composer tab in one gesture, then an "I posted it" confirm with an optional link), shows "Posted manually — no link, metrics unavailable" with a permanent **Add link**, and renders a scheduled piece as "Reminder around \<time\>" plus a reminded-but-unconfirmed notice |
 | `QueueTabs`, `QUEUE_TABS` | `queue-tabs.tsx` | Pending · Approved · Scheduled · Published · Failed with counts; `null` count renders "–" |
 | `ModerationWarning` | `moderation-warning.tsx` | Shown on 409 `moderation_flagged`: lists issues; Edit is primary, "Approve anyway" (override, recorded server-side) is secondary |
 | `ScheduleDialog` | `schedule-dialog.tsx` | Date + time in the viewer's zone, sent as UTC ISO |
@@ -125,7 +125,7 @@ Sticky top bar replacing the old sidebar. Props `{pathname, queryTab, lastVisite
 | `CampaignSection` | `campaign-section.tsx` | Set / clear the campaign focus (`#campaign` anchor) |
 | `BrandVoiceSection` | `brand-voice-section.tsx` | Generate a draft guide (1 generation, not saved), edit, approve |
 | `StrategyLensPanel` | `strategy-lens-panel.tsx` | Run the strategy lens panel; shows the latest `strategy_lens` asset |
-| `ConnectedAccounts`, `platformName`, `useConnectedToast` | `connected-accounts.tsx` | Per-platform connect (consent dialog listing requested scopes, PKCE for X, full-page redirect) and disconnect (confirm) |
+| `ConnectedAccounts`, `platformName`, `useConnectedToast` | `connected-accounts.tsx` | Per-platform connect (consent dialog listing requested scopes, PKCE for X, full-page redirect) and disconnect (confirm). <!-- verified: 260929 --> `ManualChannels` is a second, deliberately separate list — "Pages you manage yourself" (add / remove a `status: "manual"` channel), kept apart so a tokenless row can never render as a green "Connected" |
 | `ActiveClientGate` | `client-state.tsx` | Loading / no-client / error states before a client-scoped screen renders |
 | `useGenerationQuota` | `use-generation-quota.ts` | Reads `generations_used` / `generations_limit` from `/billing/subscription` |
 
@@ -179,7 +179,7 @@ Six KPI cards from `api.getStats()`. Its only consumer, `src/app/(dashboard)/pag
 **Status**: [LIVE]
 **File**: `components/notifications-bell.tsx`
 
-Bell in the top nav with unread count badge and dropdown panel. Fetches once on mount and again when the panel opens — **no polling** (the old 30s poll re-fetched a list that cannot change, since nothing calls `create_notification()`). Mark read / mark all read. Restyled 260921.
+Bell in the top nav with unread count badge and dropdown panel. Fetches once on mount and again when the panel opens — **no polling**. Mark read / mark all read. Restyled 260921. <!-- verified: 260929 --> Since 260929 there *is* a producer (the scheduler's `posts_due` digest), so the empty state reads honestly as "nothing yet" and clicking a row navigates to `n.data.url` (marking read is fire-and-forget so it does not hold up the navigation). A backend-supplied `emptyReason` still wins over the default copy.
 
 ## ClerkTokenSync
 **Status**: [LIVE]
@@ -262,7 +262,7 @@ Thin typed wrappers over `lib/api.ts`'s `request`, one per feature:
 | Module | Wraps |
 |---|---|
 | `lib/api-foundation.ts` | `foundationApi` — `/clients/overview`, campaign focus, `/assets` list/get/rename/delete; `ClientOverview`, `AssetKind`, `CreativeAsset<P>` |
-| `lib/api-setup.ts` | `setupApi` — `/setup/{id}/*`, `/magic-brief`, OAuth authorize/callback/disconnect; `createPkce(platform)` (S256, verifier in `sessionStorage`), `takePkceVerifier`, `clientIdFromState` (reads the `cid` claim without verifying — the server verifies) |
+| `lib/api-setup.ts` | `setupApi` — `/setup/{id}/*`, `/magic-brief`, OAuth authorize/callback/disconnect; `createPkce(platform)` (S256, verifier in `sessionStorage`), `takePkceVerifier`, `clientIdFromState` (reads the `cid` claim without verifying — the server verifies); <!-- verified: 260929 --> `addManualAccount` / `updateManualAccount` / `removeManualAccount` and `MANUAL_PLATFORMS` (mirrors the backend's closed set) |
 | `lib/api-posts.ts` | `postStudioApi` — generate, manual post, regenerate, creative brief, delete, channels, client-scoped calendar (`include_pending=true`); `PLATFORM_LIMITS`, `renderedLength`, `isOverdue`, `randomPostTime` |
 | `lib/api-create-content.ts` | `createContentApi` — `/create/content/*`; payload types; `draftMarkdown`, `exportFilename`, `collectRepurposeSources` (Amplify "From Create"), `findSimilarScan` |
 | `lib/api-create-kits.ts` | `createKitsApi` — `/create/email/generate`, `/create/launch/*`; `EMAIL_CAMPAIGN_TYPES`, `isBrandProfileRequired`, `copyText` |
@@ -271,7 +271,14 @@ Thin typed wrappers over `lib/api.ts`'s `request`, one per feature:
 | `lib/api-insights.ts` | `insightsApi` — `/insights/*`, `/workspace/*`; `VOICE_OPTIONS`, `CADENCE_OPTIONS`, `timeAgo` |
 
 ### `lib/platforms.ts`
-`UNAVAILABLE_PUBLISH_PLATFORMS` (Instagram, TikTok), `publishUnavailableReason(platform)`, `canPublish(platform)`. Since 260921 the Queue disables **Schedule and Publish now** for these platforms (a scheduled post would only fail later) and shows the reason; Amplify atom cards flag them as manual-publish. The backend schedule endpoint does not block them — this is UI-only.
+`UNAVAILABLE_PUBLISH_PLATFORMS` (Instagram, TikTok), `publishUnavailableReason(platform)`, `canPublish(platform)`. Since 260921 the Queue disables **Schedule and Publish now** for these platforms (a scheduled post would only fail later) and shows the reason; Amplify atom cards flag them as manual-publish. The backend schedule endpoint **does** block them (409 `platform_unavailable`), except on a manual channel since 260929.
+
+<!-- verified: 260929 --> The second honesty map lives beside the first, on purpose — one says what the product cannot publish, the other says how a person publishes it instead. `MANUAL_COMPOSERS` (private) plus `manualComposerUrl(platform, {body, hashtags, profileUrl})`, `prefillsBody(platform)` and `manualPostText(body, hashtags)`. Only X carries text in the URL (`/intent/post?text=`), so `prefillsBody` is true for exactly one entry and the UI must otherwise say "copied — paste it into the composer". Facebook and Instagram prefer the channel's own `profile_url` when it is on file, since a generic composer is a poor guess for a specific Page. A platform absent from the map (YouTube, Reddit, Threads, Bluesky — all registrable as manual channels) falls back to `profile_url` and then to `null`: **never invent a composer URL.**
+
+<!-- verified: 260929 --> Also `scheduleUnavailableReason(platform, {manual})` / `canSchedule(...)` — "can a time be set", which is **not** the same question as "can this be published": on a manual channel every platform can, because the time is a reminder. Ask these, not `publishUnavailableReason`, whenever the UI is about scheduling.
+
+### `lib/manual-channels.ts`
+<!-- verified: 260929 --> `useManualChannels(clientIds)` — loads each client's `status === "manual"` channels from `GET /setup/{id}/accounts` (no new endpoint) and returns a `(clientId, platform) => ManualChannel | null` lookup. Used by the Queue and the Calendar so both branch on the same fact. A failed request must never turn a connected channel into a manual one.
 
 ### `lib/theme.ts` · `lib/clerk-appearance.ts`
 See [Design System](#design-system).
@@ -280,7 +287,7 @@ See [Design System](#design-system).
 `connectAgentStream(campaignId, token, onEvent, onError?)` — Opens EventSource to SSE endpoint with JWT in query param. Returns teardown function.
 
 ### `lib/analytics.ts`
-Product-analytics client. Batches events to `POST /api/v1/events` (max 50 per request). `trackFeature("kebab-name")` is the call to add at the point of success for any new flow that should appear in the adoption table. Currently fired for: `campaign-create`, `client-create` (with `from_website_read`), `client-website-read`, `content-publish`, `post-approve`, `post-schedule`, `post-reschedule`, `amplify`; <!-- verified: 260923 --> added 260923: `post-generate`, `post-regenerate`, `creative-brief`, `post-delete`, `post-bulk-approve`, `post-bulk-publish`, `run-report-download`, `calendar-add-post`, `calendar-fill`, `brand-profile-approved`, `brand-voice`, `strategy-lens`, `campaign-focus`, `connect-account`, `create-content`, `ai-seo`, `create-email`, `prfaq-stress-test`, `ads`, `inbox-suggest-reply`, `inbox-reply`, `customer-advocacy`, `settings-export`.
+Product-analytics client. Batches events to `POST /api/v1/events` (max 50 per request). `trackFeature("kebab-name")` is the call to add at the point of success for any new flow that should appear in the adoption table. Currently fired for: `campaign-create`, `client-create` (with `from_website_read`), `client-website-read`, `content-publish`, `post-approve`, `post-schedule`, `post-reschedule`, `amplify`; <!-- verified: 260923 --> added 260923: `post-generate`, `post-regenerate`, `creative-brief`, `post-delete`, `post-bulk-approve`, `post-bulk-publish`, `run-report-download`, `calendar-add-post`, `calendar-fill`, `brand-profile-approved`, `brand-voice`, `strategy-lens`, `campaign-focus`, `connect-account`, `create-content`, `ai-seo`, `create-email`, `prfaq-stress-test`, `ads`, `inbox-suggest-reply`, `inbox-reply`, `customer-advocacy`, `settings-export`; <!-- verified: 260929 --> added 260929: `content-post-manual` (with `platform`), `add-manual-channel`.
 
 ### `lib/utils.ts`
 `cn(...inputs)` — `clsx` + `tailwind-merge` for class name composition.

@@ -23,6 +23,8 @@ export type Capability =
   | "campaign.run"
   | "content.approve"
   | "publish.write"
+  /** Record a post a human made by hand. Bookkeeping, not publishing — owner/admin/member. */
+  | "publish.manual"
   | "content.override"
   | "oauth.connect"
   | "team.manage"

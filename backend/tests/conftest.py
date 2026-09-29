@@ -410,7 +410,15 @@ async def create_platform_account(
     platform: str = "linkedin",
     status: str = "connected",
     account_handle: str = "acct",
+    profile_url: str | None = None,
 ) -> UUID:
+    """A ``platform_account`` row.
+
+    ``status="manual"`` builds the manual-channel shape — a page the operator posts
+    to themselves — and therefore carries **no token**, exactly as
+    ``routers/setup.py::add_manual_account`` writes it. Faking a token on a manual
+    row would hide the very bug the manual-channel tests exist to catch.
+    """
     from agency.models.tables import PlatformAccount
 
     row = PlatformAccount(
@@ -420,7 +428,8 @@ async def create_platform_account(
         platform=platform,
         account_handle=account_handle,
         display_name=account_handle,
-        access_token_enc="enc-token",
+        access_token_enc=None if status == "manual" else "enc-token",
+        profile_url=profile_url,
         status=status,
     )
     await _persist(session_factory, row)

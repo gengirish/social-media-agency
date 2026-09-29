@@ -1,5 +1,5 @@
 # API Endpoints
-<!-- verified: 260923 -->
+<!-- verified: 260929 -->
 
 All routes are prefixed with `/api/v1`. Authentication uses `Authorization: Bearer <JWT>` unless noted. `ApiKeyAuthMiddleware` accepts `X-API-Key` for `/public/*` and other key-gated routes as implemented.
 
@@ -109,6 +109,18 @@ Lifecycle (DB values; `draft` is labelled *Pending* in the UI): `draft`/`rejecte
 **`POST /publishing/{id}/schedule`, `POST /publishing/{id}/publish`** — only `approved` or `scheduled` pieces; otherwise 409 `{"code": "not_approved", "status": <current>}` (including `published`, so a repeated publish cannot double-post). Schedule additionally refuses platforms with no working publisher (Instagram, TikTok) → 409 `{"code": "platform_unavailable", "platform", "reason"}`, since a scheduled post there would only fail when due. The scheduler loop only ever publishes `scheduled` rows. Both endpoints, and the scheduler when a post comes due, also refuse posts whose client is archived → 409 `{"code": "client_archived"}` (the scheduler marks the post `failed` with `publish_error: "Client is archived"`).
 
 **Portal** `PATCH /portal/{org_slug}/content/{id}` with `decision: "approve"` runs the same moderation with **no override**; a flag returns the same 409 `moderation_flagged` shape.
+
+#### Manual mode is not a bypass (260929)
+<!-- verified: 260929 -->
+
+`POST /publishing/{id}/mark-posted` records a post a human made by hand. It runs the **same** `ensure_publishable` + `ensure_client_active` gates, so only `approved`/`scheduled` content can be recorded, and an already-`published` piece is refused so a double click cannot double-count. Nothing about moderation changes — `draft` content still cannot reach `published` by this route.
+
+Two gate changes came with it:
+
+- `ensure_schedulable` is now **async and takes `db`**. Its 409 `platform_unavailable` refusal is lifted when the piece's channel is manual (`is_manual_channel`), because the scheduler never publishes a manual piece — it reminds a human. Instagram and TikTok are therefore schedulable on a manual channel and still refused on a connected or absent one, where the post could never go out.
+- `ensure_published` is a new gate used only by `PATCH /publishing/{id}/post-url` → 409 `{"code": "not_published", "status": <current>}`, deliberately a different code from `not_approved`.
+
+`post_url` is **the one field an edit may change on an `approved`-or-later piece without resetting it to `draft`.** It records where a post ended up, not the copy, so there is nothing for moderation to re-check. Anything that changes the body or hashtags still resets to `draft`. Tests: `tests/test_approval_gate.py`, `tests/test_mark_posted.py`, `tests/test_post_url_patch.py`, `tests/test_gate_publishing.py`.
 
 ## Amplify
 **Status**: [LIVE] (output quality not yet reviewed against a live LLM)
@@ -239,9 +251,24 @@ Cadence's IntakeScreen and ConnectScreen for one client. Every route is `/setup/
 | POST | `/setup/{client_id}/brand-voice/generate` | Yes | `draft_brand_voice` | Draft guide returned for review, **not saved**. 409 `profile_required` without an approved profile. 1 generation |
 | PUT | `/setup/{client_id}/brand-voice` | Yes | `approve_brand_voice` | Human-approved guide `{voice_description, vocabulary_include[≤30], vocabulary_exclude[≤30], example_sentence}` written into the profile |
 | POST | `/setup/{client_id}/strategy-lens` | Yes | `run_strategy_lens` | 201. Runs the panel, saves a `strategy_lens` asset (latest via `GET /assets?kind=strategy_lens`). 1 generation |
-| GET | `/setup/{client_id}/accounts` | Yes | `client_accounts` | This client's **connected** accounts `{id, platform, account_handle, display_name, status, connected_at}` plus `oauth: {platform: {configured, scopes}}` |
+| GET | `/setup/{client_id}/accounts` | Yes | `client_accounts` | This client's **connected *and* manual** accounts `{id, platform, account_handle, display_name, status, profile_url, connected_at}` plus `oauth: {platform: {configured, scopes}}` |
+| POST | `/setup/{client_id}/accounts/manual` | Yes · `oauth.connect` | `add_manual_account` | 201. Register a page the operator posts to by hand: `{platform, account_handle, display_name?, profile_url?}` → a `platform_account` row with `status = "manual"` and no tokens. Unknown platform → 400 `{"code": "unknown_platform", "supported": [...]}` |
+| PATCH | `/setup/{client_id}/accounts/manual/{account_id}` | Yes · `oauth.connect` | `update_manual_account` | Correct the handle, display name or URL. Only fields present in the body are written (`model_fields_set`), so a PATCH carrying just `profile_url` cannot blank the handle |
+| DELETE | `/setup/{client_id}/accounts/manual/{account_id}` | Yes · `oauth.connect` | `delete_manual_account` | Row is **deleted**, not marked `disconnected` — there is no connection to revoke and no token to destroy |
 
 Write rules (`services/setup_profile.py`): approving the intake writes only `target_audience`, `competitor_differentiation`, `tone_attributes.register` (other tone keys merged) and `client.website_url` when a URL is given; approving a brand voice writes only `voice_description`, the two vocabulary lists and the one `voice_north_star` entry in `example_posts`. `style_rules`, `emoji_policy` and `client.settings` are never touched. Tests: `tests/test_setup_profile.py`.
+
+### Manual channels (260929)
+<!-- verified: 260929 -->
+
+A manual channel is a `platform_account` row with `status = 'manual'` and no tokens — a page the operator created outside CampaignForge and posts to themselves. Plan: [manual-publish-plan-260929.md](../manual-publish-plan-260929.md).
+
+- The three routes above resolve **both** ids (`client_id`, `account_id`) against `org_id`, and the lookup additionally requires `status == "manual"` — without it this PATCH/DELETE would edit or delete an OAuth-connected account and leave its tokens behind. A non-manual or foreign id is 404.
+- Gated on `oauth.connect` (owner/admin), not the new `publish.manual`: registering a channel is the same shape of act as connecting one.
+- `MANUAL_PLATFORMS` (`routers/setup.py`) is wider than the OAuth set — `twitter`, `linkedin`, `facebook`, `instagram`, `tiktok`, `youtube`, `reddit`, `threads`, `bluesky`. Manual mode needs no integration, and Instagram/TikTok are the point of the feature. It is a closed set so a typo becomes a 400 rather than a channel that matches no content piece. The frontend's verified composer-link map covers only the first five; the rest fall back to the channel's `profile_url`, and to no tab at all when there is none.
+- `profile_url` goes through `services/url_safety.py::assert_safe_link` — the shape check only (scheme, credentials, host, port, no private literal), **not** `assert_public_url`, because the server never fetches this URL and a DNS lookup would make a write request fail on a momentarily unresolvable name. Unsafe → 400 with a user-safe message.
+- `GET /setup/{client_id}/accounts` and the `clients/overview` account counts are the **only two** `status` filters widened past `connected`; both are display-only. Every path that needs a token (publish-now, the scheduler's publisher, inbox, analytics fetcher, insights, post studio) still filters `== "connected"` and must stay that way.
+- Tests: `tests/test_manual_channels.py`, plus the tenancy cases in `tests/test_tenancy_routers.py` and `tests/test_gate_oauth.py`.
 
 ## Post Studio (Queue / Calendar actions)
 **Status**: [LIVE]
@@ -352,6 +379,7 @@ Comparison and niche scan store `payload.webResearch = {status, reason, retrieve
 
 - Every ratio is gated on a minimum sample (`MIN_SAMPLE = 3`): below it the value is `{"status": "insufficient_data", "value": null, "n", "needed"}`; `thresholds` lists every recommendation rule with its progress so the UI can say what data is missing.
 - Quality signal uses `metadata.edited_before_approval`, the moderation record and `moderation_flagged` events; engagement comes only from `analytics_snapshot` rows the platforms returned (`status: unavailable` otherwise).
+- <!-- verified: 260929 --> `engagement.manual_unlinked` counts `published` pieces that a human posted by hand with **no link on file** (`publish_mode == "manual"` and no `post_url`). No metric can exist for them — manual mode stores no platform post id and there is no token to fetch with — so they are excluded from every average and reported as their own number, never averaged in as a zero. They stay in the `funnel.published` count, so Insights and the Billing post meter agree. `connected_platforms` is unchanged: it still counts OAuth-connected accounts only. Tests: `tests/test_insights_manual_posts.py`.
 - Advocacy may cite only the server-supplied `advocacy_facts` (published / created posts, moderation checks, connected platforms, and measured engagement when present). A reply citing any other number is a 502 and nothing is charged or saved.
 - Tests: `tests/test_insights_settings.py`.
 
@@ -398,8 +426,36 @@ Every query filters on `org_id` and the org-resolved `client_id`. Tests: `tests/
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
 | POST | `/publishing/{content_id}/publish` | Yes | `publish_now` | Publish immediately via PlatformPublisher; `approved`/`scheduled` only, else 409 `not_approved` |
-| POST | `/publishing/{content_id}/schedule` | Yes | `schedule_content` | Schedule content; body: `scheduled_at`; `approved`/`scheduled` only, else 409 `not_approved`; Instagram/TikTok → 409 `platform_unavailable` |
-| GET | `/publishing/calendar` | Yes | `get_calendar` | `start`, `end` (UTC). Default: `scheduled`/`published`, by `scheduled_at`. <!-- verified: 260923 --> `client_id` narrows to one client (no separate ownership check — the query is already `org_id`-filtered, so a foreign id matches nothing); `include_pending=true` adds `draft`/`approved` posts that carry a *planned* day, and `failed` ones. Items now include `hashtags` |
+| POST | `/publishing/{content_id}/schedule` | Yes · `publish.write` | `schedule_content` | Schedule content; body: `scheduled_at`; `approved`/`scheduled` only, else 409 `not_approved`; Instagram/TikTok → 409 `platform_unavailable` **unless the channel is manual**, where the due time is a reminder and no publisher is needed |
+| POST | `/publishing/{content_id}/mark-posted` | Yes · `publish.manual` | `mark_posted` | <!-- verified: 260929 --> Record that a human posted this piece by hand. **Publishes nothing.** Body `{post_url?}` |
+| PATCH | `/publishing/{content_id}/post-url` | Yes · `publish.manual` | `set_post_url` | <!-- verified: 260929 --> Attach or correct the link on a `published` piece ("Add link"). Body `{post_url}` (required). Writes `metadata.post_url` + `post_url_by`; changes nothing else |
+| GET | `/publishing/calendar` | Yes | `get_calendar` | `start`, `end` (UTC). Default: `scheduled`/`published`, by `scheduled_at`. <!-- verified: 260923 --> `client_id` narrows to one client (no separate ownership check — the query is already `org_id`-filtered, so a foreign id matches nothing); `include_pending=true` adds `draft`/`approved` posts that carry a *planned* day, and `failed` ones. Items include `hashtags` and, since 260929, `publish_mode` (`"manual"` or `null`) |
+
+### Manual posting — "Post it yourself" (260929)
+<!-- verified: 260929 -->
+
+For an operator whose pages were created outside CampaignForge. The product generates, moderates, approves and records; a human opens the platform and posts. Plan: [manual-publish-plan-260929.md](../manual-publish-plan-260929.md).
+
+**`POST /publishing/{content_id}/mark-posted`** — gated on the new `publish.manual` (owner/admin/**member**), not `publish.write`: no publisher is called and no connected account is needed, so the risk that keeps `publish.write` from a `member` is absent.
+
+Order of checks, which is also the order of failures:
+
+| Condition | Response |
+|---|---|
+| Not this org's content | 404 |
+| Not `approved`/`scheduled` (incl. `published`) | 409 `{"code": "not_approved", "status": <current>}` |
+| Client archived | 409 `{"code": "client_archived"}` |
+| No `status='manual'` channel for this client + platform | 400 (plain message) |
+| `post_url` fails the safety check | 400 (plain message) |
+| Plan's post allowance exhausted | 402, **nothing written** |
+
+On success: `status = "published"`, `published_at = now()`, and `metadata` gains `publish_mode: "manual"`, `posted_by: <caller user id>`, `post_url: <or null>`, with `publish_blocked` / `publish_error` cleared — a live post must not keep a stale warning. Then `billing.record_post_published`.
+
+- **The manual-channel requirement is the anti-fabrication check**: without it this route would mark posts done on a channel the org never registered. Its lookup filters `org_id` as well as `client_id`; without that, another tenant's manual row carrying this client's id would satisfy it.
+- **It costs a post.** `posts_limit` is the product's only usage meter and the plan copy sells it as published posts, so a free manual post would make manual mode an unlimited free tier. Charged on confirm only — an abandoned composer tab costs nothing — and the frontend also checks the remaining allowance at click time so nobody composes into a tab and then eats a 402.
+- **`post_url` is optional.** Forcing it would strand anyone who posted from their phone, and the queue would fill with `approved` rows that are actually live; a wrong record is worse than a missing metric. `PATCH /post-url` is how it arrives later, and the UI affordance never expires.
+
+Tests: `tests/test_mark_posted.py`, `tests/test_post_url_patch.py`, `tests/test_gate_publishing.py`, `tests/test_permissions.py`, and the tenancy cases in `tests/test_tenancy_routers.py`.
 
 ## Team
 **Status**: [LIVE]
@@ -486,9 +542,11 @@ Platforms: `twitter`, `linkedin`, `facebook`. The redirect URI is `{first CORS_O
 
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
-| GET | `/notifications` | Yes | `list_notifications` | User notifications |
+| GET | `/notifications` | Yes | `list_notifications` | User notifications, plus `producers_wired` |
 | PATCH | `/notifications/{id}/read` | Yes | `mark_read` | Mark notification read |
 | PATCH | `/notifications/read-all` | Yes | `mark_all_read` | Mark all read |
+
+<!-- verified: 260929 --> **`producers_wired` is now `true`.** It was `false` while nothing called `create_notification`, so a permanently empty bell would not read as "you are all caught up"; the `reason` string that went with it is gone. Since 260929 there is exactly one producer: the scheduler's `posts_due` digest (`services/scheduler.py::_remind_due_manual`) — one notification per client per batch of due hand-posted content, with `data = {client_id, content_ids, count, platforms, url}` where `url` is `/content?client=<id>&status=scheduled`. The bell navigates to `data.url` on click. No other feature writes notifications yet.
 
 ## Brand Analytics
 **Status**: [LIVE]

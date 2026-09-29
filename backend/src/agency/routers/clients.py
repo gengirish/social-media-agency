@@ -24,6 +24,9 @@ from agency.models.tables import (
     Subscription,
 )
 from agency.permissions import Capability, require_cap
+
+# One source of truth for the two display-only status filters; see setup.py.
+from agency.routers.setup import DISPLAYED_ACCOUNT_STATUSES
 from agency.services.billing import PLAN_CONFIG
 from agency.services.brand_context import resolve_voice
 
@@ -167,7 +170,11 @@ async def clients_overview(
             .where(
                 PlatformAccount.org_id == org_id,
                 PlatformAccount.client_id.in_(ids),
-                PlatformAccount.status == "connected",
+                # Display-only count, so manual channels (status 'manual', no
+                # tokens) belong in it. One of exactly two filters widened past
+                # 'connected' — the other is routers/setup.py::client_accounts.
+                # Nothing that needs a token may copy this.
+                PlatformAccount.status.in_(DISPLAYED_ACCOUNT_STATUSES),
             )
             .group_by(PlatformAccount.client_id)
         ):

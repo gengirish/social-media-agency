@@ -40,11 +40,18 @@ from tests.conftest import (
 API = "/api/v1"
 
 FORBIDDEN = {"code": "insufficient_permissions", "required": "publish.write"}
+MANUAL_FORBIDDEN = {"code": "insufficient_permissions", "required": "publish.manual"}
 
 #: Roles that hold ``publish.write`` and the ones that do not. ``member`` is in the
 #: denied list on purpose — see the module docstring.
 ALLOWED_ROLES = ["owner", "admin"]
 DENIED_ROLES = ["member", "viewer"]
+
+#: ``publish.manual`` splits differently, and that split is the point of manual mode:
+#: recording a post a human already made sends nothing to a live account, so a
+#: ``member`` holds it. ``viewer`` still does not — it is a write.
+MANUAL_ALLOWED_ROLES = ["owner", "admin", "member"]
+MANUAL_DENIED_ROLES = ["viewer"]
 
 
 @pytest.fixture
@@ -262,6 +269,91 @@ async def test_gate_denies_a_caller_whose_row_lives_in_another_org(
 
     assert resp.status_code == 403
     assert resp.json()["detail"] == FORBIDDEN
+    assert (await _piece(session_factory, content_id)).status == "approved"
+
+
+# ---------------------------------------------------------------------------
+# POST /publishing/{id}/mark-posted — ``publish.manual``, so ``member`` is allowed
+# ---------------------------------------------------------------------------
+async def _manual_piece(session_factory, tenant) -> UUID:
+    """An approved Instagram piece on a channel registered as manual.
+
+    Instagram deliberately: the ``tenant`` fixture's LinkedIn row is ``connected``,
+    and mixing the two would hide a mistake in which status the route looks for.
+    """
+    await create_platform_account(
+        session_factory,
+        tenant.org_id,
+        tenant.client_id,
+        platform="instagram",
+        status="manual",
+    )
+    return await create_content_row(
+        session_factory, tenant.org_id, tenant.client_id, platform="instagram", status="approved"
+    )
+
+
+@pytest.mark.parametrize("role", MANUAL_ALLOWED_ROLES)
+async def test_mark_posted_allowed_for_member_and_up(
+    client, session_factory, tenant, no_real_publish, role
+):
+    """A member may say "I posted it" — nothing reaches a publisher either way,
+    which ``no_real_publish`` enforces even on the success path."""
+    headers = await auth_for(session_factory, tenant.org_id, role)
+    content_id = await _manual_piece(session_factory, tenant)
+
+    resp = await client.post(f"{API}/publishing/{content_id}/mark-posted", json={}, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["publish_mode"] == "manual"
+    assert (await _piece(session_factory, content_id)).status == "published"
+
+
+@pytest.mark.parametrize("role", MANUAL_DENIED_ROLES)
+async def test_mark_posted_denied_for_viewer(
+    client, session_factory, tenant, no_real_publish, role
+):
+    headers = await auth_for(session_factory, tenant.org_id, role)
+    content_id = await _manual_piece(session_factory, tenant)
+
+    resp = await client.post(f"{API}/publishing/{content_id}/mark-posted", json={}, headers=headers)
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == MANUAL_FORBIDDEN
+    # The gate has to stop the *effect*, not merely return a status.
+    assert (await _piece(session_factory, content_id)).status == "approved"
+
+
+async def test_mark_posted_gate_runs_before_the_content_lookup(
+    client, session_factory, tenant, no_real_publish
+):
+    """A denied caller gets 403, not 404 — the gate must not double as an oracle
+    for which content ids exist in the org."""
+    headers = await auth_for(session_factory, tenant.org_id, "viewer")
+
+    resp = await client.post(
+        f"{API}/publishing/{uuid4()}/mark-posted", json={}, headers=headers
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == MANUAL_FORBIDDEN
+
+
+async def test_mark_posted_denied_without_a_user_row(
+    client, session_factory, tenant, no_real_publish
+):
+    """``auth_header_for`` mints an owner token with no ``users`` row behind it; the
+    gate reads the database and fails closed."""
+    content_id = await _manual_piece(session_factory, tenant)
+
+    resp = await client.post(
+        f"{API}/publishing/{content_id}/mark-posted",
+        json={},
+        headers=auth_header_for(tenant.org_id, "owner"),
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == MANUAL_FORBIDDEN
     assert (await _piece(session_factory, content_id)).status == "approved"
 
 

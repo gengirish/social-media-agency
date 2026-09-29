@@ -26,6 +26,7 @@ from tests.conftest import (
     create_client_row,
     create_content_row,
     create_org,
+    create_platform_account,
     create_subscription,
     create_user_row,
     create_white_label,
@@ -401,6 +402,228 @@ async def test_schedule_rejects_platform_without_publisher(
     piece = await _piece(session_factory, content_id)
     assert piece.status == "approved"
     assert piece.scheduled_at is None
+
+
+@pytest.mark.parametrize("platform", ["instagram", "tiktok"])
+async def test_schedule_allows_unpublishable_platform_on_a_manual_channel(
+    client, session_factory, tenant, platform
+):
+    """Phase 4: on a manual channel the due time is a reminder, not a publish attempt.
+
+    ``platform_unavailable`` exists because a scheduled Instagram/TikTok post on a
+    connected channel could only ever become a ``failed`` row. A manual channel has no
+    publisher to be missing — the scheduler routes it to a digest reminder and leaves it
+    ``scheduled`` — so the refusal does not apply.
+
+    Paired with the test above: delete the ``is_manual_channel`` branch in
+    ``ensure_schedulable`` and this fails; widen it to any channel and the test above
+    fails.
+    """
+    await create_platform_account(
+        session_factory,
+        tenant.org_id,
+        tenant.client_id,
+        platform=platform,
+        status="manual",
+        account_handle=f"{platform}-by-hand",
+    )
+    content_id = await _new(session_factory, tenant, status="approved", platform=platform)
+    when = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+
+    resp = await client.post(
+        f"{API}/publishing/{content_id}/schedule",
+        json={"scheduled_at": when},
+        headers=tenant.headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == "scheduled"
+    assert piece.scheduled_at is not None
+
+
+@pytest.mark.parametrize("platform", ["instagram", "tiktok"])
+async def test_schedule_still_refuses_another_orgs_manual_channel(
+    client, session_factory, tenant, platform
+):
+    """TENANCY: the manual-channel lookup is ``org_id``-filtered.
+
+    A manual row owned by another tenant but carrying this client's id must not unlock
+    scheduling here. Drop the ``org_id`` filter from ``is_manual_channel`` and this test
+    goes from 409 to 200.
+    """
+    other_org = await create_org(session_factory, "Someone Else")
+    await create_platform_account(
+        session_factory,
+        other_org,
+        tenant.client_id,
+        platform=platform,
+        status="manual",
+        account_handle="not-yours",
+    )
+    content_id = await _new(session_factory, tenant, status="approved", platform=platform)
+
+    resp = await client.post(
+        f"{API}/publishing/{content_id}/schedule",
+        json={"scheduled_at": (datetime.now(UTC) + timedelta(days=1)).isoformat()},
+        headers=tenant.headers,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "platform_unavailable"
+    assert (await _piece(session_factory, content_id)).scheduled_at is None
+
+
+# ---------------------------------------------------------------------------
+# mark-posted accepts only approved (or scheduled) content either
+#
+# Manual mode is not a moderation bypass: the product posts nothing, but the row it
+# writes says ``published``, which the queue, the calendar and the billing meter all
+# believe. So the same gate applies, and the already-``published`` case matters more
+# here than for publish-now — a double click would double-count the plan's quota.
+# ---------------------------------------------------------------------------
+async def _manual(session_factory, tenant, **kwargs: Any) -> UUID:
+    """A piece whose channel the org registered manually, so the *only* thing that
+    can refuse it is the approval gate."""
+    platform = kwargs.pop("platform", "linkedin")
+    await create_platform_account(
+        session_factory, tenant.org_id, tenant.client_id, platform=platform, status="manual"
+    )
+    return await _new(session_factory, tenant, platform=platform, **kwargs)
+
+
+@pytest.mark.parametrize("current", ["draft", "rejected", "failed"])
+async def test_mark_posted_rejects_unapproved(
+    client, session_factory, tenant, no_real_publish, current
+):
+    content_id = await _manual(session_factory, tenant, status=current)
+
+    resp = await client.post(
+        f"{API}/publishing/{content_id}/mark-posted", json={}, headers=tenant.headers
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == {"code": "not_approved", "status": current}
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == current
+    assert piece.published_at is None
+
+
+async def test_mark_posted_rejects_an_already_published_piece(
+    client, session_factory, tenant, no_real_publish
+):
+    """A double click must not double-count. The quota meter is the reason this is a
+    gate and not merely idempotence: a second accepted call would charge a post."""
+    content_id = await _manual(session_factory, tenant, status="published")
+    before = (await _piece(session_factory, content_id)).metadata_ or {}
+
+    resp = await client.post(
+        f"{API}/publishing/{content_id}/mark-posted",
+        json={"post_url": None},
+        headers=tenant.headers,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == {"code": "not_approved", "status": "published"}
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == "published"
+    # Nothing was recorded, so the piece did not acquire a manual-post record it
+    # never had.
+    assert (piece.metadata_ or {}) == before
+    assert "publish_mode" not in (piece.metadata_ or {})
+
+
+@pytest.mark.parametrize("current", ["approved", "scheduled"])
+async def test_mark_posted_passes_gate_when_approved(client, session_factory, tenant, current):
+    content_id = await _manual(session_factory, tenant, status=current)
+
+    resp = await client.post(
+        f"{API}/publishing/{content_id}/mark-posted", json={}, headers=tenant.headers
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert (await _piece(session_factory, content_id)).status == "published"
+
+
+async def test_mark_posted_refuses_an_archived_client(client, session_factory, tenant):
+    """Same reason as publish-now: an archived client has nothing live and gains
+    nothing new."""
+    from agency.models.tables import Client
+
+    content_id = await _manual(session_factory, tenant, status="approved")
+    async with session_factory() as s:
+        row = await s.get(Client, tenant.client_id)
+        assert row is not None
+        row.is_active = False
+        await s.commit()
+
+    resp = await client.post(
+        f"{API}/publishing/{content_id}/mark-posted", json={}, headers=tenant.headers
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == {"code": "client_archived"}
+    assert (await _piece(session_factory, content_id)).status == "approved"
+
+
+# ---------------------------------------------------------------------------
+# PATCH /publishing/{id}/post-url — the one edit that does NOT re-moderate
+#
+# Every other edit to approved-or-later content is either refused (``published_locked``)
+# or resets the piece to ``draft`` so the copy is moderated again. This route is the
+# single exception, and the exception is narrow on purpose: the link records *where the
+# post ended up*, not what it said. So the gate here is the mirror image of the rest of
+# the file — it must accept only ``published``, and it must leave the approval record
+# (status, ``published_at``, the moderation stamp) completely alone. Widen it to
+# ``approved`` and it becomes a way to mutate content that is waiting for review.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("current", ["draft", "approved", "scheduled", "failed", "rejected"])
+async def test_post_url_rejects_anything_not_published(
+    client, session_factory, tenant, no_real_publish, current
+):
+    content_id = await _new(session_factory, tenant, status=current)
+
+    resp = await client.patch(
+        f"{API}/publishing/{content_id}/post-url",
+        json={"post_url": "https://example.com/p/1"},
+        headers=tenant.headers,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == {"code": "not_published", "status": current}
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == current
+    assert "post_url" not in (piece.metadata_ or {})
+
+
+async def test_post_url_does_not_reset_or_re_moderate(client, session_factory, tenant):
+    """The whole exception, pinned: a live post keeps its status, its publish time and
+    its moderation record. If this ever reset to ``draft``, a post that is genuinely
+    live would drop out of the published count and the Queue would offer to publish it
+    again — the opposite of the honesty this route exists for."""
+    content_id = await _new(session_factory, tenant, status="published")
+    async with session_factory() as s:
+        row = await s.get(ContentPiece, content_id)
+        assert row is not None
+        row.published_at = datetime.now(UTC) - timedelta(hours=2)
+        row.metadata_ = {"publish_mode": "manual", "moderation": {"status": "passed"}}
+        await s.commit()
+    before = await _piece(session_factory, content_id)
+    published_at, body = before.published_at, before.body
+
+    resp = await client.patch(
+        f"{API}/publishing/{content_id}/post-url",
+        json={"post_url": "https://example.com/p/1"},
+        headers=tenant.headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == "published"
+    assert piece.published_at == published_at
+    assert piece.body == body
+    assert (piece.metadata_ or {})["moderation"] == {"status": "passed"}
+    assert (piece.metadata_ or {})["post_url"] == "https://example.com/p/1"
 
 
 # ---------------------------------------------------------------------------

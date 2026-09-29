@@ -1,10 +1,10 @@
 # Feature Documentation
-<!-- verified: 260925 -->
+<!-- verified: 260929 -->
 
 Living documentation of all platform features. Updated whenever the codebase changes.
 
 ## Quick Stats
-- **API Endpoints**: 133 across 35 routers (all mounted under `/api/v1`) — 260923 added 10 routers / 42 endpoints
+- **API Endpoints**: 138 across 35 routers (all mounted under `/api/v1`) — 260923 added 10 routers / 42 endpoints; 260929 added 5 (3 manual-channel routes, `mark-posted`, `post-url`)
 - **Database Tables**: 25 (`creative_asset`, `inbox_item_state` added 260923; `billing_webhook_event` added 260925)
 - **Services**: 44 modules in `services/`
 - **Background Workers**: 3 asyncio tasks (no Celery; there is no `workers/` package)
@@ -16,23 +16,25 @@ Living documentation of all platform features. Updated whenever the codebase cha
 
 > **Before deploying the Dodo Payments swap (260925):** run `db/migrations/260925_dodo_billing.sql` by hand on Neon, and set `DODO_API_KEY`, `DODO_WEBHOOK_KEY`, `DODO_ENVIRONMENT`, `DODO_PRODUCT_STARTER`, `DODO_PRODUCT_GROWTH`, `DODO_PRODUCT_AGENCY` and `FRONTEND_URL` as Fly secrets. Until then **billing is implemented but not live** — no checkout can complete. The five `STRIPE_*` vars are gone.
 
+> **Before deploying manual publishing (260929):** run `db/migrations/260929_manual_channels.sql` by hand on Neon. It adds one nullable column (`platform_account.profile_url`), but SQLAlchemy names every mapped column in its `SELECT`, so skipping it takes down **every** `platform_account` read — publishing, inbox and analytics, not only the manual paths. No new env vars.
+
 > **Before deploying `feat/cadence-parity`:** run `db/migrations/260923_creative_asset.sql`, then `260923_amplify_asset_source.sql`, then `260923_inbox.sql` by hand on Neon ([database-schema.md](database-schema.md#database-schema)). New optional env vars: `LINKEDIN_INBOX_SCOPE` (blank until the LinkedIn app is approved for comment reading), `LINKEDIN_API_VERSION` (default `202608`) — both in `.env.example` / `backend/.env.example`.
 
 ## Documents
 
 | Document | Description | Last Updated |
 |----------|-------------|-------------|
-| [api-endpoints.md](api-endpoints.md) | All 133 REST API endpoints, approval gate, Amplify, generator contract, Setup, Post Studio, Create, Inbox, Insights, Workspace, OAuth | 260923 |
-| [database-schema.md](database-schema.md) | 25 tables, columns, relationships, pending Neon migrations | 260925 |
-| [services.md](services.md) | Business logic services, moderation, shared generator services, inbox, insights | 260923 |
+| [api-endpoints.md](api-endpoints.md) | All 138 REST API endpoints, approval gate, manual publishing, Amplify, generator contract, Setup, Post Studio, Create, Inbox, Insights, Workspace, OAuth | 260929 |
+| [database-schema.md](database-schema.md) | 25 tables, columns, relationships, pending Neon migrations | 260929 |
+| [services.md](services.md) | Business logic services, moderation, shared generator services, inbox, insights, scheduler reminders | 260929 |
 | [workers.md](workers.md) | Asyncio background tasks | 260817 |
 | [integrations.md](integrations.md) | Social publishing + Inbox reading, Dodo Payments, Clerk, AgentMail, LLM, fal.ai, Slack, Exa | 260925 |
 | [websocket.md](websocket.md) | SSE real-time agent streaming (no WebSocket) | 260921 |
-| [frontend-pages.md](frontend-pages.md) | 26 UI pages, top-nav IA + shortcuts, active client, Welcome, Setup, Create, Queue/Calendar, Inbox, Insights, Settings | 260923 |
-| [frontend-components.md](frontend-components.md) | Design system, `ui/` primitives, shell, feature components, lib + `api-*` modules | 260923 |
-| [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, roles, multi-tenancy, portal, OAuth state | 260923 |
-| [billing.md](billing.md) | Dodo Payments billing (implemented, not yet live), 4 plan tiers, shared generation quota | 260925 |
-| [changelog.md](changelog.md) | Chronological change log | 260923 |
+| [frontend-pages.md](frontend-pages.md) | 26 UI pages, top-nav IA + shortcuts, active client, Welcome, Setup, Create, Queue/Calendar, Inbox, Insights, Settings | 260929 |
+| [frontend-components.md](frontend-components.md) | Design system, `ui/` primitives, shell, feature components, lib + `api-*` modules | 260929 |
+| [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, capability matrix, multi-tenancy, portal, OAuth state | 260929 |
+| [billing.md](billing.md) | Dodo Payments billing (implemented, not yet live), 4 plan tiers, shared generation quota, post meter | 260929 |
+| [changelog.md](changelog.md) | Chronological change log | 260929 |
 
 ## Feature Honesty
 
@@ -45,10 +47,13 @@ Remaining gaps — all surfaced honestly to the user:
 | Feature | Where | Reality | How the user is told |
 |---------|-------|---------|----------------------|
 | Paid plans / checkout | `services/billing.py`, `/pricing` | Dodo Payments is implemented in code but **no `DODO_*` secret is set in production** and no live catalogue exists — nobody has ever checked out, on Dodo or on the Stripe path before it | Not flagged in the UI: upgrade buttons are live and would fail at the Dodo call. Fix before inviting beta users to pay |
-| Instagram publishing | `services/publishing.py` (T2.1) | Not implemented | Publish button replaced by "Publishing unavailable" badge; API returns `success: false` |
-| TikTok publishing | no publisher exists | Not implemented | "draft only" badge on channel picker and repurpose targets |
+| Instagram publishing | `services/publishing.py` (T2.1) | Not implemented. <!-- verified: 260929 --> Since 260929 there is a *human* path: register the page as a manual channel and use "Post it yourself" | Publish button replaced by "Publishing unavailable" badge; API returns `success: false`. On a manual channel the button is **Post it yourself** instead, and the copy never says the product published it |
+| TikTok publishing | no publisher exists | Not implemented; same manual path as Instagram | "draft only" badge on channel picker and repurpose targets |
+| Metrics for hand-posted content | `services/platform_metrics.py`, `services/insights.py` | <!-- verified: 260929 --> **Permanently unavailable, not a gap to close.** A manual channel has no token and manual mode stores no platform post id, so a pasted link cannot be turned into a metric — the platforms require an authorized API call | "Posted manually — no link, metrics unavailable" on the card; `engagement.manual_unlinked` in the Insights summary. Excluded from averages, never a `0`, and still counted as published |
 | Instagram metrics | `services/platform_metrics.py` (T2.2) | Returns `unavailable` | Content analytics shows the unavailable reason |
-| Notifications | `services/notifications.py` | `create_notification` has no callers | Bell says notifications are not generated yet; Settings → Notifications shows "Not available yet" |
+| Notifications | `services/notifications.py` | <!-- verified: 260929 --> One producer since 260929: the scheduler's `posts_due` reminder for hand-posted content. Nothing else writes notifications, and there is still no per-user preference column | Bell reads "nothing yet" honestly and links each digest to the filtered Queue; Settings → Notifications still shows "Not available yet" (no preferences to set) |
+| "Connected" counts include manual channels | `routers/clients.py::clients_overview`, `/welcome`, `client-switcher.tsx` | <!-- verified: 260929 --> `clients/overview` returns `connected_accounts`, which since 260929 counts `status='manual'` rows too — the count is right, the name is not | **Not told honestly.** `/welcome` says "N accounts connected" and the switcher "N channel(s)" for a client that has only pages the operator posts by hand. Known issue; a rename (field + consumers) is owned by a follow-up, not the docs pass. The Insights figure is unaffected — `connected_platforms` is still OAuth-only |
+| Channel chips omit manual channels | `components/posts/queue-sidebar.tsx`, `GET /post-studio/channels` | <!-- verified: 260929 --> That endpoint is connected-only by design (it feeds generation targets), so the Queue sidebar shows no chip for a page the operator posts by hand | Nothing states it. A manual-only client sees an empty channel row beside a working Post-it-yourself flow. Known issue; a fix belongs to the endpoint's owner |
 | Audit log | `services/audit.py` | Only Inbox replies call `log_action` (260923); nothing else is audited | `GET /audit` returns `status: unavailable` when empty (its reason text, "no route writes audit entries", is now stale) |
 | LinkedIn Inbox | `services/inbox.py` | Needs a restricted LinkedIn permission; off unless `LINKEDIN_INBOX_SCOPE` is set | Per-account `api_access_denied` banner with LinkedIn's requirement spelled out |
 | DMs | `services/inbox.py` | Not read on any platform | DM chip marked unavailable with the reason |
@@ -73,7 +78,7 @@ Remaining gaps — all surfaced honestly to the user:
                      │ HTTPS + SSE
 ┌────────────────────▼────────────────────────────────┐
 │  Backend (FastAPI)                                   │
-│  Fly.io · 133 endpoints · 35 routers                 │
+│  Fly.io · 138 endpoints · 35 routers                 │
 │  Clerk JWT + HS256 fallback + X-API-Key              │
 ├──────────────────────────────────────────────────────┤
 │  LangGraph Agent Pipeline (9 nodes)                  │

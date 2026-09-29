@@ -59,8 +59,35 @@ export interface ClientAccount {
   platform: string;
   account_handle: string | null;
   display_name: string | null;
+  /**
+   * `connected` — real OAuth tokens, the product publishes to it.
+   * `manual` — a page the operator registered themselves; there are no tokens and
+   * nothing publishes to it. Never render a manual channel as "Connected".
+   */
   status: string;
+  /** Public address of the page. Manual channels only, and optional even there. */
+  profile_url: string | null;
   connected_at: string | null;
+}
+
+/** Channels a page can be registered for by hand (`MANUAL_PLATFORMS` in routers/setup.py). */
+export const MANUAL_PLATFORMS = [
+  "twitter",
+  "linkedin",
+  "facebook",
+  "instagram",
+  "tiktok",
+  "youtube",
+  "reddit",
+  "threads",
+  "bluesky",
+] as const;
+
+export interface ManualAccountInput {
+  platform: string;
+  account_handle: string;
+  profile_url?: string | null;
+  display_name?: string | null;
 }
 
 export interface OAuthPlatformStatus {
@@ -112,6 +139,27 @@ export const setupApi = {
       body: JSON.stringify(data),
     }),
   disconnect: (platform: string, accountId: string) => api.disconnectPlatformAccount(platform, accountId),
+
+  /*
+   * Manual channels — a page the operator already manages, registered with no
+   * OAuth. The backend writes `status: "manual"` and no tokens whatever we send,
+   * so nothing here can accidentally create something a publisher would pick up.
+   * Gated on `oauth.connect` like the OAuth routes, so a member or viewer gets 403.
+   */
+  addManualAccount: (clientId: string, data: ManualAccountInput) =>
+    request<ClientAccount>(`${base(clientId)}/accounts/manual`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateManualAccount: (clientId: string, accountId: string, data: Partial<ManualAccountInput>) =>
+    request<ClientAccount>(`${base(clientId)}/accounts/manual/${accountId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  removeManualAccount: (clientId: string, accountId: string) =>
+    request<{ status: string; id: string }>(`${base(clientId)}/accounts/manual/${accountId}`, {
+      method: "DELETE",
+    }),
 };
 
 /* ---------------------------------------------------------------- PKCE (X) */

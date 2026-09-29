@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  ApiError,
   apiErrorCode,
   isGenerationQuotaError,
   moderationIssues,
@@ -53,7 +54,8 @@ import { cn } from "@/lib/utils";
 import { PostDialog } from "@/components/posts/dialog";
 import { GeneratePostsModal } from "@/components/posts/generate-posts-modal";
 import { ModerationWarning } from "@/components/posts/moderation-warning";
-import { PostCard, type PostAction, type PostEdit } from "@/components/posts/post-card";
+import { PostCard, type ManualChannel, type PostAction, type PostEdit } from "@/components/posts/post-card";
+import { useManualChannels } from "@/lib/manual-channels";
 import { PublishConfirm } from "@/components/posts/publish-confirm";
 import { QUEUE_PLATFORMS, platformLabel } from "@/components/posts/platform";
 import { QUEUE_TABS, QueueTabs } from "@/components/posts/queue-tabs";
@@ -77,7 +79,7 @@ const EMPTY: Record<QueueStatus, { title: string; body: string }> = {
   },
   published: {
     title: "Nothing published yet",
-    body: "Posts show up here once they have gone out to a connected account.",
+    body: "Posts show up here once they have gone out — published to a connected account, or recorded after you posted one yourself.",
   },
   failed: {
     title: "No failed posts",
@@ -110,7 +112,14 @@ function removeAll(set: Set<string>, ids: string[]) {
 }
 
 export default function QueuePage() {
-  const { active, activeId, clients, loading: clientsLoading, refresh: refreshClients } = useActiveClient();
+  const {
+    active,
+    activeId,
+    clients,
+    loading: clientsLoading,
+    refresh: refreshClients,
+    setActiveId,
+  } = useActiveClient();
   /*
    * Presentation only — every one of these is enforced by `require_cap` on the
    * router. A `member` can approve but not publish, so the Queue legitimately
@@ -149,6 +158,10 @@ export default function QueuePage() {
   const [bulkBusy, setBulkBusy] = useState<null | "approve" | "publish">(null);
   const [bulkPublishOpen, setBulkPublishOpen] = useState(false);
 
+  // Manual channels ("you post it") per client. Shared with the Calendar: see
+  // `lib/manual-channels.ts` for why the fetch is not inlined per page.
+  const manualChannelAt = useManualChannels(items.map((p) => p.client_id));
+
   const [channels, setChannels] = useState<{ connected: string[]; supported: string[] } | null>(null);
   const [profile, setProfile] = useState<SavedBrandProfile | null>(null);
   const [sub, setSub] = useState<SubscriptionInfo | null>(null);
@@ -165,6 +178,51 @@ export default function QueuePage() {
   // scope to — the picker is hidden and the scope stays pinned to it.
   const clientId = scope === "client" || isPersonal ? activeId : null;
   const clientNames = useMemo(() => new Map(clients.map((c) => [c.id, clientLabel(c)])), [clients]);
+
+  /*
+   * `?client=<id>&status=<tab>` — a deep link into a filtered Queue.
+   *
+   * The reminder digest ("N posts due for <client>") links here, and without this
+   * the link landed on whatever client and tab the browser happened to remember,
+   * which for a reminder about scheduled posts is the wrong screen.
+   *
+   * Both values are validated and both are optional. An unrecognised status is
+   * ignored; a client id that is not in this org's own list is ignored **in
+   * silence** — no error, no toast — because the normal behaviour
+   * (`useActiveClient()` plus the default tab) is a correct Queue, and reacting to
+   * the id would tell the caller whether it exists somewhere else. Read from
+   * `window.location.search` rather than `useSearchParams`, which would need the
+   * whole page wrapped in a Suspense boundary for two one-shot values.
+   *
+   * Applied in an effect, never during render: reading the URL while rendering
+   * would make the first client render differ from the server's and trip hydration.
+   */
+  const deepLink = useRef<{ client: string | null; applied: boolean }>({ client: null, applied: false });
+  useEffect(() => {
+    let params: URLSearchParams;
+    try {
+      params = new URLSearchParams(window.location.search);
+    } catch {
+      return;
+    }
+    const wantedStatus = params.get("status");
+    if (wantedStatus && QUEUE_TABS.some((t) => t.status === wantedStatus)) {
+      setTab(wantedStatus as QueueStatus);
+      setPage(1);
+    }
+    deepLink.current.client = params.get("client");
+  }, []);
+
+  // The client id can only be checked once the org's client list has arrived, so
+  // this waits for it — and runs at most once, so a later switch by hand sticks.
+  useEffect(() => {
+    const wanted = deepLink.current.client;
+    if (!wanted || deepLink.current.applied || clientsLoading) return;
+    deepLink.current.applied = true;
+    if (!clients.some((c) => c.id === wanted)) return;
+    setActiveId(wanted);
+    setScope("client");
+  }, [clients, clientsLoading, setActiveId, setScope]);
 
   // Overdue labels depend on the clock, not just on data.
   useEffect(() => {
@@ -246,6 +304,12 @@ export default function QueuePage() {
   // Selection is per tab, as in Cadence.
   useEffect(() => setSelectedIds(new Set()), [tab, scope, clientId, platform]);
 
+
+  const manualChannelFor = useCallback(
+    (post: QueuePost): ManualChannel | null => manualChannelAt(post.client_id, post.platform),
+    [manualChannelAt]
+  );
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return items.filter((p) => {
@@ -275,6 +339,19 @@ export default function QueuePage() {
   const limit = sub?.generations_limit ?? null;
   const remaining = used != null && limit != null ? Math.max(0, limit - used) : null;
   const atLimit = remaining === 0;
+
+  /*
+   * The plan's post meter, read from state the Queue already loads. Checked before a
+   * composer opens so nobody writes a post into a new tab and only then hits the 402
+   * on confirm. `null` whenever the numbers are not both known — an unknown quota
+   * must not block the flow, and the server is the real gate either way.
+   */
+  const postsUsed = sub?.posts_used ?? null;
+  const postsLimit = sub?.posts_limit ?? null;
+  const postQuotaReason =
+    postsUsed != null && postsLimit != null && postsUsed >= postsLimit
+      ? `Your plan's ${postsLimit} posts for this month are used up, so a post can't be recorded. Upgrade under Settings › Billing — this post stays approved until then.`
+      : null;
 
   function setPostBusy(id: string, action: PostAction | null) {
     setBusy((prev) => {
@@ -328,8 +405,15 @@ export default function QueuePage() {
       trackFeature("post-approve", { platform: post.platform, override });
       reload();
       void refreshClients();
-      // Cadence's "Approve & schedule": the picker opens straight after a passed check.
-      if (mayPublish && canPublish(post.platform)) setScheduleFor({ ...post, status: "approved" });
+      /*
+       * Cadence's "Approve & schedule": the picker opens straight after a passed check.
+       * Not on a manual channel, though — there the next step is "Post it yourself", and
+       * a reminder picker appearing unasked would push the user to defer work they can do
+       * now. They can still reach it from the card.
+       */
+      if (mayPublish && canPublish(post.platform) && !manualChannelFor(post)) {
+        setScheduleFor({ ...post, status: "approved" });
+      }
     } catch (err) {
       const code = apiErrorCode(err);
       if (code === "moderation_flagged") {
@@ -399,14 +483,38 @@ export default function QueuePage() {
     }
   }
 
+  /**
+   * Give a post a time. One endpoint, two meanings.
+   *
+   * On a connected channel the scheduler publishes at that time. On a manual one it
+   * publishes nothing ever — it notices the piece is due and reminds whoever has to
+   * post it — so the confirmation says "reminder" and says "around", because the
+   * scheduler's wake interval is capped at up to an hour and the reminder can land
+   * that much later than the minute that was picked.
+   */
   async function schedule(post: QueuePost, iso: string) {
     const rescheduling = post.status === "scheduled";
+    const reminder = manualChannelFor(post) !== null;
     setPostBusy(post.id, "schedule");
     try {
       await api.scheduleContent(post.id, iso);
       setScheduleFor(null);
-      toast.success(`${rescheduling ? "Rescheduled" : "Scheduled"} for ${format(new Date(iso), "EEE d MMM, HH:mm")}`);
-      trackFeature(rescheduling ? "post-reschedule" : "post-schedule", { platform: post.platform });
+      const when = format(new Date(iso), "EEE d MMM, HH:mm");
+      toast.success(
+        reminder
+          ? `${rescheduling ? "Reminder moved to" : "Reminder set for"} around ${when} — nothing goes out on its own.`
+          : `${rescheduling ? "Rescheduled" : "Scheduled"} for ${when}`
+      );
+      trackFeature(
+        reminder
+          ? rescheduling
+            ? "post-reminder-reschedule"
+            : "post-reminder-schedule"
+          : rescheduling
+            ? "post-reschedule"
+            : "post-schedule",
+        { platform: post.platform }
+      );
       reload();
       void refreshClients();
     } catch (err) {
@@ -435,6 +543,96 @@ export default function QueuePage() {
       setPostBusy(post.id, null);
       reload();
       void refreshClients();
+    }
+  }
+
+  /**
+   * "Post it yourself" confirm — records a post a human already made.
+   *
+   * Nothing is sent anywhere: this only writes the piece to Published with
+   * `publish_mode: "manual"` and charges one post. The failures carry no
+   * `detail.code`, so they are branched on HTTP status, and each message names the
+   * real cause rather than "something went wrong".
+   */
+  async function markPosted(post: QueuePost, postUrl: string | null) {
+    setPostBusy(post.id, "mark-posted");
+    try {
+      await api.markPosted(post.id, postUrl);
+      toast.success(
+        postUrl ? "Recorded — the post and its link are on file." : "Recorded. You can add the link to it later."
+      );
+      trackFeature("content-post-manual", { platform: post.platform });
+      loadSub();
+      reload();
+      void refreshClients();
+    } catch (err) {
+      const httpStatus = err instanceof ApiError ? err.status : 0;
+      const detail = err instanceof Error ? err.message : "";
+      if (httpStatus === 402) {
+        toast.error(
+          `Your plan's post limit for this month is used up, so this wasn't recorded. Upgrade under Settings › Billing — the post is still approved and still live wherever you posted it.`
+        );
+        loadSub();
+      } else if (httpStatus === 400) {
+        // Two causes: no manual channel for this platform, or a link the safety
+        // check refused. The server words both; only the first needs the route.
+        toast.error(
+          detail.toLowerCase().includes("channel")
+            ? `${platformLabel(post.platform)} isn't registered as a page you manage for this client. Add it under Setup › Accounts, then record the post.`
+            : detail || "That link wasn't accepted — check it and try again."
+        );
+      } else if (httpStatus === 409) {
+        toast.error("This post isn't approved any more — refreshed the queue. Approve it again, then record it.");
+        reload();
+      } else {
+        toast.error(detail || "Couldn't record this post — try again.");
+      }
+    } finally {
+      setPostBusy(post.id, null);
+    }
+  }
+
+  /**
+   * "Add link" — attach the address of a post that was made by hand.
+   *
+   * Updates the card in place rather than reloading: the piece is already Published
+   * and stays there, so a reload would only make the list jump. This is the one edit
+   * to a published piece that does not reset it to Pending — it records where the
+   * post ended up, it does not change the copy, so there is nothing to re-moderate.
+   *
+   * Each failure names its real cause. `409 not_published` means the piece is no
+   * longer recorded as posted (someone else changed it), not that the link was bad.
+   */
+  async function setPostUrl(post: QueuePost, postUrl: string) {
+    setPostBusy(post.id, "post-url");
+    try {
+      const res = await api.setPostUrl(post.id, postUrl);
+      setItems((prev) =>
+        prev.map((p) =>
+          p.id === post.id ? { ...p, metadata_: { ...(p.metadata_ ?? {}), post_url: res.post_url } } : p
+        )
+      );
+      toast.success("Link saved — the post opens from here now.");
+    } catch (err) {
+      const code = apiErrorCode(err);
+      const httpStatus = err instanceof ApiError ? err.status : 0;
+      const detail = err instanceof Error ? err.message : "";
+      if (code === "not_published" || httpStatus === 409) {
+        toast.error(
+          "This post isn't recorded as posted any more, so there's nothing to attach a link to — refreshed the queue."
+        );
+        reload();
+      } else if (httpStatus === 400) {
+        // The server's url_safety check refused it — a private address, a bad
+        // scheme, something that isn't a link. Its own wording is the specific one.
+        toast.error(detail || "That link wasn't accepted — it has to be a public http(s) address to the post itself.");
+      } else if (httpStatus === 403) {
+        toast.error("You don't have permission to record posts in this workspace.");
+      } else {
+        toast.error(detail || "Couldn't save the link — try again.");
+      }
+    } finally {
+      setPostBusy(post.id, null);
     }
   }
 
@@ -522,8 +720,8 @@ export default function QueuePage() {
     }
   }
 
-  const latest = useRef({ approve, retry, saveEdit, deletePosts, regenerate, requestBrief });
-  latest.current = { approve, retry, saveEdit, deletePosts, regenerate, requestBrief };
+  const latest = useRef({ approve, retry, saveEdit, deletePosts, regenerate, requestBrief, markPosted, setPostUrl });
+  latest.current = { approve, retry, saveEdit, deletePosts, regenerate, requestBrief, markPosted, setPostUrl };
   const onApprove = useCallback((p: QueuePost) => void latest.current.approve(p), []);
   const onRetry = useCallback((p: QueuePost) => void latest.current.retry(p), []);
   const onEditSave = useCallback((p: QueuePost, e: PostEdit) => latest.current.saveEdit(p, e), []);
@@ -536,6 +734,14 @@ export default function QueuePage() {
   const onEditClose = useCallback(() => setEditingId(null), []);
   const onSchedule = useCallback((p: QueuePost) => setScheduleFor(p), []);
   const onPublish = useCallback((p: QueuePost) => setPublishFor(p), []);
+  const onMarkPosted = useCallback(
+    (p: QueuePost, postUrl: string | null) => void latest.current.markPosted(p, postUrl),
+    []
+  );
+  const onSetPostUrl = useCallback(
+    (p: QueuePost, postUrl: string) => void latest.current.setPostUrl(p, postUrl),
+    []
+  );
   const onToggleSelect = useCallback(
     (id: string) =>
       setSelectedIds((prev) => {
@@ -650,7 +856,13 @@ export default function QueuePage() {
 
   async function bulkPublish() {
     setBulkBusy("publish");
-    const eligible = selectedPosts.filter((p) => canPublish(p.platform));
+    /*
+     * A manual channel has no tokens, so `publish` would 400 once per post. Skip those
+     * here and say so: bulk publish is for connected accounts, and a hand-posted piece
+     * has to be recorded from its own card, where the composer opens.
+     */
+    const manualSkipped = selectedPosts.filter((p) => manualChannelFor(p));
+    const eligible = selectedPosts.filter((p) => canPublish(p.platform) && !manualChannelFor(p));
     let ok = 0;
     let failed = 0;
     for (const post of eligible) {
@@ -664,10 +876,12 @@ export default function QueuePage() {
     setBulkBusy(null);
     setBulkPublishOpen(false);
     setSelectedIds(new Set());
-    const skipped = selectedPosts.length - eligible.length;
+    const skipped = selectedPosts.length - eligible.length - manualSkipped.length;
     const parts = [`${ok} published`];
     if (failed) parts.push(`${failed} failed — see the Failed tab`);
     if (skipped) parts.push(`${skipped} skipped (platform can't be published to yet)`);
+    if (manualSkipped.length)
+      parts.push(`${manualSkipped.length} left for you to post by hand`);
     (failed || skipped ? toast.warning : toast.success)(parts.join(" · "));
     if (ok) trackFeature("post-bulk-publish", { count: ok });
     reload();
@@ -1007,6 +1221,10 @@ export default function QueuePage() {
                       onEditSave={onEditSave}
                       onSchedule={onSchedule}
                       onPublish={onPublish}
+                      manual={manualChannelFor(post)}
+                      quotaReason={postQuotaReason}
+                      onMarkPosted={onMarkPosted}
+                      onSetPostUrl={onSetPostUrl}
                       onDelete={onDelete}
                       onRetry={onRetry}
                       onRegenerate={onRegenerate}
@@ -1069,6 +1287,9 @@ export default function QueuePage() {
         clientName={scheduleFor ? clientNames.get(scheduleFor.client_id) ?? null : null}
         currentAt={scheduleFor?.scheduled_at}
         busy={scheduleFor ? busy[scheduleFor.id] === "schedule" : false}
+        /* A time on a manual channel is a reminder, not a send — the dialog rewords
+           itself rather than there being a second dialog to keep in step. */
+        manual={scheduleFor !== null && manualChannelFor(scheduleFor) !== null}
         onClose={() => setScheduleFor(null)}
         onConfirm={(iso) => scheduleFor && void schedule(scheduleFor, iso)}
       />
@@ -1104,6 +1325,12 @@ export default function QueuePage() {
           <p className="text-xs text-amber-800">
             {selectedPosts.filter((p) => !canPublish(p.platform)).length} selected post(s) will be skipped:{" "}
             {publishUnavailableReason(selectedPosts.find((p) => !canPublish(p.platform))?.platform)}
+          </p>
+        )}
+        {selectedPosts.some((p) => manualChannelFor(p)) && (
+          <p className="text-xs text-amber-800">
+            {selectedPosts.filter((p) => manualChannelFor(p)).length} selected post(s) are on pages you post
+            yourself, so nothing here can post them. Open each card and use &ldquo;Post it yourself&rdquo;.
           </p>
         )}
       </PostDialog>

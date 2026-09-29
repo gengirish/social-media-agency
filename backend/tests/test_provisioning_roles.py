@@ -260,6 +260,7 @@ async def test_clerk_demo_org_id_that_does_not_exist_falls_back_to_a_new_owner_o
                 "content.approve",
                 "content.override",
                 "oauth.connect",
+                "publish.manual",
                 "publish.write",
                 "read",
                 "team.manage",
@@ -275,6 +276,7 @@ async def test_clerk_demo_org_id_that_does_not_exist_falls_back_to_a_new_owner_o
                 "content.approve",
                 "content.override",
                 "oauth.connect",
+                "publish.manual",
                 "publish.write",
                 "read",
                 "team.manage",
@@ -289,6 +291,7 @@ async def test_clerk_demo_org_id_that_does_not_exist_falls_back_to_a_new_owner_o
                 "content.approve",
                 "content.override",
                 "oauth.connect",
+                "publish.manual",
                 "publish.write",
                 "read",
                 "team.manage",
@@ -303,14 +306,15 @@ async def test_clerk_demo_org_id_that_does_not_exist_falls_back_to_a_new_owner_o
                 "content.approve",
                 "content.override",
                 "oauth.connect",
+                "publish.manual",
                 "publish.write",
                 "read",
                 "team.manage",
                 "workspace.manage",
             ],
         ),
-        ("member", "business", ["campaign.run", "content.approve", "read"]),
-        ("member", "personal", ["campaign.run", "content.approve", "read"]),
+        ("member", "business", ["campaign.run", "content.approve", "publish.manual", "read"]),
+        ("member", "personal", ["campaign.run", "content.approve", "publish.manual", "read"]),
         ("viewer", "business", ["read"]),
         ("viewer", "personal", ["read"]),
     ],
@@ -460,7 +464,7 @@ async def test_me_normalizes_a_legacy_role_string(
     assert resp.status_code == 200
     body = resp.json()
     assert body["role"] == "member"
-    assert body["capabilities"] == ["campaign.run", "content.approve", "read"]
+    assert body["capabilities"] == ["campaign.run", "content.approve", "publish.manual", "read"]
 
 
 async def test_me_ignores_the_token_role_claim_and_reads_the_database(

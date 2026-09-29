@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 
@@ -10,9 +11,16 @@ interface Notification {
   body: string;
   read: boolean;
   created_at: string | null;
+  /**
+   * Producer-supplied payload. Only `url` is read here: the scheduler's `posts_due`
+   * digest points at the Queue filtered to the client whose posts came due, which the
+   * Queue honours as `?client=&status=`. A notification without one stays a plain row.
+   */
+  data?: { url?: string | null } | null;
 }
 
 export function NotificationsBell() {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
@@ -140,14 +148,14 @@ export function NotificationsBell() {
           </div>
           <div className="max-h-80 overflow-y-auto">
             {notifications.length === 0 ? (
-              // Nothing in the backend produces notifications yet (no caller of
-              // create_notification), so an empty list must not read as
-              // "you're all caught up".
+              // The scheduler now produces `posts_due` reminders, so an empty list can
+              // honestly read as "nothing yet". `emptyReason` still wins when the backend
+              // sends one, which is how it says that nothing is wired.
               <div className="px-4 py-6 text-center">
                 <p className="text-sm text-ink">No notifications</p>
                 <p className="mt-1 text-xs text-muted">
                   {emptyReason ??
-                    "Notifications are not generated yet — this list stays empty regardless of campaign activity."}
+                    "Nothing yet. Reminders for posts you publish by hand show up here when they come due."}
                 </p>
               </div>
             ) : (
@@ -155,7 +163,17 @@ export function NotificationsBell() {
                 <button
                   key={n.id}
                   type="button"
-                  onClick={() => !n.read && markRead(n.id)}
+                  onClick={() => {
+                    if (!n.read) void markRead(n.id);
+                    // A digest that names posts due now is only useful if it takes you to
+                    // them. Marking read is fire-and-forget so the navigation is not held
+                    // up by it; the panel closes because the page underneath changes.
+                    const target = n.data?.url;
+                    if (target) {
+                      setOpen(false);
+                      router.push(target);
+                    }
+                  }}
                   className={`w-full border-b border-line px-4 py-3 text-left transition-colors last:border-0 hover:bg-slate-500/5 ${
                     !n.read ? "bg-accent/5 shadow-[inset_2px_0_0_rgb(var(--c-accent))]" : ""
                   }`}

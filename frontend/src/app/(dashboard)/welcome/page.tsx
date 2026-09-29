@@ -141,7 +141,7 @@ export default function WelcomePage() {
       href: "/setup/accounts",
       done: accountsDone,
       icon: <Link2 className="h-[15px] w-[15px]" />,
-      detail: accountsDone ? `${plural(active.connected_accounts, "account")} connected` : null,
+      detail: accountsDone ? `${plural(active.connected_accounts, "channel")} set up` : null,
       locked: !profileDone,
     },
     {
@@ -168,7 +168,7 @@ export default function WelcomePage() {
         </div>
         <h1 className="mb-2 text-[27px] leading-snug text-ink">Welcome back.</h1>
         <p className="max-w-[480px] text-[13.5px] leading-relaxed text-slate-600">
-          {plural(active.connected_accounts, "channel")} connected · {plural(active.total_posts, "post")} in queue
+          {plural(active.connected_accounts, "channel")} set up · {plural(active.total_posts, "post")} in queue
           {active.pending > 0 ? ` · ${active.pending} waiting for review` : ""}. Jump back in wherever makes sense.
         </p>
         <div className="mt-8 grid gap-3 sm:grid-cols-3">

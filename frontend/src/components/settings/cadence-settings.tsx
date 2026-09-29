@@ -118,7 +118,7 @@ export function AccountsTab({ client }: { client: ClientOverview }) {
       <p className="text-sm text-muted">
         {client.brand_name} has{" "}
         <span className="font-medium text-ink">
-          {client.connected_accounts} connected account{client.connected_accounts === 1 ? "" : "s"}
+          {client.connected_accounts} channel{client.connected_accounts === 1 ? "" : "s"}
         </span>
         . Connecting and disconnecting happens in Setup › Accounts, through each platform&apos;s real login.
       </p>

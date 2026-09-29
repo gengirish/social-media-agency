@@ -237,3 +237,175 @@ async def test_personal_account_viewer_is_still_denied(client, session_factory, 
 
     assert resp.status_code == 403
     assert resp.json()["detail"] == DENIED
+
+
+# ---------------------------------------------------------------------------
+# Manual channels (routers/setup.py) — the same gate, deliberately.
+#
+# Registering a page the operator posts to themselves creates no token and
+# publishes nothing, but it is still the act of declaring a channel for a client,
+# so it reuses ``oauth.connect`` rather than inventing a capability. Phase 2's
+# ``publish.manual`` is the separate, more widely granted act of recording that a
+# post went out.
+# ---------------------------------------------------------------------------
+def _manual_url(client_id, account_id=None):
+    base = f"{API}/setup/{client_id}/accounts/manual"
+    return base if account_id is None else f"{base}/{account_id}"
+
+
+@pytest.mark.parametrize("role", DENIED_ROLES)
+async def test_add_manual_channel_denies_under_privileged_roles(
+    client, session_factory, org, role
+):
+    from sqlalchemy import select
+
+    from agency.models.tables import PlatformAccount
+
+    headers = await auth_for(session_factory, org["org_id"], role)
+    resp = await client.post(
+        _manual_url(org["client_id"]),
+        json={"platform": "instagram", "account_handle": "@page"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == DENIED
+
+    # No row was written. A 403 that still registered the channel would be worthless.
+    async with session_factory() as session:
+        rows = await session.execute(
+            select(PlatformAccount).where(PlatformAccount.org_id == org["org_id"])
+        )
+        assert rows.scalars().all() == []
+
+
+@pytest.mark.parametrize("role", ALLOWED_ROLES)
+async def test_add_manual_channel_admits_privileged_roles(client, session_factory, org, role):
+    headers = await auth_for(session_factory, org["org_id"], role)
+    resp = await client.post(
+        _manual_url(org["client_id"]),
+        json={"platform": "instagram", "account_handle": "@page"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "manual"
+
+
+async def test_add_manual_channel_denies_before_the_platform_check(client, session_factory, org):
+    """A denied caller learns nothing about the route — not even which platforms exist."""
+    headers = await auth_for(session_factory, org["org_id"], "member")
+    resp = await client.post(
+        _manual_url(org["client_id"]),
+        json={"platform": "myspace", "account_handle": "tom"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == DENIED
+
+
+@pytest.mark.parametrize("role", DENIED_ROLES)
+async def test_patch_manual_channel_denies_under_privileged_roles(
+    client, session_factory, org, role
+):
+    from agency.models.tables import PlatformAccount
+
+    account_id = await create_platform_account(
+        session_factory,
+        org["org_id"],
+        org["client_id"],
+        platform="instagram",
+        status="manual",
+        account_handle="original",
+    )
+    headers = await auth_for(session_factory, org["org_id"], role)
+
+    resp = await client.patch(
+        _manual_url(org["client_id"], account_id),
+        json={"account_handle": "changed"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == DENIED
+
+    async with session_factory() as session:
+        row = await session.get(PlatformAccount, account_id)
+        assert row is not None
+        assert row.account_handle == "original"
+
+
+@pytest.mark.parametrize("role", ALLOWED_ROLES)
+async def test_patch_manual_channel_admits_privileged_roles(client, session_factory, org, role):
+    account_id = await create_platform_account(
+        session_factory,
+        org["org_id"],
+        org["client_id"],
+        platform="instagram",
+        status="manual",
+        account_handle="original",
+    )
+    headers = await auth_for(session_factory, org["org_id"], role)
+
+    resp = await client.patch(
+        _manual_url(org["client_id"], account_id),
+        json={"account_handle": "changed"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["account_handle"] == "changed"
+
+
+@pytest.mark.parametrize("role", DENIED_ROLES)
+async def test_delete_manual_channel_denies_under_privileged_roles(
+    client, session_factory, org, role
+):
+    from agency.models.tables import PlatformAccount
+
+    account_id = await create_platform_account(
+        session_factory, org["org_id"], org["client_id"], platform="instagram", status="manual"
+    )
+    headers = await auth_for(session_factory, org["org_id"], role)
+
+    resp = await client.delete(_manual_url(org["client_id"], account_id), headers=headers)
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == DENIED
+
+    async with session_factory() as session:
+        assert await session.get(PlatformAccount, account_id) is not None
+
+
+@pytest.mark.parametrize("role", ALLOWED_ROLES)
+async def test_delete_manual_channel_admits_privileged_roles(client, session_factory, org, role):
+    from agency.models.tables import PlatformAccount
+
+    account_id = await create_platform_account(
+        session_factory, org["org_id"], org["client_id"], platform="instagram", status="manual"
+    )
+    headers = await auth_for(session_factory, org["org_id"], role)
+
+    resp = await client.delete(_manual_url(org["client_id"], account_id), headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    async with session_factory() as session:
+        assert await session.get(PlatformAccount, account_id) is None
+
+
+async def test_listing_accounts_is_not_gated(client, session_factory, org):
+    """Reading which channels a client has is not a privileged act.
+
+    Pinned so the manual-channel gate is not widened onto the display route by a
+    later edit — a viewer must still be able to see that Instagram is manual.
+    """
+    await create_platform_account(
+        session_factory, org["org_id"], org["client_id"], platform="instagram", status="manual"
+    )
+    headers = await auth_for(session_factory, org["org_id"], "viewer")
+
+    resp = await client.get(f"{API}/setup/{org['client_id']}/accounts", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert [a["status"] for a in resp.json()["accounts"]] == ["manual"]

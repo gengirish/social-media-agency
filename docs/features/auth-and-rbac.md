@@ -1,5 +1,5 @@
 # Authentication & RBAC
-<!-- verified: 260923 -->
+<!-- verified: 260929 -->
 
 ## Auth Flow
 **Status**: [LIVE]
@@ -74,15 +74,36 @@ Two rules that follow, both of which shipped code violated before 260817:
 
 Replacing this with a signed-in client-reviewer role is phase 6 of `docs/cadence-port-plan-260921.md` — not built.
 
-## Roles
+## Roles and capabilities
+<!-- verified: 260929 -->
 
-| Role | Permissions |
-|------|------------|
-| `admin` | Full access: CRUD clients, campaigns, content; team management; billing |
-| `member` | Create/edit clients, campaigns, content; no team/billing management |
-| `viewer` | Read-only access to all resources |
+Four roles: `owner`, `admin`, `member`, `viewer`. Routes are gated on **capabilities**, not role names — `require_cap(Capability.X)` in `backend/src/agency/permissions.py`, which is the single source of truth. Legacy role strings map `manager` → `admin`, `content_creator` → `member`. `account_type` (`personal` / `business`) subtracts nothing; capabilities depend on role alone. Longer rationale: [rbac-phase-plan-260923.md](../rbac-phase-plan-260923.md).
 
-**Enforcement**: `require_role(*allowed_roles)` dependency factory in `dependencies.py`
+### Capability matrix
+
+| | `read` | `campaign.run` | `content.approve` | `publish.write` | `publish.manual` | `content.override` | `oauth.connect` | `team.manage` | `billing.manage` | `workspace.manage` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `owner` | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| `admin` | Y | Y | Y | Y | Y | Y | Y | Y | – | Y |
+| `member` | Y | Y | Y | – | Y | – | – | – | – | – |
+| `viewer` | Y | – | – | – | – | – | – | – | – | – |
+
+The `member` row is the whole design: approving is a human saying the copy is fine and a member is a human, while `publish.write` posts to a **live client account** and `content.override` bypasses moderation, so both stay owner/admin.
+
+`publish.manual` (260929) is the one capability a `member` holds on the publishing side, and only because the premise differs. `POST /publishing/{id}/mark-posted` and `PATCH /publishing/{id}/post-url` call no publisher and need no connected account: a human already posted, and the product writes the record. `metadata.posted_by` / `post_url_by` keep it attributable. `viewer` is still denied — recording a post is a write, and it spends the plan's post allowance.
+
+> ### Adding a capability means editing `tests/test_provisioning_roles.py`
+>
+> `GET /auth/me` returns the caller's resolved capability list, and
+> `tests/test_provisioning_roles.py` asserts that list **verbatim, per role and per
+> `account_type`** (plus one legacy-role case). A new entry in `CAPS` fails those tests
+> until the expected lists are updated. That is the point: it forces a deliberate
+> decision about every role, so a capability cannot be handed to `viewer` by copy-paste.
+> Never relax the assertion to a subset check.
+
+Frontend: the same strings are a union type in `frontend/src/lib/session.tsx`, read from `/auth/me`. UI gating there is a courtesy — the server gate is the real one.
+
+**Legacy**: `require_role(*allowed_roles)` still exists in `dependencies.py`. Prefer `require_cap`.
 
 ## Environment Variables
 
