@@ -22,11 +22,11 @@ export default function SetupAccountsPage() {
       </Suspense>
       <PageHeader
         eyebrow="Setup"
-        title="Connected accounts"
+        title="Accounts"
         description={
           active
-            ? `Social accounts ${clientLabel(active)} publishes to. Each client connects its own.`
-            : "Social accounts each client publishes to."
+            ? `The pages ${clientLabel(active)} posts to. Each client has its own.`
+            : "The pages each client posts to."
         }
       />
       <ActiveClientGate>
