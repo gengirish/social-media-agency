@@ -255,3 +255,84 @@ def test_multiple_providers_produce_a_fallback_wrapper(env):
 def test_worker_tier_temperature_argument_is_honoured(env):
     env(NVIDIA_NIM_API_KEY="nv")
     assert lp.get_worker_llm(temperature=0.1).temperature == 0.1
+
+
+# ---------------------------------------------------------------------------
+# Sampling parameters. ``temperature`` is removed on the newer Claude models and
+# a request carrying one fails with 400 "`temperature` is deprecated for this
+# model" — which killed live campaigns in the Orchestrator, the first node to
+# run, once ``claude-sonnet-5`` became the brain/worker default.
+#
+# The assertions below read ``ChatAnthropic.temperature``: the field defaults to
+# None and langchain_anthropic drops every None key when it builds the request
+# body, so ``temperature is None`` here means no ``temperature`` on the wire.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "model",
+    ["claude-sonnet-5", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8", "claude-fable-5-1"],
+)
+def test_anthropic_models_without_sampling_are_sent_no_temperature(env, model):
+    env(ANTHROPIC_API_KEY="sk-ant", LLM_BRAIN_MODEL=model)
+    llm = lp.get_llm(lp.BRAIN)
+    assert llm.model == model
+    assert llm.temperature is None, f"{model} rejects temperature; it must not be sent"
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"],
+)
+def test_anthropic_models_with_sampling_still_get_their_temperature(env, model):
+    """The other half of the gate: tiers that rely on variety must keep it."""
+    env(ANTHROPIC_API_KEY="sk-ant", LLM_AD_COPY_MODEL=model)
+    llm = lp.get_llm(lp.AD_COPY)
+    assert llm.temperature == lp.TIER_SETTINGS[lp.AD_COPY]["temperature"]
+
+
+def test_an_unknown_anthropic_model_is_sent_no_temperature(env):
+    """Allowlist, not blocklist: an unrecognised model loses its temperature rather
+    than risking the 400 that stops a campaign."""
+    env(ANTHROPIC_API_KEY="sk-ant", LLM_BRAIN_MODEL="claude-something-9")
+    assert lp.get_llm(lp.BRAIN).temperature is None
+
+
+def test_a_caller_supplied_temperature_is_still_dropped_for_such_a_model(env):
+    """``get_worker_llm(temperature=...)`` must not smuggle one past the gate."""
+    env(ANTHROPIC_API_KEY="sk-ant")  # worker default is claude-sonnet-5
+    assert lp.get_worker_llm(temperature=0.9).temperature is None
+
+
+def test_non_anthropic_providers_keep_temperature(env):
+    """The removal is Anthropic's. Gateways and Google still take it."""
+    env(NVIDIA_NIM_API_KEY="nv", GOOGLE_API_KEY="g")
+    for order, expected in (("nvidia", 0.3), ("google", 0.3)):
+        env(LLM_PROVIDER_ORDER=order)
+        assert lp.get_llm(lp.BRAIN).temperature == expected
+
+
+def test_fallback_clients_are_gated_too(env):
+    """A fallback that 400s is a fallback that does not fall back."""
+    env(
+        ANTHROPIC_API_KEY="sk-ant",
+        NVIDIA_NIM_API_KEY="nv",
+        LLM_PROVIDER_ORDER="nvidia,anthropic",
+    )
+    llm = lp.get_llm(lp.BRAIN)
+    anthropic_fallback = llm.fallbacks[0]
+    assert anthropic_fallback.model.startswith("claude-sonnet-5")
+    assert anthropic_fallback.temperature is None
+
+
+def test_health_reports_whether_temperature_reaches_the_model(env):
+    env(ANTHROPIC_API_KEY="sk-ant", LLM_AD_COPY_MODEL="claude-haiku-4-5")
+    tiers = lp.describe_providers()["tiers"]
+    assert tiers[lp.BRAIN]["temperature_sent"] is False  # claude-sonnet-5
+    assert tiers[lp.AD_COPY]["temperature_sent"] is True
+
+
+def test_predicate_boundaries_between_adjacent_opus_versions(env):
+    """4.6 keeps sampling, 4.7 lost it. A sloppy prefix would blur the two."""
+    assert lp.anthropic_accepts_temperature("claude-opus-4-6") is True
+    assert lp.anthropic_accepts_temperature("claude-opus-4-7") is False
+    assert lp.anthropic_accepts_temperature("claude-opus-4-8") is False
+    assert lp.anthropic_accepts_temperature("") is False
