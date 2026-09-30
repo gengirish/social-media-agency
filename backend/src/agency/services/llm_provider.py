@@ -228,6 +228,39 @@ def _model_for(tier: str, spec: ProviderSpec, is_primary: bool) -> str:
     return spec.models[tier]
 
 
+#: Anthropic models that still accept sampling parameters (``temperature``).
+#:
+#: Sampling was **removed** from the newer Claude models: Sonnet 5, Opus 5, Opus
+#: 4.8/4.7 and the Fable/Mythos 5 line reject a request carrying one outright with
+#: ``400 invalid_request_error: `temperature` is deprecated for this model``. It is
+#: still accepted on Opus 4.6, Sonnet 4.6, Haiku 4.5 and the Claude 3 line.
+#:
+#: This is an **allowlist, not a blocklist**, on purpose. A model missing from it
+#: loses a temperature and writes slightly less varied copy; a model wrongly sent
+#: one returns 400 and kills the campaign in its first node, which is how this
+#: surfaced — ``claude-sonnet-5`` became the brain/worker default while
+#: ``_build_client`` still passed ``temperature`` to every provider. Fail toward
+#: the request that works.
+#:
+#: Matched as a prefix, so dated snapshots (``claude-haiku-4-5-20251001``) match
+#: their family. Anthropic only — every other provider here still takes
+#: ``temperature``, and an OpenAI-compatible gateway that did not would be a
+#: different bug with a different message.
+_ANTHROPIC_SAMPLING_MODELS: tuple[str, ...] = (
+    "claude-3",
+    "claude-haiku-4",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+)
+
+
+def anthropic_accepts_temperature(model: str) -> bool:
+    """Whether this Anthropic model takes ``temperature`` without returning 400."""
+    return (model or "").strip().lower().startswith(_ANTHROPIC_SAMPLING_MODELS)
+
+
 def _build_client(tier: str, spec: ProviderSpec, temperature: float | None, is_primary: bool):
     tier_cfg = TIER_SETTINGS[tier]
     model = _model_for(tier, spec, is_primary)
@@ -237,9 +270,20 @@ def _build_client(tier: str, spec: ProviderSpec, temperature: float | None, is_p
     if spec.kind == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(
-            model=model, api_key=spec.api_key, temperature=temp, max_tokens=max_tokens
-        )
+        # Omit the kwarg rather than pass ``None``: ChatAnthropic's field defaults to
+        # None and its payload builder drops every None key, so leaving it unset sends
+        # no ``temperature`` at all. Passing 0 instead would be worse than useless
+        # — it is a valid value that suppresses the variety these tiers want.
+        anthropic_kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": spec.api_key,
+            "max_tokens": max_tokens,
+        }
+        if anthropic_accepts_temperature(model):
+            anthropic_kwargs["temperature"] = temp
+        else:
+            logger.debug("llm_temperature_unsupported", tier=tier, model=model)
+        return ChatAnthropic(**anthropic_kwargs)
 
     if spec.kind == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
@@ -302,10 +346,18 @@ def describe_providers() -> dict[str, Any]:
     for tier in ALL_TIERS:
         try:
             primary, *fallbacks = resolution_chain(tier)
+            primary_model = _model_for(tier, primary, True)
             tiers[tier] = {
                 "provider": primary.name,
-                "model": _model_for(tier, primary, True),
+                "model": primary_model,
                 "base_url": primary.base_url or None,
+                # Whether this tier's configured temperature actually reaches the
+                # model. False for the newer Claude models, which reject it.
+                "temperature_sent": (
+                    anthropic_accepts_temperature(primary_model)
+                    if primary.kind == "anthropic"
+                    else True
+                ),
                 "fallbacks": [
                     {"provider": s.name, "model": _model_for(tier, s, False)} for s in fallbacks
                 ],
