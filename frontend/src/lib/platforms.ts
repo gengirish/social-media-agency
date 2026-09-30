@@ -29,6 +29,21 @@ export function publishUnavailableReason(platform: string | null | undefined): s
   return UNAVAILABLE_PUBLISH_PLATFORMS[platform.toLowerCase()] ?? null;
 }
 
+/**
+ * Whether a *new* direct OAuth connection can be started anywhere in the app.
+ *
+ * Off: manual channels ("pages you manage yourself") are the supported way to add a
+ * channel, and Setup shows each platform as "Coming soon". Nothing underneath is
+ * removed or stubbed — the authorize route, the consent sheet, the PKCE callback
+ * page and the publishers are all intact and tested, so flipping this to `true` is the
+ * whole re-enable.
+ *
+ * Read by `setup/connected-accounts.tsx` and the `/welcome` onboarding step so the two
+ * cannot disagree. An account already connected keeps working, keeps showing, and can
+ * still be disconnected.
+ */
+export const OAUTH_CONNECT_ENABLED = false;
+
 /** True when the backend has a working publisher for this platform. */
 export function canPublish(platform: string | null | undefined): boolean {
   return publishUnavailableReason(platform) === null;

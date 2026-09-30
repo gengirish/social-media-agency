@@ -89,9 +89,16 @@ H1 "Brand profile". Cadence's IntakeScreen for the active client:
 
 ### Setup › Accounts `/setup/accounts`
 **File**: `src/app/(dashboard)/setup/accounts/page.tsx` · `components/setup/connected-accounts.tsx` | **Client** | [LIVE] <!-- verified: 260923 -->
-H1 "Connected accounts". The active client's channels (`GET /setup/{id}/accounts`) and a Connect button per platform (X, LinkedIn, Facebook).
+H1 "Accounts" (was "Connected accounts" until 260930). The active client's channels come from `GET /setup/{id}/accounts`.
 
-<!-- verified: 260929 --> **"Pages you manage yourself"** (`ManualChannels` in `connected-accounts.tsx`) is a second, separate list below the OAuth one: platform (the nine in `MANUAL_PLATFORMS`) + handle + optional page URL → `POST /setup/{id}/accounts/manual`, with remove. Kept apart from the connected list on purpose — a manual row has no tokens and nothing publishes to it, so it must never render as a green "Connected" badge. The "connect a channel to continue" empty state now also accepts a manual page. `trackFeature("add-manual-channel")`.
+<!-- verified: 260930 --> **Manual channels are the primary section and direct connections are marked "Coming soon."** `OAUTH_CONNECT_ENABLED` in `lib/platforms.ts` is the single switch, read here and by the `/welcome` onboarding step so the two cannot disagree. While it is `false`:
+
+- "Pages you manage yourself" leads the page as a solid panel with a primary **Add a page** button, and the header counts pages rather than live connections.
+- The platform grid sits below a `Direct connections` divider, each card reading "Coming soon" with no Connect button.
+- **An account already connected is untouched**: it still shows, still publishes, and can still be disconnected. The section's copy switches to acknowledge it rather than calling the feature "coming" to someone who already has one.
+- Nothing underneath is removed or stubbed. The authorize route, consent sheet, PKCE callback page and publishers are intact and tested, so flipping the flag to `true` is the whole re-enable.
+
+<!-- verified: 260929 --> **"Pages you manage yourself"** (`ManualChannels` in `connected-accounts.tsx`): platform (the nine in `MANUAL_PLATFORMS`) + handle + optional page URL → `POST /setup/{id}/accounts/manual`, with remove. Kept apart from the connected list on purpose — a manual row has no tokens and nothing publishes to it, so it must never render as a green "Connected" badge. The "connect a channel to continue" empty state now also accepts a manual page. `trackFeature("add-manual-channel")`.
  Connect opens a consent dialog listing the scopes this server actually requests, then redirects to the provider (for X, a PKCE challenge is generated first). Disconnect asks for confirmation. Platforms whose app credentials are unset say so. `?connected=<platform>` on return shows a success toast (`connect-account`). Replaces Cadence's simulated OAuth popup and the old `/settings?tab=platforms` screen.
 
 ### OAuth return `/api/oauth/[platform]/callback`

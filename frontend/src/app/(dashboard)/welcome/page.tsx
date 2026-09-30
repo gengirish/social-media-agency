@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/panel";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
 import { setupApi, type OAuthPlatformStatus } from "@/lib/api-setup";
+import { OAUTH_CONNECT_ENABLED } from "@/lib/platforms";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -114,6 +115,10 @@ export default function WelcomePage() {
   // dead end. `publishable` is false only once we have actually heard back; an
   // unanswered or failed status check keeps the original wording.
   const publishable = oauth === null || Object.values(oauth).some((p) => p.configured);
+  // Direct connections are only on offer when the app allows them *and* the server has
+  // credentials. While `OAUTH_CONNECT_ENABLED` is off this is false regardless, and the
+  // step talks about pages you post yourself — which is what Setup actually offers.
+  const directConnect = OAUTH_CONNECT_ENABLED && publishable;
   const postsDone = active.total_posts > 0;
   const allDone = profileDone && accountsDone && postsDone;
   const isReturning = profileDone || accountsDone || postsDone;
@@ -133,11 +138,11 @@ export default function WelcomePage() {
     },
     {
       id: "accounts",
-      label: publishable ? "Connect social accounts" : "Publishing — coming soon",
-      body: publishable
+      label: directConnect ? "Connect social accounts" : "Add the pages you post to",
+      body: directConnect
         ? "X, LinkedIn and Facebook publish for real once connected. Nothing goes out without your approval."
-        : "Publishing isn't switched on for this server yet, so there's nothing to connect. Everything else works — draft, review and approve posts, then copy them out to publish by hand.",
-      cta: accountsDone ? "Manage accounts" : publishable ? "Connect accounts" : "See what's available",
+        : "Tell us which pages this client has and we write, moderate and track every post for them. You open the platform and post it — nothing goes out on its own, and we never ask for a password.",
+      cta: accountsDone ? "Manage pages" : "Add your pages",
       href: "/setup/accounts",
       done: accountsDone,
       icon: <Link2 className="h-[15px] w-[15px]" />,
@@ -292,7 +297,7 @@ export default function WelcomePage() {
           <Link href="/setup/profile" className={cn(buttonVariants(), "animate-breathe")}>
             Start with the brand profile <ArrowRight className="h-3.5 w-3.5" />
           </Link>
-        ) : !accountsDone && publishable ? (
+        ) : !accountsDone && directConnect ? (
           <Link href="/setup/accounts" className={cn(buttonVariants(), "animate-breathe")}>
             Connect your first account <ArrowRight className="h-3.5 w-3.5" />
           </Link>

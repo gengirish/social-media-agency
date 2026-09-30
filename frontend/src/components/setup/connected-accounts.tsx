@@ -42,7 +42,7 @@ import { ConfirmDialog, ErrorBanner } from "@/components/ui/feedback";
 import { Eyebrow, Panel } from "@/components/ui/panel";
 import { PostDialog } from "@/components/posts/dialog";
 import { clientLabel, useActiveClient } from "@/lib/active-client";
-import { platformLabel, publishUnavailableReason } from "@/lib/platforms";
+import { OAUTH_CONNECT_ENABLED, platformLabel, publishUnavailableReason } from "@/lib/platforms";
 import { useSession } from "@/lib/session";
 import { trackFeature } from "@/lib/analytics";
 import {
@@ -217,67 +217,93 @@ export function ConnectedAccounts({ showContinue = true }: { showContinue?: bool
     <Panel dashed className="p-6 motion-safe:animate-screen-in sm:p-8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <Eyebrow>Wire up {clientLabel(active)}&apos;s channels</Eyebrow>
+          <Eyebrow>Set up {clientLabel(active)}&apos;s pages</Eyebrow>
           <h2 className="mt-3 font-display text-[23px] leading-snug text-ink">
-            Connect where their audience already is.
+            You run the pages. We do everything up to the post.
             <br />
-            <span className="text-[15px] text-muted">You can add more later — start with one.</span>
+            <span className="text-[15px] text-muted">Add each page here. No connecting, no access — publishing stays in your hands.</span>
           </h2>
         </div>
         <div className="shrink-0 text-right">
           <div className="font-mono text-[26px] leading-none text-accent-text">
-            {loading && !data ? "–" : connectedCount}
-            <span className="text-base text-muted">/{connectable.length}</span>
+            {loading && !data ? "–" : manualAccounts.length}
           </div>
-          <div className="mt-0.5 text-[10.5px] text-muted">live</div>
+          <div className="mt-0.5 text-[10.5px] text-muted">{manualAccounts.length === 1 ? "page" : "pages"}</div>
         </div>
       </div>
 
-      {/* Proactive trust strip — both real anxieties addressed before anyone connects anything. */}
+      {/* Proactive trust strip — the two things people ask before handing over a page. */}
       <div className="mt-6 flex flex-col gap-4 rounded-lg border border-line bg-canvas/50 p-4 sm:flex-row">
         <div className="flex flex-1 items-start gap-2.5 text-[11.5px] leading-relaxed text-slate-600">
           <ShieldCheck className="mt-px h-3.5 w-3.5 shrink-0 text-accent-text" />
-          These are real connections: X, LinkedIn and Facebook publish to the live account. Nothing is posted until you
-          approve it, and you sign in on the platform&apos;s own page — we never see the password.
+          We never ask for a password and hold no access to these pages. Nothing is posted for you: each approved post
+          waits until you open the platform and post it.
         </div>
         <div className="flex flex-1 items-start gap-2.5 text-[11.5px] leading-relaxed text-slate-600">
           <Sparkle className="mt-px h-3.5 w-3.5 shrink-0 text-accent-text" />
-          Connecting is free and unlimited — it never counts against your monthly generations, no matter how many
-          channels you add.
+          Adding pages is free and unlimited — it never counts against your monthly generations. Recording a post you
+          made is what counts one against your plan.
         </div>
       </div>
 
       {loadError ? (
-        <ErrorBanner message="Couldn't load connected accounts." onRetry={() => void load()} />
+        <ErrorBanner message="Couldn't load this client's channels." onRetry={() => void load()} />
       ) : (
-        <div className="mt-5 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {PLATFORMS.map((p, i) => (
-            <PlatformCard
-              key={p.id}
-              platform={p}
-              accounts={byPlatform(p.id)}
-              configured={data?.oauth[p.id]?.configured ?? false}
-              loading={loading && !data}
-              delay={i * 0.06}
-              onConnect={() => {
-                setConnectError(null);
-                setConsentFor(p);
-              }}
-              onDisconnect={setDisconnecting}
-              mayConnect={mayConnect}
-            />
-          ))}
-        </div>
+        <ManualChannels
+          primary
+          clientId={activeId}
+          accounts={manualAccounts}
+          mayManage={mayConnect}
+          onChanged={async () => {
+            await Promise.all([load(), refresh()]);
+          }}
+        />
       )}
 
-      <ManualChannels
-        clientId={activeId}
-        accounts={manualAccounts}
-        mayManage={mayConnect}
-        onChanged={async () => {
-          await Promise.all([load(), refresh()]);
-        }}
-      />
+      {/*
+        Direct connections, second and quiet. While OAUTH_CONNECT_ENABLED is off these
+        cards read "Coming soon" and offer no Connect button, but a client that already
+        has a connected account still sees it here and can still disconnect it.
+      */}
+      {!loadError && (
+        <div className="mt-8 border-t border-line pt-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink">
+              <Link2 className="h-3.5 w-3.5 text-muted" />
+              Direct connections
+            </div>
+            <span className="rounded-full border border-line bg-canvas/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              {OAUTH_CONNECT_ENABLED ? "available" : connectedCount > 0 ? `${connectedCount} live` : "coming soon"}
+            </span>
+          </div>
+          <p className="mt-1.5 max-w-2xl text-[11.5px] leading-relaxed text-muted">
+            {OAUTH_CONNECT_ENABLED
+              ? "Hand a platform's own sign-in the permission to post, and CampaignForge publishes on schedule."
+              : connectedCount > 0
+                ? "These were connected earlier and still publish on schedule, and you can disconnect them here. Starting a new direct connection is coming back shortly. Until then, add a page above and post it yourself."
+                : "Letting CampaignForge post to a channel directly is coming. Until then, add the page above and post it yourself \u2014 everything else, from writing to moderation to the record of what went out, works the same either way."}
+          </p>
+          <div className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {PLATFORMS.map((p, i) => (
+              <PlatformCard
+                key={p.id}
+                platform={p}
+                accounts={byPlatform(p.id)}
+                configured={data?.oauth[p.id]?.configured ?? false}
+                loading={loading && !data}
+                delay={i * 0.06}
+                comingSoon={!OAUTH_CONNECT_ENABLED}
+                onConnect={() => {
+                  setConnectError(null);
+                  setConsentFor(p);
+                }}
+                onDisconnect={setDisconnecting}
+                mayConnect={mayConnect}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {showContinue && (
         <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-5">
@@ -294,8 +320,8 @@ export function ConnectedAccounts({ showContinue = true }: { showContinue?: bool
             {hasAnyChannel
               ? "Nice — you're ready to post"
               : mayConnect
-                ? "Connect a channel, or add a page you manage yourself, to continue"
-                : "No channels yet — an owner or admin adds them"}
+                ? "Add a page you manage yourself to continue"
+                : "No pages yet — an owner or admin adds them"}
           </span>
         </div>
       )}
@@ -391,11 +417,14 @@ function ManualChannels({
   accounts,
   mayManage,
   onChanged,
+  primary = false,
 }: {
   clientId: string | null;
   accounts: ClientAccount[];
   mayManage: boolean;
   onChanged: () => Promise<void>;
+  /** Leading section rather than a footnote: solid panel, primary Add button. */
+  primary?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [platform, setPlatform] = useState<string>("instagram");
@@ -449,7 +478,12 @@ function ManualChannels({
   };
 
   return (
-    <div className="mt-6 rounded-xl border border-dashed border-line bg-canvas/40 p-4">
+    <div
+      className={cn(
+        "rounded-xl border p-4",
+        primary ? "mt-5 border-line bg-panel/70" : "mt-6 border-dashed border-line bg-canvas/40"
+      )}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-[13.5px] font-medium text-ink">
@@ -463,7 +497,7 @@ function ManualChannels({
           </p>
         </div>
         {mayManage && !open && (
-          <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
+          <Button size="sm" variant={primary ? "primary" : "secondary"} onClick={() => setOpen(true)}>
             <Plus className="h-3.5 w-3.5" /> Add a page
           </Button>
         )}
@@ -596,6 +630,7 @@ function PlatformCard({
   onConnect,
   onDisconnect,
   mayConnect,
+  comingSoon = false,
 }: {
   platform: PlatformMeta;
   accounts: ClientAccount[];
@@ -605,6 +640,8 @@ function PlatformCard({
   onConnect: () => void;
   onDisconnect: (account: ClientAccount) => void;
   mayConnect: boolean;
+  /** No new connection can be started yet. An existing one still shows and unhooks. */
+  comingSoon?: boolean;
 }) {
   const connected = accounts.length > 0;
   const Icon = platform.icon;
@@ -641,7 +678,13 @@ function PlatformCard({
             connected ? "bg-emerald-500 shadow-[0_0_5px_rgb(16_185_129/0.8)]" : "bg-slate-400"
           )}
         />
-        {loading ? "Checking…" : connected ? "Connected" : unavailable ? "Not available yet" : "Not connected"}
+        {loading
+          ? "Checking…"
+          : connected
+            ? "Connected"
+            : unavailable || comingSoon
+              ? "Coming soon"
+              : "Not connected"}
       </div>
 
       {unavailable ? (
@@ -668,6 +711,11 @@ function PlatformCard({
             </div>
           ))}
         </div>
+      ) : comingSoon ? (
+        <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted">
+          <Clock className="mt-0.5 h-3 w-3 shrink-0" />
+          Posting to {platform.name} for you is coming. Add the page above and post it yourself in the meantime.
+        </p>
       ) : !mayConnect ? (
         <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted">
           <Lock className="mt-0.5 h-3 w-3 shrink-0" />

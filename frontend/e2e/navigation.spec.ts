@@ -14,7 +14,7 @@ const PAGES: PageCheck[] = [
   { path: "/analytics", heading: /^analytics$/i },
   { path: "/welcome", heading: /./ },
   { path: "/setup/profile", heading: /^brand profile$/i },
-  { path: "/setup/accounts", heading: /^connected accounts$/i },
+  { path: "/setup/accounts", heading: /^accounts$/i },
   { path: "/create/content", heading: /^content$/i },
   { path: "/create/email", heading: /^email$/i },
   { path: "/create/launch", heading: /^launch$/i },
