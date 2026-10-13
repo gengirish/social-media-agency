@@ -151,7 +151,7 @@ class Subscription(Base):
     generations_used = Column(Integer, nullable=False, default=0, server_default="0")
     generations_limit = Column(Integer)
     # Generated media this billing period, weighted per kind
-    # (config.MEDIA_CREDIT_WEIGHTS: image 1, video 10). Deliberately not the
+    # (config.media_credit_weight: image 1, video 10). Deliberately not the
     # counter above — one video can cost an order of magnitude more than one LLM
     # call, so a shared counter lets an agency-tier org (generations_limit 9999
     # at $168) run up provider spend well above its revenue. A null limit falls

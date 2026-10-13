@@ -111,10 +111,16 @@ worst-case fal spend is orders of magnitude above revenue. Growth is worse per d
 generations on $36.
 
 - Keep `generations_used` for text. Add `media_credits_used` / `media_credits_limit`.
-- **Image = 1 credit, video = 10**, and the weights live in a **`MEDIA_CREDIT_WEIGHTS` dict in
-  `config.py`, not inline at the call sites.** The 10:1 ratio is an estimate of the real cost
-  ratio; making it configuration means re-pricing after the first month of real fal invoices is an
-  env change, not a migration and not a code review. Read the weight, never hardcode `10`.
+- **Image = 1 credit, video = 10**, read through **`config.media_credit_weight(kind)`** over the
+  `media_credit_image` / `media_credit_video` **Settings** fields — never inline at a call site.
+  The 10:1 ratio is an estimate of the real cost ratio, so re-pricing after the first month of
+  real fal invoices must be an env change, not a migration and not a code review. An unknown kind
+  raises rather than defaulting to 1: silently charging an image's price for something that is not
+  an image is how a provider bill outruns revenue with nothing looking wrong.
+
+  *Corrected 261013: this said "a `MEDIA_CREDIT_WEIGHTS` dict in `config.py`". A module constant
+  would not have been env-overridable, which is the whole property the paragraph claims. Settings
+  fields behind an accessor are what shipped.*
 - **Video is Growth and above.** Free and Starter get images only. Starter at 50 credits would be
   5 videos, which reads as worse than offering none — a meter that empties after five clicks
   generates support load, not upgrades. "Video on Growth and above" is also one sentence on a
@@ -139,8 +145,27 @@ generations on $36.
   not read as zero.
 
 **The check and increment must be atomic here**, unlike the known Amplify race. Overshooting an
-Amplify pack by one costs pennies; overshooting video costs money. Conditional
-`UPDATE ... WHERE media_credits_used < limit RETURNING` and branch on rowcount.
+Amplify pack by one costs pennies; overshooting video costs money. One conditional statement, and
+branch on whether a row came back:
+
+```sql
+UPDATE subscription
+   SET media_credits_used = media_credits_used + :weight,
+       videos_used        = videos_used + :is_video
+ WHERE org_id = :org_id
+   AND media_credits_used + :weight <= :limit
+RETURNING media_credits_used
+```
+
+*Corrected 261013: this line read `WHERE media_credits_used < limit`, which is the bare comparison
+the bullet above forbids — under it a 10-credit video lands on the last single credit. The guard
+has to be `+ :weight <= :limit`. The docstring in `media_credits.py` always had it right, but a
+later reader working from the plan would have reintroduced the hole.*
+
+Zero rows means a lost race. The caller has already paid the provider at that point, so it logs
+`media_charge_lost_race` and **discards the asset** — a charge that did not land must not become
+free media. Nothing in the credits module can enforce that; it is a contract the generation path
+honours.
 
 **Dedupe by hash.** Hash prompt + model + params; a repeat returns the existing asset and charges
 nothing. Users re-click; this is the largest real saving in the whole plan, larger than tier
@@ -159,10 +184,40 @@ with no media. Instead:
    extra cost. Escalate to a **brain-tier** vision call only when it trips, or when the image
    carries rendered text — which is where the real risk lives: a wrong price, an unapproved claim,
    a competitor's mark. Same risk class `ad_guardrails.py` already handles for copy.
-3. **Cache the verdict on `media_asset`**, keyed by content hash. A text edit resets the piece to
-   `draft` and re-moderates the copy; the unchanged image must not be rescanned.
-4. **Fail open visibly** — `metadata.moderation.status = "unavailable"` plus a
-   `moderation_unavailable` log, identical to the text path.
+
+   This rung only exists if the signal survives the plumbing. `generate_social_image`'s
+   three-state return carried `status` / `image_url` / `platform` / `message` and **dropped
+   `has_nsfw_concepts`**, so until 261013 every image either escalated to a vision call or went
+   unscreened — inverting the entire cost argument for screening at generation time. Fixed by
+   forwarding the key when fal returns it. Any future provider added here must forward its own
+   equivalent, or this rung silently stops firing: there is no error, the ladder just always
+   starts at rung 2.
+3. **A clean rung 1 is `passed`, not `unavailable`** — with `vision_checked=False` and a `reason`
+   recording which rungs ran.
+
+   *Corrected 261013.* The first draft of this section borrowed the text path's rule that
+   `passed` requires the model to have run (`ModerationResult.llm_checked`). That rule does not
+   transfer: text has **one** check, media has **two**, and rung 1 passing cleanly is a real
+   screen rather than a no-op. Carrying the rule over made the modal image — clean provider
+   signal, no text intent, which is most images — record as `unavailable`, so any UI badge for it
+   would have cried wolf on nearly every asset, and a deliberate skip would have been
+   indistinguishable on the row from a provider outage.
+
+   `MediaModerationResult` therefore carries a **`reason`**, surfaced through `as_metadata()`:
+   `provider_only` (rung 1 clean, no escalation needed), `vision` (rung 2 ran), and the failure
+   reasons below. `unavailable` is now reserved for cases where a check that *should* have run
+   did not, which is what makes it worth surfacing at all.
+4. **The verdict cache is the `media_asset` row itself**, keyed on `prompt_hash` — not a separate
+   content hash. §1D already dedupes on `(org_id, prompt_hash)` with a unique index, so a repeat
+   generate returns the existing row carrying its verdict and no rescan happens. *The first draft
+   said "content hash" here while the schema enforces `prompt_hash`; those are different keys —
+   two seeds off one prompt share a `prompt_hash` but not their bytes — and only one of them is
+   something the database can hold.* A text edit resets the piece to `draft` and re-moderates the
+   copy; the unchanged image is not rescanned.
+5. **Fail open visibly** — `status = "unavailable"` plus a `media_moderation_unavailable` log,
+   identical in discipline to the text path. Genuine unavailability only: video (no provider
+   signal and no frame sampling yet), a missing URL, or the vision call erroring, timing out or
+   returning unparseable JSON.
 
 The gate itself still lives before `approved`: **approve refuses when an attached `media_asset`
 has no verdict row.** That is a cheap row lookup, not a model call, so rule 3 holds at zero
@@ -288,16 +343,43 @@ Plus `media_job` for Phase 8: `id`, `org_id`, `media_asset_id`, `provider_job_id
 
 Rewrite `routers/content.py:596` to the Amplify shape, logic in `services/media_generation.py`:
 
-`get_org_piece` → `get_org_client` → `require_media_credits(1)` → prompt assembled in code per
-**§1F** → dedupe check on `prompt_hash` → `generate_social_image` → persist via Phase 0 →
-`request.is_disconnected()` check (save and charge nothing, like Post Studio) → write
-`media_asset` + append to `media_urls` → `charge_media_credits` → commit.
+`get_org_piece` → `get_org_client` → prompt assembled in code per **§1F** → dedupe check on
+`prompt_hash` → `require_media_credits("image")` → `generate_social_image` →
+**`request.is_disconnected()` check** (save and charge nothing, like Post Studio) → persist via
+Phase 0 → `moderate_media` → `charge_media_credits` + write `media_asset` + append to
+`media_urls` → commit.
 
-Malformed or empty provider response → `502` "no media credits were used", nothing saved.
+*Corrected 261013 — the cancel check was specified after `persist_from_url`.* "After the provider
+returns" was only meant to say we must not bail before the provider cost is already sunk; it was
+never meant to license doing extra work once nobody is listening. Persisting after a cancel writes
+paid-for bytes that no row points at — an orphan invisible to the per-org prefix accounting §1C
+relies on. Check it between the provider and the first storage write.
+
+`charge_media_credits` sits immediately before the `MediaAsset` INSERT rather than after it. The
+lost-race contract says a charge that did not land must not save the asset, and keeping the two
+statements adjacent in one transaction gives that literally instead of by convention.
+
+**Dedupe precedes the quota check deliberately**, so a dedupe hit is free even for an org at its
+cap. Nothing is generated, so nothing is charged; re-attaching an image the org already paid for
+is not a loophole.
+
+**Status handling, enforced here because this is the only path that writes media today:** a
+`published` piece is refused (`published_locked`, the shape
+`post_studio.attach_creative_brief` already uses) — an image appended to a live post is not in
+that post. An `approved` or `scheduled` piece is reset to `draft` in the same transaction as the
+`media_urls` append, which is what §5 requires of any `media_urls` edit. Stage 3 consolidates the
+rule into `content_approval.py` when `PATCH` grows the same behaviour; until then the duplication
+is deliberate, because the alternative is a window in which an approved piece carries an
+unreviewed image and publishing is real.
+
+Malformed or empty provider response → `502` "no media credits were used", nothing saved. A blank
+`FAL_API_KEY` → `503 media_generation_not_configured` instead, for the same reason
+`video_not_in_plan` is distinct from a quota error: the UI should say "set a key", not offer a
+retry that cannot work.
 
 ### Phase 3 — media credits in billing
 
-`PLAN_CONFIG` entries per the §1D table, `MEDIA_CREDIT_WEIGHTS` in `config.py`,
+`PLAN_CONFIG` entries per the §1D table, `media_credit_weight` in `config.py`,
 `media_credits_limit_for` with the `None` fallback, `require_media_credits(kind)` /
 `charge_media_credits(kind)` with the atomic conditional UPDATE, `402 media_credit_quota_exceeded`,
 reset on `invoice.paid` alongside `generations_used`.
@@ -405,7 +487,7 @@ unblocked. Each is reversible at the cost named, and none of them gates starting
 | Was open | Default taken | Where | Cost to reverse |
 |---|---|---|---|
 | Meta app review in hand? | **Assume not.** Phase 7 becomes a follow-up branch; submit the review as an admin task | §1H | None — Phase 7 just starts earlier |
-| Video:image credit ratio | **10:1, but read from `MEDIA_CREDIT_WEIGHTS` in `config.py`** | §1D | Env change. No migration, no code review |
+| Video:image credit ratio | **10:1, read from `config.media_credit_weight`** | §1D | Env change. No migration, no code review |
 | R2 credentials available? | **Assume not.** Two-driver storage, `local` for dev/CI | §1I | None — flip the driver by setting credentials |
 | Video on which tiers? | **Growth and above.** Free/Starter images only | §1D | Widening a plan limit is additive; narrowing one later is not, which is why this starts narrow |
 | Keep "Get creative brief"? | **Yes, both buttons, always** | §1F, Phase 5 | None |
@@ -415,7 +497,7 @@ Widening later is additive and announceable; taking a capability back is neither
 
 ### Pre-launch checklist (not blockers — do before the pricing page goes live)
 
-1. **Reconcile `MEDIA_CREDIT_WEIGHTS` against the first month of real fal.ai invoices.** The 10:1
+1. **Reconcile the credit weights against the first month of real fal.ai invoices.** The 10:1
    ratio is an estimate. Product rule 4 applies to the pricing page as much as to a dashboard: ship
    the number you measured, not the one that was convenient.
 2. **Confirm the `media_storage_driver` startup log reads `r2` in production.** A `local` driver on
@@ -447,7 +529,7 @@ So: **freeze the contracts in one sequential stage, then fan out.**
 ### Stage 1 — solo, sequential. Every shared-file edit for the whole feature, once.
 
 Schema (`init.sql` + `tables.py` + the one migration), `config.py` fields and
-`MEDIA_CREDIT_WEIGHTS`, `PLAN_CONFIG` entries, the media router registration in `main.py`, the
+`media_credit_weight`, `PLAN_CONFIG` entries, the media router registration in `main.py`, the
 full Phase 0 storage service — **and typed stubs raising `NotImplementedError`** for everything
 Stage 2 fills.
 
@@ -478,6 +560,23 @@ Phase 5 (frontend: thumbnails, live Create image, manual Download) and Phase 6 (
 
 Integration, then `ruff` + `mypy` + `pytest` and `npm run lint` + `npm run build`. A clean compile
 has missed runtime crashes in this repo before; run the tests.
+
+Carried-forward cleanups, each raised by a Stage 2 agent that correctly declined to edit a shared
+file:
+
+- **`tests/conftest.py::create_subscription` takes no `media_credits_used` / `media_credits_limit`
+  / `videos_used`**, so Stage 2 wrote private row factories. Fold one into the shared factory:
+  `test_media_generation.py` and the billing-UI tests want the same rows, and three private copies
+  is how row factories drift apart.
+- **Get `org_id` into the dict `load_brand_context` returns**, or media moderation traces carry no
+  tenant tag and cannot be filtered per org in Langfuse. A caller-side fix.
+- The dedupe-on-`prompt_hash` bullet sits under §1D's credits heading but is **generation-side**
+  work — nothing in the credits module knows about prompt hashes. Owned by `media_generation.py`;
+  recorded here so it cannot fall between the two.
+- **Assert on keys, not whole dicts, for a media moderation verdict.**
+  `MediaModerationResult.as_metadata()` carries a `reason` the text path has no equivalent for, so
+  the dict-equality style `test_approval_gate.py` uses for text (`{"status": ..., "issues": []}`)
+  breaks here — and would break again the next time the shape grows.
 
 ### Review agents — parallel, read-only, after each stage
 

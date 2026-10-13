@@ -12,7 +12,7 @@
 -- Media quota is deliberately NOT the text generations counter. One video can
 -- cost an order of magnitude more than one LLM call, so a shared counter lets
 -- an agency-tier org (generations_limit 9999 at $168) run up fal spend far
--- above its revenue. Weights live in config.py::MEDIA_CREDIT_WEIGHTS.
+-- above its revenue. Weights live in config.py::media_credit_weight.
 --
 -- A NULL limit falls back to the tier's PLAN_CONFIG value (see
 -- services/media_credits.py::media_credits_limit_for), exactly as

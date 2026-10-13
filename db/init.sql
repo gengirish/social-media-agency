@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS subscription (
     generations_used INTEGER NOT NULL DEFAULT 0,
     generations_limit INTEGER,
     -- Generated media this billing period, weighted per kind
-    -- (config.py::MEDIA_CREDIT_WEIGHTS: image 1, video 10). Deliberately NOT
+    -- (config.py::media_credit_weight: image 1, video 10). Deliberately NOT
     -- the generations counter above -- one video can cost an order of magnitude
     -- more than one LLM call, so a shared counter lets an agency-tier org run
     -- up provider spend well above its revenue. NULL limit falls back to

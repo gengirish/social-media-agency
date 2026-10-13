@@ -20,10 +20,16 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import structlog
 from fastapi import HTTPException, status
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agency.config import media_credit_weight
 from agency.models.tables import Subscription
+from agency.services.billing import media_credits_limit_for, video_limits_for
+
+logger = structlog.get_logger()
 
 
 def media_quota_exceeded(detail: str) -> HTTPException:
@@ -58,7 +64,37 @@ async def require_media_credits(db: AsyncSession, org_id: UUID, kind: str) -> Su
 
     Returns the subscription so the caller can avoid a second load.
     """
-    raise NotImplementedError("Phase 3")
+    sub = (
+        await db.execute(select(Subscription).where(Subscription.org_id == org_id))
+    ).scalar_one_or_none()
+    if sub is None:
+        raise media_quota_exceeded("No subscription on file for this workspace.")
+
+    if kind == "video":
+        video_enabled, videos_limit = video_limits_for(sub)
+        if not video_enabled:
+            raise video_not_in_plan(
+                "Short video generation is available on Growth and above."
+            )
+        # Applies on agency too: its generations_limit of 9999 is a sentinel
+        # meaning unlimited, and unlimited video generation is unbounded loss.
+        if (sub.videos_used or 0) >= videos_limit:
+            raise media_quota_exceeded(
+                "Video limit reached for this billing period "
+                f"({videos_limit} clips)."
+            )
+
+    # Weight-aware rather than a bare ``< limit``: a 10-credit video must not
+    # slip through on the last remaining credit. Never hardcode the weight —
+    # it is a setting so the ratio can be re-priced from the environment.
+    weight = media_credit_weight(kind)
+    limit = media_credits_limit_for(sub)
+    if (sub.media_credits_used or 0) + weight > limit:
+        raise media_quota_exceeded(
+            "Media credit limit reached for this billing period "
+            f"({limit} credits)."
+        )
+    return sub
 
 
 async def charge_media_credits(db: AsyncSession, org_id: UUID, kind: str) -> int:
@@ -81,4 +117,48 @@ async def charge_media_credits(db: AsyncSession, org_id: UUID, kind: str) -> int
     and do not save the asset; a charge that did not land must not become free
     media. Caller commits.
     """
-    raise NotImplementedError("Phase 3")
+    weight = media_credit_weight(kind)
+    is_video = 1 if kind == "video" else 0
+
+    sub = (
+        await db.execute(select(Subscription).where(Subscription.org_id == org_id))
+    ).scalar_one_or_none()
+    if sub is None:
+        logger.warning("media_charge_no_subscription", org_id=str(org_id), kind=kind)
+        raise media_quota_exceeded("No subscription on file for this workspace.")
+
+    # The limit is read in Python because a NULL column falls back to the tier's
+    # PLAN_CONFIG value (``media_credits_limit_for``) — a rule SQL does not know.
+    # It is safe to read separately: only a plan change moves it, while the
+    # *counter* is exactly what races, and that stays inside the one statement.
+    limit = media_credits_limit_for(sub)
+    used = func.coalesce(Subscription.media_credits_used, 0)
+    result = await db.execute(
+        update(Subscription)
+        .where(Subscription.org_id == org_id, used + weight <= limit)
+        .values(
+            media_credits_used=used + weight,
+            videos_used=func.coalesce(Subscription.videos_used, 0) + is_video,
+        )
+        .returning(Subscription.media_credits_used)
+        .execution_options(synchronize_session=False)
+    )
+    if result.first() is None:
+        # Someone else took the credits between the pre-check and here. The
+        # caller has already paid the provider, but a charge that did not land
+        # must not become free media: refuse and let the caller discard it.
+        logger.warning(
+            "media_charge_lost_race",
+            org_id=str(org_id),
+            kind=kind,
+            weight=weight,
+            limit=limit,
+        )
+        raise media_quota_exceeded(
+            "Media credit limit reached for this billing period "
+            f"({limit} credits)."
+        )
+
+    # The in-session copy is now stale; drop it so a later read sees the charge.
+    db.expire(sub)
+    return weight
