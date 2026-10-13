@@ -114,10 +114,28 @@ class Settings(BaseSettings):
     # ignored quietly; leave it blank and nothing is filtered (fail open).
     dodo_brand_id: str = ""
 
-    # Storage
+    # Storage (services/media_storage.py). S3-compatible, and in production
+    # that means Cloudflare R2 — chosen on egress, because generated media is
+    # pulled repeatedly (platform upload, Queue thumbnails on every render,
+    # portal, client review, manual download) and R2 does not bill it. The
+    # backend runs on Fly, not Vercel, so Vercel Blob's one advantage does not
+    # apply and would add egress out of Vercel on every upload.
+    #
+    # Set s3_endpoint_url + both keys and the `r2` driver activates. Leave them
+    # blank and the `local` driver is used instead: a real driver with the same
+    # keys, derivative and return shape, not a stub, so the feature is testable
+    # and demoable before the R2 account exists. The resolved driver is logged
+    # at startup as `media_storage_driver` -- a silent `local` driver in
+    # production means media that vanishes on redeploy.
     s3_bucket_name: str = "campaignforge-media"
+    s3_endpoint_url: str = ""
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
+    # Public base URL media is served from (an R2 custom domain). Blank falls
+    # back to the endpoint+bucket form, which works but is uncached.
+    media_public_base_url: str = ""
+    # Where the `local` driver writes. Gitignored; never used in production.
+    media_local_dir: str = ".media"
 
     # AgentMail
     agentmail_api_key: str = ""
@@ -148,8 +166,20 @@ class Settings(BaseSettings):
     # unset (see utils.encryption).
     token_encryption_key: str = ""
 
-    # Image Generation
+    # Media generation (fal.ai). A blank key disables the feature, exactly as a
+    # blank LLM provider key does.
     fal_api_key: str = ""
+    # flux/schnell on the sync endpoint: cheap and a few seconds. Video gets the
+    # async queue endpoint instead (see services/media_storage.py notes and
+    # MediaJob) because a minutes-long sync call starves Fly workers.
+    fal_image_model: str = "fal-ai/flux/schnell"
+    fal_video_model: str = "fal-ai/bytedance/seedance/v1/lite/text-to-video"
+    # Credit weights, as env-overridable settings rather than constants in code.
+    # The 10:1 ratio is an estimate of the real cost ratio, so re-pricing after
+    # the first month of real provider invoices has to be an env change -- not a
+    # migration, and not a code review. Read these; never hardcode a weight.
+    media_credit_image: int = 1
+    media_credit_video: int = 10
 
     # Trends / Search
     exa_api_key: str = ""
@@ -170,3 +200,31 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+#: Media kinds that cost credits. Mirrors ``MediaAsset.KINDS``.
+MEDIA_KINDS: tuple[str, ...] = ("image", "video")
+
+
+def media_credit_weight(kind: str) -> int:
+    """Credits one generation of ``kind`` costs.
+
+    Read this instead of hardcoding a number: the weights are settings so the
+    ratio can be corrected from the environment once real provider invoices land
+    (see ``Settings.media_credit_image`` / ``media_credit_video``).
+
+    An unknown kind raises rather than defaulting to 1 — silently charging an
+    image's price for something that is not an image is how a provider bill
+    outruns revenue without anything looking wrong.
+    """
+    settings = get_settings()
+    weights = {
+        "image": settings.media_credit_image,
+        "video": settings.media_credit_video,
+    }
+    try:
+        return int(weights[kind])
+    except KeyError:
+        raise ValueError(
+            f"Unknown media kind {kind!r}; expected one of {sorted(weights)}"
+        ) from None
