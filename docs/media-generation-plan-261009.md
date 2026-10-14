@@ -411,10 +411,26 @@ would hide the input to the thing next to it.
 
 **Instagram visual posting is complete at the end of this phase, for manual channels.**
 
+Two things this phase learned that the plan had not said:
+
+- **Every thumbnail is itself a download link**, not just the action-row button. The action row
+  only renders while `status !== "published"`, so an operator who records a manual post and then
+  loses the file would otherwise have no way back to an image they paid for.
+- **Generating media on an `approved` piece resets it to `draft` (Phase 2), and the card cannot
+  see that from its own row.** Phase 2 owns the reset; Phase 5 owns telling the user. The Queue
+  passes `onMediaChanged` so the page reloads when the status may have moved — without it the
+  badge keeps claiming "Approved" on a post the server has sent back for review.
+- `BriefPanel`'s copy said "CampaignForge doesn't make or attach the image". True while the brief
+  was words for a designer; half false the moment Create image shipped beside it. Any phase that
+  adds a capability has to re-read the copy next to it — nothing breaks when that copy goes
+  stale.
+
 ### Phase 6 — media on connected channels
 
 Add `"media_urls": piece.media_urls or []` to both `content_data` dicts
-(`routers/publishing.py:115`, `services/scheduler.py:270`), then per platform:
+(`routers/publishing.py`, `services/scheduler.py` — the line numbers this plan first gave were
+stale; the dicts are the ones built immediately before each `publisher.publish(...)` call), then
+per platform:
 
 - **X** — `POST /2/media/upload` INIT/APPEND/FINALIZE → `media.media_ids` on the tweet.
 - **LinkedIn** — `assets?action=registerUpload` → PUT bytes → `ShareContent` with the asset URN.
@@ -564,12 +580,28 @@ has missed runtime crashes in this repo before; run the tests.
 Carried-forward cleanups, each raised by a Stage 2 agent that correctly declined to edit a shared
 file:
 
-- **`tests/conftest.py::create_subscription` takes no `media_credits_used` / `media_credits_limit`
-  / `videos_used`**, so Stage 2 wrote private row factories. Fold one into the shared factory:
-  `test_media_generation.py` and the billing-UI tests want the same rows, and three private copies
-  is how row factories drift apart.
+- ~~`tests/conftest.py::create_subscription` takes no media kwargs~~ — **done in Stage 3.** The
+  shared factory now takes `media_credits_used` / `media_credits_limit` / `videos_used`, with
+  `None` on a limit meaning "the tier's value" so that an explicit `0` still reads as exhausted.
+- ~~Consolidate the `approved → draft` reset into `content_approval.py`~~ — **moot, and this is
+  worth knowing rather than doing.** `ContentUpdateRequest` has no `media_urls` field, so `PATCH`
+  cannot change a piece's media at all; `media_urls` is response-only. Exactly one path appends to
+  it (`media_generation.py`), and that path does the reset. Amplify and Post Studio only ever
+  write `media_urls=[]` on a fresh draft. So the chain — attach resets to `draft`, approve refuses
+  unscreened media, publish requires `approved` — is closed with no second write site to
+  consolidate. Re-audit this if a detach-media or media-upload endpoint is ever added: that would
+  be the second writer, and the reset would then need to move somewhere shared.
 - **Get `org_id` into the dict `load_brand_context` returns**, or media moderation traces carry no
   tenant tag and cannot be filtered per org in Langfuse. A caller-side fix.
+- **Facebook still ignores hashtags.** X and LinkedIn append them to the body; `_publish_facebook`
+  never has. So one approved piece posts with hashtags on two platforms and without them on a
+  third. Pre-existing, not introduced by this work, and a copy change on a live path — but it is a
+  real inconsistency and this is the first time anyone has written it down.
+- **X media upload may require OAuth 1.0a signing on some app tiers.** The uploader sends the
+  stored bearer token, matching `_publish_twitter`. If our app's credentials turn out to need 1.0a
+  for `media/upload`, INIT returns 403 and it surfaces as a clean publish failure rather than a
+  bad post — but it cannot be verified without a real token, so it is the first thing to check
+  when media publishing is tried against a live X account.
 - The dedupe-on-`prompt_hash` bullet sits under §1D's credits heading but is **generation-side**
   work — nothing in the credits module knows about prompt hashes. Owned by `media_generation.py`;
   recorded here so it cannot fall between the two.

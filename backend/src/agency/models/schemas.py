@@ -252,6 +252,39 @@ class CampaignListResponse(BaseModel):
 # --- Content ---
 
 
+class MediaAssetOut(BaseModel):
+    """One generated image or short video attached to a post.
+
+    ``thumb_url`` is ``""`` when no derivative was made (video, or a failed
+    thumbnail) — clients fall back to ``url``. ``moderation`` is ``{}`` for an
+    asset that was never screened, which is what the approve gate refuses; see
+    ``services.media_moderation.verdict_missing``.
+    """
+
+    id: UUID
+    kind: str
+    url: str
+    thumb_url: str = ""
+    width: int | None = None
+    height: int | None = None
+    duration_ms: int | None = None
+    moderation: dict = Field(default_factory=dict)
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GenerateImageResponse(MediaAssetOut):
+    """One generated asset, plus whether it was reused rather than generated.
+
+    ``deduped`` is not cosmetic: a dedupe hit charges no media credits, and the
+    UI has to be able to say so. Reporting a reuse as a fresh generation would
+    imply a charge that never happened.
+    """
+
+    deduped: bool = False
+
+
 class ContentPieceResponse(BaseModel):
     id: UUID
     campaign_id: UUID | None
@@ -275,6 +308,14 @@ class ContentPieceResponse(BaseModel):
     # without it the UI has only the flattened body and cannot tell a headline
     # from a description.
     metadata_: dict = Field(default_factory=dict)
+    # The publish-facing projection: resolved public URLs, in attach order. This
+    # is what the publishers read and what ``content_approval`` already counts as
+    # content, so it stays a plain list of strings.
+    media_urls: list[str] = Field(default_factory=list)
+    # The records behind those URLs. Carries the thumbnail the Queue renders and
+    # the moderation verdict a reviewer needs before approving, neither of which
+    # a bare URL can express.
+    media: list[MediaAssetOut] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

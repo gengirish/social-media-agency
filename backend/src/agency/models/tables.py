@@ -308,6 +308,16 @@ class ContentPiece(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     campaign = relationship("Campaign", back_populates="content_pieces")
+    # There is deliberately NO ``media`` relationship here. Attached media is
+    # loaded explicitly by the handful of endpoints that serialise it, via
+    # ``routers.content._media_by_content``.
+    #
+    # A ``lazy="selectin"`` relationship was tried on 261014 and reverted: it
+    # makes EVERY ``select(ContentPiece)`` in the codebase emit a second query
+    # against media_asset, including the scheduler's once-a-minute sweep for due
+    # content — the highest-frequency query in the system — which pays for a join
+    # it never reads. It also broke 14 unrelated tests that build a partial
+    # schema, which is the cheap version of the same signal.
 
     # Mirrors db/init.sql. The partial index serves the scheduler's once-a-minute
     # sweep for due content — the highest-frequency query in the system.

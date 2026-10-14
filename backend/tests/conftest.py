@@ -299,6 +299,12 @@ async def create_subscription(
     posts_used: int = 0,
     generations_used: int = 0,
     generations_limit: int | None = None,
+    # Generated-media quota. ``None`` on a limit means "the tier's value", the
+    # same convention the column itself uses -- passing 0 explicitly is how a
+    # test says "exhausted", and the two must stay distinguishable.
+    media_credits_used: int = 0,
+    media_credits_limit: int | None = None,
+    videos_used: int = 0,
     status: str = "active",
     billing_customer_id: str | None = None,
     billing_subscription_id: str | None = None,
@@ -318,6 +324,11 @@ async def create_subscription(
         generations_limit=(
             plan["generations_limit"] if generations_limit is None else generations_limit
         ),
+        media_credits_used=media_credits_used,
+        media_credits_limit=(
+            plan["media_credits_limit"] if media_credits_limit is None else media_credits_limit
+        ),
+        videos_used=videos_used,
         status=status,
         billing_customer_id=billing_customer_id,
         billing_subscription_id=billing_subscription_id,

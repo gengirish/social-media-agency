@@ -17,7 +17,8 @@ Order of operations, which is the whole contract (copied from Amplify):
 
 1. ``get_org_piece`` → ``get_org_client``  (404 across orgs)
 2. ``build_image_prompt``                  (no model call — see below)
-3. dedupe on ``prompt_hash``               (return the existing asset, charge nothing)
+3. dedupe on ``prompt_hash``               (return the existing asset with
+   ``deduped=True``, charge nothing)
 4. ``require_media_credits(db, org_id, "image")``
 5. generate
 6. ``request.is_disconnected()`` → save nothing, charge nothing
@@ -219,8 +220,15 @@ async def generate_image_for_piece(
     style: str = "professional",
     prompt_override: str | None = None,
     is_disconnected: Any = None,
-) -> MediaAsset:
-    """Run the full flow above and return the saved asset.
+) -> tuple[MediaAsset, bool]:
+    """Run the full flow above. Returns ``(asset, deduped)``.
+
+    ``deduped`` is True when step 3 hit and this asset was generated earlier.
+    The router reports it as ``deduped`` on the response so the UI can say
+    "reused an existing image — no credits were used". It cannot be inferred
+    from the row: a deduped asset carries the ``credits_charged`` of its
+    original generation, so nothing on it distinguishes the two cases, and
+    guessing would mean implying a charge that did not happen.
 
     ``is_disconnected`` is the request's ``is_disconnected`` callable, checked
     **after** the provider returns but **before** anything is stored: a user who
@@ -293,7 +301,7 @@ async def generate_image_for_piece(
             content_id=str(content_id),
             asset_id=str(existing.id),
         )
-        return existing
+        return existing, True
 
     # 4. Quota before the provider is called, never after.
     await require_media_credits(db, org_id, "image")
@@ -401,4 +409,4 @@ async def generate_image_for_piece(
         credits=charged,
         moderation=verdict.status,
     )
-    return asset
+    return asset, False

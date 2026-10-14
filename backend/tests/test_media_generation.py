@@ -261,10 +261,12 @@ async def test_quota_precedes_the_provider_on_the_happy_path(
 async def test_asset_row_and_media_urls_are_both_written(
     db: Any, tenant: SimpleNamespace, seam: Recorder
 ) -> None:
-    asset = await generate_image_for_piece(
+    asset, deduped = await generate_image_for_piece(
         db, org_id=tenant.org_id, content_id=tenant.content_id, user_id=str(tenant.user_id)
     )
 
+    # A real generation, and the router must be able to say so.
+    assert deduped is False
     assert asset.kind == "image"
     assert asset.storage_key == STORED.storage_key
     assert asset.url == STORED.url
@@ -290,16 +292,21 @@ async def test_asset_row_and_media_urls_are_both_written(
 async def test_dedupe_returns_the_existing_asset_and_charges_nothing(
     db: Any, tenant: SimpleNamespace, seam: Recorder
 ) -> None:
-    first = await generate_image_for_piece(
+    first, first_deduped = await generate_image_for_piece(
         db, org_id=tenant.org_id, content_id=tenant.content_id
     )
+    assert first_deduped is False
     seam.calls.clear()
 
-    second = await generate_image_for_piece(
+    second, deduped = await generate_image_for_piece(
         db, org_id=tenant.org_id, content_id=tenant.content_id
     )
 
     assert second.id == first.id
+    # The flag is the only honest way for the UI to say "reused — no credits
+    # were used": a deduped row carries the original generation's
+    # ``credits_charged``, so nothing on it distinguishes the two cases.
+    assert deduped is True
     # Neither the provider nor the quota was touched on the repeat.
     assert seam.calls == []
     assert seam.charged == ["image"]
@@ -320,9 +327,10 @@ async def test_a_different_style_is_not_a_dedupe_hit(
         mime="image/png",
         bytes=10,
     )
-    await generate_image_for_piece(
+    _, deduped = await generate_image_for_piece(
         db, org_id=tenant.org_id, content_id=tenant.content_id, style="illustrated"
     )
+    assert deduped is False
     assert len(await _assets(db, tenant.org_id)) == 2
     assert seam.charged == ["image", "image"]
 
@@ -424,10 +432,11 @@ async def test_a_still_connected_caller_is_not_cancelled(
     async def here() -> bool:
         return False
 
-    asset = await generate_image_for_piece(
+    asset, deduped = await generate_image_for_piece(
         db, org_id=tenant.org_id, content_id=tenant.content_id, is_disconnected=here
     )
     assert asset.url == STORED.url
+    assert deduped is False
     assert seam.charged == ["image"]
 
 
@@ -480,7 +489,8 @@ async def test_attaching_media_reopens_an_approved_piece(
         metadata={"creative_brief": BRIEF},
     )
 
-    asset = await generate_image_for_piece(db, org_id=tenant.org_id, content_id=piece_id)
+    asset, deduped = await generate_image_for_piece(db, org_id=tenant.org_id, content_id=piece_id)
+    assert deduped is False
     assert asset.content_id == piece_id
 
     row = await _piece(db, piece_id)
@@ -515,7 +525,7 @@ async def test_a_dedupe_hit_that_changes_nothing_does_not_reopen_a_piece(
 async def test_a_prompt_override_still_carries_the_brand(
     db: Any, tenant: SimpleNamespace, seam: Recorder
 ) -> None:
-    asset = await generate_image_for_piece(
+    asset, _ = await generate_image_for_piece(
         db,
         org_id=tenant.org_id,
         content_id=tenant.content_id,

@@ -143,6 +143,12 @@ async def publish_now(
         "body": piece.body,
         "hashtags": piece.hashtags or [],
         "title": piece.title,
+        # Keep this dict identical to the one in
+        # ``routers/publishing.py::publish_now`` / ``services/scheduler.py``.
+        # A key present in one and not the other means "Publish now" and a
+        # scheduled post produce different posts from the same approved
+        # piece, which nobody notices for weeks.
+        "media_urls": piece.media_urls or [],
     }
     credentials = {
         "access_token": account.access_token_enc,
