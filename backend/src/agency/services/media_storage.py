@@ -217,11 +217,16 @@ def make_thumbnail(payload: bytes) -> bytes | None:
     try:
         from PIL import Image
 
-        with Image.open(io.BytesIO(payload)) as img:
-            img = img.convert("RGB")
-            img.thumbnail((THUMB_MAX_EDGE, THUMB_MAX_EDGE))
+        # Two names on purpose: ``Image.open`` returns an ``ImageFile`` and
+        # ``convert`` returns an ``Image``, so rebinding one onto the other is a
+        # type error under Pillow 12's annotations (it passed under 11, which is
+        # how it reached CI). Dropping alpha is required -- WEBP will take RGBA,
+        # but a PNG with transparency reads as a black box on most feeds.
+        with Image.open(io.BytesIO(payload)) as src:
+            thumb = src.convert("RGB")
+            thumb.thumbnail((THUMB_MAX_EDGE, THUMB_MAX_EDGE))
             out = io.BytesIO()
-            img.save(out, format="WEBP", quality=82, method=4)
+            thumb.save(out, format="WEBP", quality=82, method=4)
             return out.getvalue()
     except Exception as exc:  # noqa: BLE001
         logger.warning("media_thumbnail_failed", error=str(exc))
