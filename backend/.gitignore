@@ -1,0 +1,6 @@
+.vercel
+.env*
+# Local media storage driver (services/media_storage.py). Dev/CI only --
+# production uses R2, and a `local` driver there means media that vanishes on
+# redeploy, which is why startup logs the resolved driver.
+.media/

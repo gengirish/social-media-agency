@@ -302,10 +302,28 @@ export const api = {
       body: JSON.stringify({ count: count ?? 2 }),
     }),
 
-  generateImage: (contentId: string, prompt?: string, style?: string) =>
+  /**
+   * Generate one image and attach it to this post.
+   *
+   * Both fields are optional and normally omitted: the prompt is assembled on the
+   * server from the piece's creative brief plus brand context
+   * (`docs/media-generation-plan-261009.md` §1F), so passing one here overrides
+   * that rather than supplementing it.
+   *
+   * Costs media credits, not generations, and charges on success only. A repeat of
+   * a prompt this org already paid for comes back with `deduped: true` and costs
+   * nothing. Errors are structured — branch with {@link mediaErrorReason}:
+   * `402 media_credit_quota_exceeded`, `402 media_video_not_in_plan`,
+   * `409 published_locked`, `409 cancelled`, `502 media_generation_failed`,
+   * `503 media_generation_not_configured`.
+   *
+   * The piece is left `draft`: an `approved` or `scheduled` piece is reset, because
+   * the attached image has not been through a human's review of *this* post.
+   */
+  generateImage: (contentId: string, opts: { prompt?: string; style?: string } = {}) =>
     request<GeneratedImageResponse>(`/api/v1/content/${contentId}/generate-image`, {
       method: "POST",
-      body: JSON.stringify({ prompt, style }),
+      body: JSON.stringify({ prompt: opts.prompt, style: opts.style }),
     }),
 
   createVideoScript: (data: VideoScriptRequest) =>
@@ -993,6 +1011,57 @@ export interface ContentMetadata {
   [key: string]: unknown;
 }
 
+/**
+ * The verdict on one generated asset, screened when it was created.
+ *
+ * Media moderation runs at *generation* time, not on the approve path
+ * (`docs/media-generation-plan-261009.md` §1E), so this is a stored verdict and
+ * never a live check. Two rungs produce it: the provider's own signal, and a
+ * brain-tier vision call escalated to only when that trips or the image carries
+ * rendered text.
+ *
+ * `reason` is why — and it is the field a UI must branch on, not `status` alone:
+ *
+ * - `"provider_only"` — rung 1 ran and was clean, rung 2 was not needed. This is
+ *   the **normal, healthy** outcome for most images. It must never render as a
+ *   warning, whatever `status` it arrives with.
+ * - `"vision"` — the model looked at it.
+ * - `"timeout"` / `"llm_error"` / `"unparseable_response"` / `"video_unsupported"`
+ *   — a check that should have run did not. Fail-open, visibly.
+ *
+ * Every field is optional because a never-screened asset serialises as `{}`, not
+ * as `{status: "", reason: "", issues: []}` (`MediaAssetOut` in
+ * `models/schemas.py`). An absent `status` and `""` mean the same thing — nobody
+ * screened it — which is what `409 media_unscreened` on approve refers to, so
+ * never read these without a fallback.
+ */
+export interface MediaModeration {
+  status?: "passed" | "flagged" | "unavailable" | "";
+  reason?: string;
+  issues?: ModerationIssue[];
+}
+
+/**
+ * One generated image or video attached to a post.
+ *
+ * The record, as opposed to {@link ContentPiece.media_urls}, which is the
+ * denormalised publish-facing projection of the same thing. `thumb_url` is `""`
+ * when no derivative was written — fall back to `url` rather than rendering
+ * nothing.
+ */
+export interface MediaAsset {
+  id: string;
+  kind: "image" | "video";
+  url: string;
+  /** ~400px WebP derivative, or `""`. Never render `url` in a list view when this is set. */
+  thumb_url: string;
+  width: number | null;
+  height: number | null;
+  duration_ms: number | null;
+  moderation: MediaModeration;
+  created_at?: string;
+}
+
 export interface ContentPiece {
   id: string;
   campaign_id: string | null;
@@ -1006,6 +1075,10 @@ export interface ContentPiece {
   ai_generated: boolean;
   performance_score: number | null;
   created_at: string;
+  /** Resolved public URLs — what a publisher reads. `[]` when the post has no media. */
+  media_urls?: string[];
+  /** The asset records behind `media_urls`. `[]` when there are none. */
+  media?: MediaAsset[];
   metadata_?: ContentMetadata | null;
 }
 
@@ -1085,12 +1158,17 @@ export interface VariantsResponse {
   variants: string[];
 }
 
-export interface GeneratedImageResponse {
-  /** "generated" | "skipped" (no FAL_API_KEY) | "error". */
-  status: string;
-  image_url: string | null;
-  platform?: string;
-  message?: string;
+/**
+ * What `POST /content/{id}/generate-image` returns: the asset, plus whether it
+ * was an existing one re-attached.
+ *
+ * Replaces the old three-state `{status, image_url, message}` body. A failure is
+ * now an HTTP error with a `code`, not a 200 carrying `status: "error"` — so a
+ * caller that gets a response here has an asset.
+ */
+export interface GeneratedImageResponse extends MediaAsset {
+  /** True when this prompt had already been generated and paid for — no credits used. */
+  deduped: boolean;
 }
 
 // --- Content analytics (honest-data contract) ---
@@ -2106,6 +2184,60 @@ export function apiErrorMessage(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
   const d = err.detail as { message?: unknown } | null;
   return d && typeof d === "object" && typeof d.message === "string" ? d.message : null;
+}
+
+/**
+ * What to tell the user about a failed media generation, and whether a retry is
+ * worth offering.
+ *
+ * Each `code` is a different kind of dead end and they must not collapse into one
+ * "try again": a missing `FAL_API_KEY` cannot be retried into working, a plan that
+ * has no video will never grow one on a second click, and a `502` is the one case
+ * where retrying is exactly right — nothing was charged for the attempt.
+ *
+ * `null` for anything that is not a recognised media error — including the `404`
+ * this endpoint answers a cross-org or deleted piece with, whose `detail` is a
+ * **bare string** ("Content not found") rather than a `{code, message}` dict,
+ * because that is the shape of the shared org-scoping helpers. A caller must
+ * therefore fall back to `err.message` (which {@link ApiError} always sets from
+ * `detail`) and never read `detail.code` as though it were always there.
+ *
+ * The fallback sentences here deliberately say nothing about credits: every
+ * 402/409/502/503 `message` the server sends already ends with "No media credits
+ * were used", and two sources for one fact drift apart.
+ */
+export function mediaErrorReason(
+  err: unknown
+): { code: string; message: string; retry: boolean } | null {
+  const code = apiErrorCode(err);
+  if (!code) return null;
+  const copy: Record<string, { message: string; retry: boolean }> = {
+    media_credit_quota_exceeded: {
+      message: "You're out of media credits this period — they reset when your plan renews.",
+      retry: false,
+    },
+    media_video_not_in_plan: {
+      message: "Video generation is on Growth and above. Upgrade to turn it on.",
+      retry: false,
+    },
+    published_locked: {
+      message: "This post is already published, so it can't take a new image.",
+      retry: false,
+    },
+    cancelled: { message: "Cancelled — nothing was saved.", retry: true },
+    // Covers a storage failure as well as a provider one: different cause, same
+    // user-facing truth (nothing saved), so there is no second code to branch on.
+    media_generation_failed: { message: "Couldn't make the image — nothing was saved.", retry: true },
+    media_generation_not_configured: {
+      message: "Image generation isn't set up on this workspace yet — it needs an image provider key (FAL_API_KEY).",
+      retry: false,
+    },
+  };
+  const hit = copy[code];
+  if (!hit) return null;
+  // The server words plan limits with the actual numbers in them, so prefer its
+  // sentence when it sent one.
+  return { code, message: apiErrorMessage(err) ?? hit.message, retry: hit.retry };
 }
 
 /** Issues carried by a `409 moderation_flagged`; empty for anything else. */

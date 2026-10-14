@@ -74,11 +74,22 @@ async def generate_social_image(
                 data = resp.json()
                 images = data.get("images", [])
                 if images:
-                    return {
+                    out = {
                         "status": "generated",
                         "image_url": images[0].get("url", ""),
                         "platform": platform,
                     }
+                    # fal returns has_nsfw_concepts as a list, one entry per
+                    # image in the batch. It is the cheapest rung of the media
+                    # moderation ladder -- free, and synchronous with the
+                    # generation we already paid for -- so it has to survive
+                    # this return shape. Dropping it (as this did until 261013)
+                    # meant every generated image either escalated to a
+                    # brain-tier vision call or went unscreened, which inverts
+                    # the whole cost argument for screening at generation time.
+                    if "has_nsfw_concepts" in data:
+                        out["has_nsfw_concepts"] = data["has_nsfw_concepts"]
+                    return out
                 # A 200 carrying no images means the response shape changed.
                 # Reporting that identically to an HTTP failure is what hid the
                 # wrong-endpoint bug for weeks: every call returned

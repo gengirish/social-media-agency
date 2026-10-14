@@ -150,6 +150,17 @@ class Subscription(Base):
     # (rows provisioned before 260921) falls back to the tier's PLAN_CONFIG value.
     generations_used = Column(Integer, nullable=False, default=0, server_default="0")
     generations_limit = Column(Integer)
+    # Generated media this billing period, weighted per kind
+    # (config.media_credit_weight: image 1, video 10). Deliberately not the
+    # counter above — one video can cost an order of magnitude more than one LLM
+    # call, so a shared counter lets an agency-tier org (generations_limit 9999
+    # at $168) run up provider spend well above its revenue. A null limit falls
+    # back to the tier's PLAN_CONFIG value, never to "unlimited".
+    media_credits_used = Column(Integer, nullable=False, default=0, server_default="0")
+    media_credits_limit = Column(Integer)
+    # Videos are capped separately, and on every tier including agency, whose
+    # 9999 is a sentinel meaning unlimited.
+    videos_used = Column(Integer, nullable=False, default=0, server_default="0")
     current_period_start = Column(DateTime(timezone=True))
     current_period_end = Column(DateTime(timezone=True))
     status = Column(String(50), default="active")
@@ -297,6 +308,16 @@ class ContentPiece(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     campaign = relationship("Campaign", back_populates="content_pieces")
+    # There is deliberately NO ``media`` relationship here. Attached media is
+    # loaded explicitly by the handful of endpoints that serialise it, via
+    # ``routers.content._media_by_content``.
+    #
+    # A ``lazy="selectin"`` relationship was tried on 261014 and reverted: it
+    # makes EVERY ``select(ContentPiece)`` in the codebase emit a second query
+    # against media_asset, including the scheduler's once-a-minute sweep for due
+    # content — the highest-frequency query in the system — which pays for a join
+    # it never reads. It also broke 14 unrelated tests that build a partial
+    # schema, which is the cheap version of the same signal.
 
     # Mirrors db/init.sql. The partial index serves the scheduler's once-a-minute
     # sweep for due content — the highest-frequency query in the system.
@@ -420,6 +441,125 @@ class CreativeAsset(Base):
             "client_id",
             "kind",
             text("created_at DESC"),
+        ),
+    )
+
+
+class MediaAsset(Base):
+    """One generated image or short video we kept.
+
+    Not ``CreativeAsset``: that model is long-form text in a JSONB ``payload``
+    behind a closed ``ASSET_KINDS``, rendered as prose by the generic
+    ``/assets`` CRUD. A binary needs a storage key, mime, dimensions, duration
+    and a moderation verdict, none of which fit ``payload`` without those
+    screens showing garbage.
+
+    ``content_piece.media_urls`` stays the publish-facing list of resolved URLs
+    (``content_approval`` depends on it, and the publishers read it). This table
+    is the record; ``media_urls`` is the denormalised projection, written in the
+    same transaction.
+    """
+
+    __tablename__ = "media_asset"
+
+    #: ``kind`` values. Closed, and the credit weight is keyed on it.
+    KINDS = ("image", "video")
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id = Column(
+        UUID(as_uuid=True), ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    # Nullable on purpose: an asset generated before it is attached to a post is
+    # valid, and deleting the post must not delete the asset the user paid for.
+    content_id = Column(
+        UUID(as_uuid=True), ForeignKey("content_piece.id", ondelete="SET NULL"), nullable=True
+    )
+    kind = Column(String(20), nullable=False)
+    # The key, not a URL: the public URL is derived from it by the active
+    # storage driver, so moving buckets or domains does not rewrite rows.
+    storage_key = Column(String(500), nullable=False)
+    url = Column(Text, nullable=False, default="", server_default="")
+    thumb_url = Column(Text, nullable=False, default="", server_default="")
+    mime = Column(String(100), nullable=False, default="", server_default="")
+    width = Column(Integer)
+    height = Column(Integer)
+    duration_ms = Column(Integer)
+    bytes = Column(Integer)
+    model = Column(String(120), nullable=False, default="", server_default="")
+    # The resolved prompt, assembled in code from the creative brief and brand
+    # context. Stored so a regenerate is reproducible and the hash is auditable.
+    prompt = Column(Text, nullable=False, default="", server_default="")
+    prompt_hash = Column(String(64), nullable=False, default="", server_default="")
+    credits_charged = Column(Integer, nullable=False, default=0, server_default="0")
+    # Written at GENERATION time, not approval time. An empty dict means "not
+    # yet screened" and the approve path refuses it — a row lookup, not a model
+    # call, so the gate costs no approval latency.
+    moderation = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    created_by = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        Index(
+            "idx_media_asset_org_client",
+            "org_id",
+            "client_id",
+            text("created_at DESC"),
+        ),
+        Index(
+            "idx_media_asset_content",
+            "content_id",
+            postgresql_where=text("content_id IS NOT NULL"),
+        ),
+        # Dedupe: a repeated generate returns the existing asset and charges
+        # nothing. Org-scoped, so one tenant's prompt can never resolve to
+        # another tenant's bytes. Partial, because '' is the pre-generation
+        # placeholder and would otherwise collide on the second row.
+        Index(
+            "idx_media_asset_dedupe",
+            "org_id",
+            "prompt_hash",
+            unique=True,
+            postgresql_where=text("prompt_hash <> ''"),
+        ),
+    )
+
+
+class MediaJob(Base):
+    """Async provider work for one media asset. Video only.
+
+    Video must not use the sync ``fal.run`` endpoint the image path uses: that
+    blocks a worker for the whole generation, which is fine at a few seconds and
+    fatal at minutes — starved workers, then Fly's request timeout.
+    ``queue.fal.run`` returns a job id and this row tracks it.
+    """
+
+    __tablename__ = "media_job"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    media_asset_id = Column(
+        UUID(as_uuid=True), ForeignKey("media_asset.id", ondelete="CASCADE"), nullable=True
+    )
+    provider = Column(String(40), nullable=False, default="fal", server_default="fal")
+    provider_job_id = Column(String(200), nullable=False, default="", server_default="")
+    status = Column(String(20), nullable=False, default="queued", server_default="queued")
+    error = Column(Text, nullable=False, default="", server_default="")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index(
+            "idx_media_job_pending",
+            "status",
+            "created_at",
+            postgresql_where=text("status IN ('queued', 'running')"),
         ),
     )
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useRef, useState, type ComponentType } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { format, formatDistanceToNow, isValid, parseISO } from "date-fns";
 import {
@@ -14,7 +14,6 @@ import {
   Copy,
   ExternalLink,
   Hand,
-  Image as ImageIcon,
   Layers,
   Link2,
   Loader2,
@@ -28,8 +27,14 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { adVariantOf, unusableReason, type QueuePost } from "@/lib/api";
+import { adVariantOf, unusableReason, type MediaAsset, type QueuePost } from "@/lib/api";
 import { AdVariantCard } from "@/components/content/ad-variant-card";
+import {
+  CreateImageButton,
+  DownloadMediaAction,
+  PostMediaStrip,
+  withLocalMedia,
+} from "@/components/posts/post-media";
 import {
   BRIEF_ROWS,
   PLATFORM_LIMITS,
@@ -311,9 +316,13 @@ function BriefPanel({ post }: { post: QueuePost }) {
       </button>
       {open && (
         <div className="mt-3 space-y-2 motion-safe:animate-screen-in">
+          {/* Was "CampaignForge doesn't make or attach the image". It makes one now
+              — "Create image" reads this brief as its prompt (§1F) — but it still
+              attaches nothing on the platform, and on a channel you post yourself
+              you download the image and attach it in the composer. */}
           <p className="text-[11.5px] text-muted">
-            A written brief for a designer. CampaignForge doesn&apos;t make or attach the image — the post goes out as
-            text unless you add one where you publish it.
+            A written brief for a designer — and the art direction &ldquo;Create image&rdquo; works from. Either way
+            the image isn&apos;t attached for you: add it yourself where you post it.
           </p>
           {BRIEF_ROWS.map(([key, label]) => (
             <div key={key}>
@@ -636,6 +645,9 @@ export interface PostCardProps {
   onRegenerate: (post: QueuePost) => void;
   onCancelRegenerate: () => void;
   onRequestBrief: (post: QueuePost) => void;
+  /** Generating media can send an approved piece back to Pending, which this
+   *  card cannot see from its own row — the page reloads so the badge is true. */
+  onMediaChanged?: (post: QueuePost) => void;
   onCancelBrief: () => void;
 }
 
@@ -668,6 +680,7 @@ export const PostCard = memo(function PostCard({
   onRegenerate,
   onCancelRegenerate,
   onRequestBrief,
+  onMediaChanged,
   onCancelBrief,
 }: PostCardProps) {
   /*
@@ -722,8 +735,23 @@ export const PostCard = memo(function PostCard({
   const unusable = unusableReason(post);
   const anyBusy = busy !== null;
   const isDraft = post.status === "draft";
-  const needsVisual = post.platform?.toLowerCase() === "instagram";
+  /*
+   * The visual actions used to be Instagram-only (`needsVisual`), which was never
+   * about what a platform accepts: X, LinkedIn and Facebook all take media, and on
+   * a manual channel the image is downloaded and attached by a human, so every
+   * platform does. Dropped with Phase 5 of docs/media-generation-plan-261009.md.
+   */
   const hasBrief = creativeBriefOf(post) !== null;
+  /*
+   * Media generated on this card since the page last loaded.
+   *
+   * The Queue page owns the list and replaces an item after a call it made itself;
+   * this one is made from inside the card, so the asset is held here and merged
+   * over the server's copy until the next load. A reload collapses the two —
+   * `withLocalMedia` dedupes on id, so nothing doubles.
+   */
+  const [newMedia, setNewMedia] = useState<MediaAsset[]>([]);
+  const assets = useMemo(() => withLocalMedia(post, newMedia), [post, newMedia]);
   const resumable = !editing && typeof window !== "undefined" && readLocalEdit(post.id) !== null;
   const plannedFor = isDraft || post.status === "approved" ? scheduledAt : null;
 
@@ -839,7 +867,9 @@ export const PostCard = memo(function PostCard({
         </>
       )}
 
-      {needsVisual && hasBrief && !editing && <BriefPanel post={post} />}
+      {!editing && <PostMediaStrip assets={assets} manual={isManual} />}
+
+      {hasBrief && !editing && <BriefPanel post={post} />}
 
       {plannedFor && (
         <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
@@ -1036,7 +1066,11 @@ export const PostCard = memo(function PostCard({
               </>
             )}
 
-            {needsVisual && !hasBrief && post.status !== "failed" && (
+            {/* Beside Create image, on every platform, always: the brief is the art
+                direction *and* the prompt the generator reads (§1F), so it is the
+                input to the button next to it — not an alternative to it. Once a
+                brief exists `BriefPanel` above shows it instead. */}
+            {!hasBrief && post.status !== "failed" && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => onRequestBrief(post)} disabled={anyBusy}>
                   {busy === "brief" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Palette className="h-3.5 w-3.5" />}
@@ -1051,22 +1085,39 @@ export const PostCard = memo(function PostCard({
             )}
 
             {/*
-              The brief is words for a human designer; these two would be the pixels.
-              Neither is wired up in the Queue, so both are disabled and say so rather
-              than being offered and failing -- the same rule as publishUnavailableReason.
+              The brief is words for a human designer; these are the pixels.
 
-              Note for whoever enables these: image generation already EXISTS server-side
-              (POST /content/{id}/generate-image -> services/image_generation.py, fal.ai,
-              live when FAL_API_KEY is set; it appends to content_piece.media_urls). It has
-              no UI, no quota accounting and the card does not render media_urls, which is
-              why it ships disabled here. Short-video generation has no backend at all.
+              Create image is live as of Phase 5: it generates one image, screens it,
+              charges media credits and attaches it to this piece in CampaignForge —
+              which is not the same as attaching it to a post on a platform. On a
+              manual channel a human downloads it and attaches it in the composer
+              (Download, below); on a connected channel nothing carries it to the
+              publisher yet, which is Phase 6.
+
+              Short video stays disabled: there is no backend for it at all (Phase 8),
+              and offering it would claim a capability that does not exist — the same
+              rule as publishUnavailableReason.
             */}
-            {needsVisual && post.status !== "failed" && (
+            {post.status !== "failed" && (
               <>
-                <ComingSoonAction icon={ImageIcon} label="Create image" />
+                <CreateImageButton
+                  post={post}
+                  disabled={anyBusy}
+                  onCreated={(asset) => {
+                    setNewMedia((prev) => [...prev, asset]);
+                    onMediaChanged?.(post);
+                  }}
+                />
                 <ComingSoonAction icon={Video} label="Short video" />
               </>
             )}
+
+            {/*
+              §1A, the whole of manual visual posting: the asset only has to be
+              downloadable. No media upload API, no Meta app review — which is why
+              Instagram works end to end here while connected Instagram does not.
+            */}
+            {isManual && assets.length > 0 && <DownloadMediaAction assets={assets} disabled={anyBusy} />}
 
             {/* CF-06: a failed post used to offer only Delete, so a transient
                 publish failure meant rewriting the copy. Retry puts it back in

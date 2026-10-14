@@ -12,11 +12,17 @@ from fastapi import (
     Request,
     status,
 )
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from agency.dependencies import get_current_user, get_current_user_id, get_db, get_org_id
-from agency.models.schemas import ContentPieceResponse, ContentUpdateRequest
-from agency.models.tables import Client, ContentPiece
+from agency.models.schemas import (
+    ContentPieceResponse,
+    ContentUpdateRequest,
+    GenerateImageResponse,
+    MediaAssetOut,
+)
+from agency.models.tables import Client, ContentPiece, MediaAsset
 from agency.permissions import Capability, ensure_cap, require_cap
 from agency.services.content_approval import (
     ContentGateError,
@@ -24,6 +30,7 @@ from agency.services.content_approval import (
     approve_content_piece,
     retry_failed_content,
 )
+from agency.services.media_generation import generate_image_for_piece
 from agency.services.tracing import trace_config
 from agency.services.webhook_dispatcher import EVENT_CONTENT_APPROVED, dispatch_webhook
 
@@ -40,6 +47,48 @@ PLATFORM_GUIDELINES = {
 }
 
 router = APIRouter(prefix="/content", tags=["Content"])
+
+
+async def _media_by_content(
+    db: Any, org_id: UUID, content_ids: list[UUID]
+) -> dict[UUID, list[MediaAssetOut]]:
+    """Attached media for several pieces, in **one** query.
+
+    Explicit rather than an ORM relationship on ``ContentPiece``. A
+    ``lazy="selectin"`` relationship would make every ``select(ContentPiece)``
+    anywhere pay a second query against ``media_asset`` — the scheduler's
+    once-a-minute sweep for due content included, which never reads it.
+
+    Org-scoped as well as keyed on ``content_id``: there is no row-level
+    security in this database, and an asset row carries its own ``org_id``.
+    """
+    if not content_ids:
+        return {}
+    rows: list[Any] = list(
+        (
+            await db.execute(
+                select(MediaAsset)
+                .where(
+                    MediaAsset.org_id == org_id,
+                    MediaAsset.content_id.in_(content_ids),
+                )
+                .order_by(MediaAsset.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[UUID, list[MediaAssetOut]] = {}
+    for row in rows:
+        out.setdefault(row.content_id, []).append(MediaAssetOut.model_validate(row))
+    return out
+
+
+def _with_media(piece: Any, media: list[MediaAssetOut]) -> dict[str, Any]:
+    """One piece as the API shape, with its media attached."""
+    body = ContentPieceResponse.model_validate(piece).model_dump()
+    body["media"] = [m.model_dump() for m in media]
+    return body
 
 
 @router.get("")
@@ -75,8 +124,14 @@ async def list_content(
         q.order_by(ContentPiece.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
     )
     pieces = result.scalars().all()
+    media = await _media_by_content(db, org_id, [p.id for p in pieces])
 
-    return {"items": pieces, "total": total, "page": page, "per_page": per_page}
+    return {
+        "items": [_with_media(p, media.get(p.id, [])) for p in pieces],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    }
 
 
 @router.get("/suggestions")
@@ -190,7 +245,8 @@ async def get_content(
     piece = result.scalar_one_or_none()
     if not piece:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
-    return piece
+    media = await _media_by_content(db, org_id, [piece.id])
+    return _with_media(piece, media.get(piece.id, []))
 
 
 @router.get("/{content_id}/analytics")
@@ -276,7 +332,8 @@ async def update_content(
 
     await db.commit()
     await db.refresh(piece)
-    return piece
+    media = await _media_by_content(db, org_id, [piece.id])
+    return _with_media(piece, media.get(piece.id, []))
 
 
 @router.post("/{content_id}/repurpose")
@@ -593,37 +650,61 @@ async def retry_content(
         raise HTTPException(exc.status_code, exc.detail) from None
 
 
-@router.post("/{content_id}/generate-image")
+class GenerateImageRequest(BaseModel):
+    """Optional overrides. Both absent is the normal case.
+
+    ``prompt`` replaces the *subject* only — it still goes through the brand
+    block, because an override of what to draw is not an override of the brand.
+    """
+
+    prompt: str | None = None
+    style: str = "professional"
+
+
+@router.post("/{content_id}/generate-image", response_model=GenerateImageResponse)
 async def generate_image(
     content_id: UUID,
-    body: dict | None = None,
+    request: Request,
+    body: GenerateImageRequest | None = None,
     user=Depends(get_current_user),
+    user_id: UUID = Depends(get_current_user_id),
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
-):
-    """Generate a social media image for a content piece."""
-    result = await db.execute(
-        select(ContentPiece).where(
-            ContentPiece.id == content_id, ContentPiece.org_id == org_id
-        )
+) -> GenerateImageResponse:
+    """Generate an image for a content piece and attach it.
+
+    A full Create-screen generator since 261013. It used to call the provider
+    directly and append the returned CDN URL to ``media_urls`` — no quota, no
+    stored asset, no moderation, and a prompt built from the first 100 characters
+    of the body, so brand voice and the client's campaign focus were absent from
+    the one output where they are most visible. Those URLs also expired.
+
+    The flow is in ``services.media_generation``; this stays thin. Errors it
+    surfaces, all of which leave the piece untouched:
+
+    - ``402 media_credit_quota_exceeded`` / ``media_video_not_in_plan``
+    - ``409 published_locked`` — a live post cannot take a new image
+    - ``409 cancelled`` — the caller went away; nothing saved, nothing charged
+    - ``502 media_generation_failed`` — no credits were used
+    - ``503 media_generation_not_configured`` — ``FAL_API_KEY`` is unset
+
+    An ``approved`` or ``scheduled`` piece is sent back to ``draft`` by the
+    service, because a new image is new outgoing content and has to be reviewed
+    with the copy it ships beside.
+    """
+    opts = body or GenerateImageRequest()
+    asset, deduped = await generate_image_for_piece(
+        db,
+        org_id=org_id,
+        content_id=content_id,
+        user_id=user_id,
+        style=opts.style,
+        prompt_override=opts.prompt,
+        is_disconnected=request.is_disconnected,
     )
-    piece = result.scalar_one_or_none()
-    if not piece:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Content not found")
-
-    from agency.services.image_generation import generate_social_image
-
-    body = body or {}
-    snippet = (piece.body or "")[:100]
-    prompt = body.get("prompt", piece.title or snippet)
-    style = body.get("style", "professional")
-
-    result_img = await generate_social_image(prompt, piece.platform, style)
-
-    if result_img.get("image_url"):
-        media = list(piece.media_urls or [])
-        media.append(result_img["image_url"])
-        piece.media_urls = media
-        await db.commit()
-
-    return result_img
+    # Adoption is tracked from the browser via ``trackFeature("create-image")``,
+    # not here: ``product_analytics`` keeps feature events client-writable and
+    # reserves server-authored events for pipeline and error counts.
+    return GenerateImageResponse(
+        **MediaAssetOut.model_validate(asset).model_dump(), deduped=deduped
+    )

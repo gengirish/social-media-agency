@@ -29,8 +29,9 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agency.models.tables import Client, PlatformAccount
+from agency.models.tables import Client, MediaAsset, PlatformAccount
 from agency.services import product_analytics as pa
+from agency.services.media_moderation import verdict_missing
 from agency.services.moderation import load_brand_context, moderate_content
 from agency.services.publishing import UNAVAILABLE_PUBLISH_PLATFORMS
 
@@ -175,6 +176,57 @@ async def retry_failed_content(
     )
 
 
+async def ensure_media_screened(
+    db: AsyncSession, piece: ContentRow, org_id: UUID
+) -> None:
+    """409 ``media_unscreened`` when attached media carries no moderation verdict.
+
+    This is the media half of product rule 3, and it is deliberately cheap: the
+    screening itself happens at generation time (see
+    ``services.media_moderation``), so all this does is confirm a verdict exists.
+    One indexed query on ``content_id``, no model call, so approve latency does
+    not move for a post with no media.
+
+    An ``unavailable`` verdict **is** a verdict and approves — fail-open, exactly
+    as a text moderation outage does. What is refused is media nothing ever
+    looked at, which is the state an asset written by some future path that
+    skipped screening would be in.
+    """
+    # ``list[Any]`` for the same reason this module aliases ``ContentRow = Any``:
+    # the models use classic ``Column(...)`` declarations, which mypy without the
+    # SQLAlchemy plugin reads as ``Column[Any]`` on every attribute access.
+    rows: list[Any] = list(
+        (
+            await db.execute(
+                select(MediaAsset).where(
+                    MediaAsset.org_id == org_id, MediaAsset.content_id == piece.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    unscreened = [a for a in rows if verdict_missing(a.moderation)]
+    if not unscreened:
+        return
+    logger.info(
+        "media_unscreened_approval_refused",
+        content_id=str(piece.id),
+        asset_count=len(unscreened),
+    )
+    raise ContentGateError(
+        409,
+        {
+            "code": "media_unscreened",
+            "message": (
+                "This post has generated media that has not been screened. "
+                "Regenerate it, or remove it, before approving."
+            ),
+            "asset_ids": [str(a.id) for a in unscreened],
+        },
+    )
+
+
 async def _moderate_then_approve(
     db: AsyncSession,
     piece: ContentRow,
@@ -192,6 +244,10 @@ async def _moderate_then_approve(
     # Before moderation: there is nothing to moderate, and approving it would put an
     # empty post in the publish queue.
     ensure_has_content(piece)
+    # Attached media is screened when it is generated, not here — a vision call on
+    # this path would double approve latency for every post, including the many
+    # with no media at all. What this costs is one row lookup.
+    await ensure_media_screened(db, piece, org_id)
 
     brand_context = await load_brand_context(db, piece.client_id, org_id)
     result = await moderate_content(

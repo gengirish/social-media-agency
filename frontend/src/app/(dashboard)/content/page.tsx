@@ -720,14 +720,20 @@ export default function QueuePage() {
     }
   }
 
-  const latest = useRef({ approve, retry, saveEdit, deletePosts, regenerate, requestBrief, markPosted, setPostUrl });
-  latest.current = { approve, retry, saveEdit, deletePosts, regenerate, requestBrief, markPosted, setPostUrl };
+  const latest = useRef({ approve, retry, saveEdit, deletePosts, regenerate, requestBrief, markPosted, setPostUrl, reload });
+  latest.current = { approve, retry, saveEdit, deletePosts, regenerate, requestBrief, markPosted, setPostUrl, reload };
   const onApprove = useCallback((p: QueuePost) => void latest.current.approve(p), []);
   const onRetry = useCallback((p: QueuePost) => void latest.current.retry(p), []);
   const onEditSave = useCallback((p: QueuePost, e: PostEdit) => latest.current.saveEdit(p, e), []);
   const onDelete = useCallback((p: QueuePost) => latest.current.deletePosts([p]), []);
   const onRegenerate = useCallback((p: QueuePost) => void latest.current.regenerate(p), []);
   const onRequestBrief = useCallback((p: QueuePost) => void latest.current.requestBrief(p), []);
+  // Attaching media sends an approved or scheduled piece back to Pending so the
+  // image is reviewed with the copy it ships beside. Only a reload can show that:
+  // the status lives on the server and the card has already rendered its badge.
+  const onMediaChanged = useCallback((p: QueuePost) => {
+    if (p.status === "approved" || p.status === "scheduled") latest.current.reload();
+  }, []);
   const onCancelRegenerate = useCallback(() => regenAbort.current?.abort(), []);
   const onCancelBrief = useCallback(() => briefAbort.current?.abort(), []);
   const onEditStart = useCallback((id: string) => setEditingId(id), []);
@@ -1230,6 +1236,7 @@ export default function QueuePage() {
                       onRegenerate={onRegenerate}
                       onCancelRegenerate={onCancelRegenerate}
                       onRequestBrief={onRequestBrief}
+                      onMediaChanged={onMediaChanged}
                       onCancelBrief={onCancelBrief}
                     />
                   ))}

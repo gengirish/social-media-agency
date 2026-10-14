@@ -30,6 +30,7 @@ from agency.routers import (
     insights,
     integrations,
     magic_brief,
+    media,
     notifications,
     oauth,
     portal,
@@ -129,6 +130,7 @@ def create_app() -> FastAPI:
         create_launch,
         inbox,
         insights,
+        media,
         workspace,
         setup,
     ]:
@@ -137,10 +139,15 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup():
         from agency.agents.graph_runtime import init_campaign_graph_runtime
+        from agency.services.media_storage import log_driver_at_startup as log_media_storage_driver
         from agency.services.scheduler import scheduler
         from agency.services.tracing import init_langfuse
 
         init_langfuse()
+        # Logs which media storage driver resolved. A `local` driver in
+        # production means media that vanishes on redeploy, and the symptom
+        # (broken images, later) is far from the cause (blank credentials, now).
+        log_media_storage_driver()
         await init_campaign_graph_runtime()
         await scheduler.start()
 

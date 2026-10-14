@@ -42,6 +42,14 @@ PLAN_CONFIG = {
         # tier's packs roughly cover its publishing allowance with room to drop
         # atoms at review. Mirrored in db/migrations/260921_amplify.sql.
         "generations_limit": 10,
+        # Generated media per billing period, weighted by
+        # config.media_credit_weight (image 1, video 10). Video is Growth and
+        # above: Starter's allowance would be 5 clips, which reads as worse than
+        # offering none. ``videos_limit`` is a separate cap that applies even
+        # where generations_limit is the 9999 "unlimited" sentinel.
+        "media_credits_limit": 5,
+        "video_enabled": False,
+        "videos_limit": 0,
         # CF-11: this said "No publishing" beside a "Published posts 0/30" meter.
         # The meter was right and the feature line was wrong — nothing gates
         # publishing by plan, and `posts_limit` above is 30, so a free org can
@@ -55,6 +63,9 @@ PLAN_CONFIG = {
         "posts_limit": 200,
         "campaigns_limit": 20,
         "generations_limit": 50,
+        "media_credits_limit": 50,
+        "video_enabled": False,
+        "videos_limit": 0,
         "amount": 2000,
         # No report is ever emailed (nothing in reports.py sends mail), so
         # "Email reports" was dropped in the 260817 stub audit.
@@ -66,6 +77,9 @@ PLAN_CONFIG = {
         "posts_limit": 1000,
         "campaigns_limit": 9999,
         "generations_limit": 250,
+        "media_credits_limit": 250,
+        "video_enabled": True,
+        "videos_limit": 10,
         "amount": 3600,
         "features": [
             "10 clients",
@@ -83,6 +97,12 @@ PLAN_CONFIG = {
         "posts_limit": 99999,
         "campaigns_limit": 9999,
         "generations_limit": 9999,
+        "media_credits_limit": 2000,
+        "video_enabled": True,
+        # Capped despite the 9999 above: that is a sentinel meaning unlimited,
+        # and unlimited video generation is unbounded loss. 60 clips still
+        # leaves 1400 credits for images.
+        "videos_limit": 60,
         "amount": 16800,
         "features": [
             "Unlimited clients",
@@ -197,6 +217,34 @@ def generations_limit_for(sub: Subscription) -> int:
         return int(sub.generations_limit)
     plan = PLAN_CONFIG.get(str(sub.plan_tier), PLAN_CONFIG["free"])
     return int(plan["generations_limit"])
+
+
+def media_credits_limit_for(sub: Subscription) -> int:
+    """The org's generated-media allowance, in credits.
+
+    Same NULL discipline as :func:`generations_limit_for`: a row provisioned
+    before 261013 has no column value, so it falls back to the tier's
+    PLAN_CONFIG value and then to free -- never to "unlimited". Reading NULL as
+    zero would silently switch the feature off for every existing org.
+    """
+    if sub.media_credits_limit is not None:
+        return int(sub.media_credits_limit)
+    plan = PLAN_CONFIG.get(str(sub.plan_tier), PLAN_CONFIG["free"])
+    return int(plan["media_credits_limit"])
+
+
+def video_limits_for(sub: Subscription) -> tuple[bool, int]:
+    """``(video_enabled, videos_limit)`` for this org's tier.
+
+    Video is Growth and above, and the clip cap applies on every tier including
+    agency -- whose ``generations_limit`` of 9999 is a sentinel meaning
+    unlimited, and unlimited video generation is unbounded loss.
+
+    Tier-derived rather than a column: unlike credits there is no per-org
+    override to preserve, and a plan change must move video with it.
+    """
+    plan = PLAN_CONFIG.get(str(sub.plan_tier), PLAN_CONFIG["free"])
+    return bool(plan["video_enabled"]), int(plan["videos_limit"])
 
 
 def _tier_for_product_id(product_id: str) -> str | None:
@@ -519,6 +567,7 @@ class BillingService:
         sub.clients_limit = plan["clients_limit"]
         sub.posts_limit = plan["posts_limit"]
         sub.generations_limit = plan["generations_limit"]
+        sub.media_credits_limit = plan["media_credits_limit"]
 
     def _apply_period(self, sub: Subscription, data: dict) -> None:
         start = _as_utc(data.get("previous_billing_date"))
@@ -588,6 +637,8 @@ class BillingService:
 
         sub.posts_used = 0
         sub.generations_used = 0
+        sub.media_credits_used = 0
+        sub.videos_used = 0
         sub.status = "active"
         self._apply_period(sub, data)
         logger.info("subscription_usage_reset", org_id=str(sub.org_id), plan=sub.plan_tier)
@@ -767,6 +818,8 @@ class BillingService:
                 "plan_tier": "free",
                 **PLAN_CONFIG["free"],
                 "generations_used": 0,
+                "media_credits_used": 0,
+                "videos_used": 0,
                 "has_billing_customer": False,
             }
         plan = PLAN_CONFIG.get(sub.plan_tier, {})
@@ -781,6 +834,9 @@ class BillingService:
             # tier default (which would hide a per-org override).
             "generations_used": sub.generations_used or 0,
             "generations_limit": generations_limit_for(sub),
+            "media_credits_used": sub.media_credits_used or 0,
+            "media_credits_limit": media_credits_limit_for(sub),
+            "videos_used": sub.videos_used or 0,
             # Whether a Dodo customer portal can be opened at all. The UI needs an
             # honest signal here: gating the "Manage billing" button on
             # plan_tier != "free" hides it from an org that cancelled down to free

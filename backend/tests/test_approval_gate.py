@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import select
 from structlog.testing import capture_logs
 
-from agency.models.tables import BrandProfile, ContentPiece
+from agency.models.tables import BrandProfile, ContentPiece, MediaAsset
 from agency.services import moderation
 from tests.conftest import (
     auth_header_for,
@@ -135,6 +135,110 @@ async def test_approve_flagged_is_409_and_status_unchanged(
     piece = await _piece(session_factory, content_id)
     assert piece.status == "draft"
     assert "moderation" not in (piece.metadata_ or {})
+
+
+async def _attach_media(
+    session_factory, tenant, content_id: UUID, *, moderation: dict | None
+) -> UUID:
+    """Attach one generated asset. ``moderation=None`` means never screened."""
+    asset_id = uuid4()
+    async with session_factory() as s:
+        s.add(
+            MediaAsset(
+                id=asset_id,
+                org_id=tenant.org_id,
+                client_id=tenant.client_id,
+                content_id=content_id,
+                kind="image",
+                storage_key=f"{tenant.org_id}/{tenant.client_id}/{content_id}/{asset_id}.png",
+                url=f"https://media.example/{asset_id}.png",
+                mime="image/png",
+                moderation={} if moderation is None else moderation,
+            )
+        )
+        await s.commit()
+    return asset_id
+
+
+async def test_approve_refuses_media_that_was_never_screened(
+    client, session_factory, tenant, brain
+):
+    """Product rule 3 for media. Screening happens at generation; this confirms a
+    verdict exists, so a path that wrote an asset without screening it cannot
+    reach a live account through approval."""
+    stub = brain(CLEAN)
+    content_id = await _new(session_factory, tenant)
+    asset_id = await _attach_media(session_factory, tenant, content_id, moderation=None)
+
+    resp = await client.post(f"{API}/content/{content_id}/approve", headers=tenant.headers)
+
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "media_unscreened"
+    assert detail["asset_ids"] == [str(asset_id)]
+    # The gate must refuse *before* spending a text moderation call, and the row
+    # must not have moved -- a 409 that still approved would be worthless.
+    assert stub.prompts == []
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == "draft"
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        {"status": "passed", "reason": "provider_only", "issues": [], "vision_checked": False},
+        {"status": "passed", "reason": "vision", "issues": [], "vision_checked": True},
+        # An outage is a verdict and approves: fail-open, exactly as a text
+        # moderation outage does. This is the case that must NOT be refused.
+        {"status": "unavailable", "reason": "llm_error", "issues": [], "vision_checked": False},
+    ],
+    ids=["provider_only", "vision", "unavailable"],
+)
+async def test_approve_allows_media_that_carries_a_verdict(
+    client, session_factory, tenant, brain, verdict
+):
+    brain(CLEAN)
+    content_id = await _new(session_factory, tenant)
+    await _attach_media(session_factory, tenant, content_id, moderation=verdict)
+
+    resp = await client.post(f"{API}/content/{content_id}/approve", headers=tenant.headers)
+
+    assert resp.status_code == 200, resp.text
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == "approved"
+
+
+async def test_unscreened_media_in_another_org_does_not_block_approval(
+    client, session_factory, tenant, brain
+):
+    """The gate's query is org-scoped. There is no row-level security here, so an
+    unscoped lookup would let one tenant's unscreened asset block another's post."""
+    brain(CLEAN)
+    content_id = await _new(session_factory, tenant)
+    other = await create_org(session_factory, name="Other media org")
+    other_client = await create_client_row(session_factory, other)
+    asset_id = uuid4()
+    async with session_factory() as s:
+        s.add(
+            MediaAsset(
+                id=asset_id,
+                org_id=other,
+                client_id=other_client,
+                # Deliberately pointed at THIS org's piece: only the org filter
+                # keeps it from blocking an approval it has no business seeing.
+                content_id=content_id,
+                kind="image",
+                storage_key=f"{other}/{other_client}/{content_id}/{asset_id}.png",
+                url=f"https://media.example/{asset_id}.png",
+                mime="image/png",
+                moderation={},
+            )
+        )
+        await s.commit()
+
+    resp = await client.post(f"{API}/content/{content_id}/approve", headers=tenant.headers)
+
+    assert resp.status_code == 200, resp.text
 
 
 async def test_approve_override_records_who_and_when(client, session_factory, tenant, brain):
