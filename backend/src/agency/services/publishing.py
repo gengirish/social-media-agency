@@ -11,11 +11,16 @@ import structlog
 
 from agency.config import get_settings
 from agency.services import media_storage
+from agency.services.meta_accounts import GRAPH_BASE, GRAPH_VERSION
 from agency.utils.encryption import decrypt_token
 
 logger = structlog.get_logger()
 
 T = TypeVar("T")
+
+#: Re-exported so the Graph version has one home: ``services/meta_accounts``
+#: owns it, OAuth, publishing and metrics all read it from there.
+__all__ = ["GRAPH_BASE", "GRAPH_VERSION", "MediaUploadError", "PlatformPublisher", "publisher"]
 
 #: Platforms the UI can offer but this service cannot actually post to.
 #:
@@ -47,8 +52,15 @@ UNAVAILABLE_PUBLISH_PLATFORMS: dict[str, str] = {
 #:
 #: X allows four images *or* one video, never a mix; :func:`_limit_for_twitter`
 #: applies that rule. LinkedIn's multi-image share caps at nine. Facebook's
-#: ``attached_media`` caps at ten.
-MAX_MEDIA_PER_POST: dict[str, int] = {"twitter": 4, "linkedin": 9, "facebook": 10}
+#: ``attached_media`` caps at ten. Instagram's carousel caps at ten too, and the
+#: entry has to be present: the lookup is ``.get(platform, 1)``, so without it a
+#: carousel silently truncated to its first image.
+MAX_MEDIA_PER_POST: dict[str, int] = {
+    "twitter": 4,
+    "linkedin": 9,
+    "facebook": 10,
+    "instagram": 10,
+}
 
 #: What :func:`media_storage.public_url` emits under the ``local`` driver. Those
 #: URLs are app-relative, so the publisher reads the file off disk instead of
@@ -58,6 +70,22 @@ LOCAL_MEDIA_URL_PREFIX = "/api/v1/media/"
 #: X's chunked upload wants ≤5MB per APPEND. 4MB leaves headroom for the
 #: multipart envelope.
 X_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+
+
+#: Instagram media containers are created asynchronously. A video/Reel container
+#: has to reach ``FINISHED`` before it can be published — publishing one that has
+#: not fails with an error that reads like a permissions problem, which is how an
+#: operator ends up re-checking their Meta app review instead of waiting.
+#:
+#: Bounded on purpose: ten polls three seconds apart is ~30s, which is inside the
+#: scheduler's tolerance for one piece. A container that is still pending after
+#: that raises rather than publishing early or waiting forever.
+IG_CONTAINER_POLL_ATTEMPTS = 10
+IG_CONTAINER_POLL_SECONDS = 3.0
+
+#: Instagram allows 30 hashtags on a caption and the caption itself is capped at
+#: 2200 characters (enforced upstream by ``moderation.py``).
+IG_MAX_HASHTAGS = 30
 
 
 class MediaUploadError(RuntimeError):
@@ -122,6 +150,26 @@ def _media_list(content: dict, platform: str) -> list[str]:
             "publish_media_truncated", platform=platform, had=len(unique), cap=cap
         )
     return unique[:cap]
+
+
+def _require_public_media_urls(urls: list[str], platform: str) -> None:
+    """Every URL must be absolute and HTTP(S), or refuse the post.
+
+    Meta *fetches* media by URL instead of taking an upload, so an app-relative
+    URL — what :func:`media_storage.public_url` emits under the ``local`` driver
+    — can never work: there is no host for Graph to reach. Refusing here names
+    the fix, where handing Graph a hostless path reports a generic fetch error
+    that an operator cannot act on. Shared by Facebook and Instagram.
+    """
+    label = platform.capitalize()
+    for url in urls:
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise MediaUploadError(
+                f"{label} fetches media by URL, so it must be publicly reachable. "
+                f"{url!r} is not an absolute URL — configure durable media storage "
+                f"(S3_ENDPOINT_URL and keys) before publishing media to {label}."
+            )
 
 
 def _guess_mime(url: str) -> str:
@@ -492,7 +540,7 @@ class PlatformPublisher:
 
             async def do_post():
                 resp = await client.post(
-                    f"https://graph.facebook.com/v19.0/{page_id}/feed",
+                    f"{GRAPH_BASE}/{page_id}/feed",
                     params={"access_token": credentials["access_token"]},
                     json={"message": body},
                 )
@@ -517,15 +565,9 @@ class PlatformPublisher:
         with ``attached_media`` renders differently from a photo post, and the
         photo post is what an operator expects from "post this image".
         """
-        for url in media_urls:
-            if urlsplit(url).scheme not in ("http", "https") or not urlsplit(url).netloc:
-                raise MediaUploadError(
-                    "Facebook fetches media by URL, so it must be publicly reachable. "
-                    f"{url!r} is not an absolute URL — configure durable media storage "
-                    "(S3_ENDPOINT_URL and keys) before publishing media to Facebook."
-                )
+        _require_public_media_urls(media_urls, "facebook")
 
-        photos_endpoint = f"https://graph.facebook.com/v19.0/{page_id}/photos"
+        photos_endpoint = f"{GRAPH_BASE}/{page_id}/photos"
 
         if len(media_urls) == 1:
 
@@ -572,7 +614,7 @@ class PlatformPublisher:
 
         async def do_feed():
             resp = await client.post(
-                f"https://graph.facebook.com/v19.0/{page_id}/feed", params=params
+                f"{GRAPH_BASE}/{page_id}/feed", params=params
             )
             resp.raise_for_status()
             return resp.json()
@@ -582,16 +624,264 @@ class PlatformPublisher:
         return {"post_id": data["id"], "url": f"https://facebook.com/{data['id']}"}
 
     async def _publish_instagram(self, content: dict, credentials: dict) -> dict:
-        """Post to Instagram (requires media URL — not implemented)."""
+        """Post to Instagram via the Graph container → publish flow.
+
+        Reached only once ``instagram`` leaves :data:`UNAVAILABLE_PUBLISH_PLATFORMS`
+        (a separate, Meta-app-review-gated commit); until then :meth:`publish`
+        short-circuits before this runs. It is exercised directly by the tests.
+
+        **``credentials["page_id"]`` carries the Instagram Business Account id
+        here, not a Facebook Page id.** ``routers/publishing.py`` builds
+        ``page_id=account.account_handle`` for every Meta platform, and the
+        Instagram connect flow stores the IG Business Account id in
+        ``account_handle`` because that is the node every call below addresses.
+        The access token is still the *Page* token — a user token cannot publish,
+        and Graph's error does not say so.
+
+        Media is mandatory and must be a public URL: Graph fetches the bytes, so
+        this publisher never reads them. Every refusal raises
+        :class:`MediaUploadError`, because a normal return is wrapped as
+        ``{"success": True, ...}`` and would mark the piece ``published`` and
+        charge a post for a post that was never made — which is exactly what the
+        stub this replaced did.
+        """
+        ig_user_id = str(credentials.get("page_id") or "").strip()
+        if not ig_user_id:
+            raise MediaUploadError(
+                "Instagram publishing needs the connected Instagram Business Account "
+                "id. Reconnect the Instagram channel so the account id is stored."
+            )
+        token = str(credentials["access_token"])
+
+        caption = content.get("body", "")
+        hashtags = content.get("hashtags") or []
+        if hashtags:
+            caption += "\n\n" + " ".join(f"#{tag}" for tag in hashtags[:IG_MAX_HASHTAGS])
+
+        media_urls = _media_list(content, "instagram")
+        if not media_urls:
+            raise MediaUploadError(
+                "Instagram cannot publish a text-only post — the API requires at "
+                "least one image or video. Attach media to this post, or publish "
+                "it manually."
+            )
+        _require_public_media_urls(media_urls, "instagram")
+
+        async with httpx.AsyncClient() as client:
+            await self._assert_instagram_quota(client, ig_user_id, token)
+
+            videos = [u for u in media_urls if _guess_mime(u).startswith("video/")]
+            if videos:
+                # A Reel is a single video. An image carousel cannot carry one,
+                # and mixing is not a shape this product generates.
+                if len(media_urls) > 1:
+                    logger.warning(
+                        "publish_media_video_only",
+                        platform="instagram",
+                        had=len(media_urls),
+                    )
+                creation_id = await self._create_instagram_container(
+                    client,
+                    ig_user_id,
+                    token,
+                    {
+                        "media_type": "REELS",
+                        "video_url": videos[0],
+                        "caption": caption,
+                    },
+                )
+                await self._await_instagram_container(client, creation_id, token)
+            elif len(media_urls) == 1:
+                creation_id = await self._create_instagram_container(
+                    client,
+                    ig_user_id,
+                    token,
+                    {"image_url": media_urls[0], "caption": caption},
+                )
+            else:
+                children = [
+                    await self._create_instagram_container(
+                        client,
+                        ig_user_id,
+                        token,
+                        {"image_url": url, "is_carousel_item": "true"},
+                    )
+                    for url in media_urls
+                ]
+                creation_id = await self._create_instagram_container(
+                    client,
+                    ig_user_id,
+                    token,
+                    {
+                        "media_type": "CAROUSEL",
+                        "children": ",".join(children),
+                        "caption": caption,
+                    },
+                )
+
+            # Deliberately not retried: Graph can answer a successful publish with
+            # a transport error, and a retry would post the same container twice.
+            # One failed publish leaves an unpublished container, which expires.
+            resp = await client.post(
+                f"{GRAPH_BASE}/{ig_user_id}/media_publish",
+                params={"access_token": token, "creation_id": creation_id},
+            )
+            resp.raise_for_status()
+            media_id = str(resp.json()["id"])
+
+        logger.info(
+            "publish_media_uploaded",
+            platform="instagram",
+            count=len(media_urls),
+            media_id=media_id,
+        )
         return {
-            "post_id": "",
-            "url": "",
-            "message": (
-                "Instagram publishing is not available yet. "
-                "Text-only posts are not supported; implementation requires uploading media "
-                "through the Meta Graph API (container + publish flow)."
-            ),
+            "post_id": media_id,
+            "url": await self._instagram_permalink(media_id, token),
         }
+
+    async def _create_instagram_container(
+        self,
+        client: httpx.AsyncClient,
+        ig_user_id: str,
+        token: str,
+        fields: dict[str, str],
+    ) -> str:
+        """``POST /{ig-user-id}/media`` → the creation id.
+
+        Safe to retry: a duplicate container is never published and expires on
+        its own, unlike a duplicate ``media_publish``.
+        """
+
+        async def do_create() -> dict[str, Any]:
+            resp = await client.post(
+                f"{GRAPH_BASE}/{ig_user_id}/media",
+                params={"access_token": token, **fields},
+            )
+            resp.raise_for_status()
+            return dict(resp.json())
+
+        data = await self._with_http_retries(do_create)
+        creation_id = data.get("id")
+        if not creation_id:
+            raise MediaUploadError(f"Instagram returned no container id: {data!r}")
+        return str(creation_id)
+
+    async def _await_instagram_container(
+        self, client: httpx.AsyncClient, creation_id: str, token: str
+    ) -> None:
+        """Poll ``GET /{creation_id}?fields=status_code`` until ``FINISHED``.
+
+        Video containers are transcoded asynchronously. Publishing one that is
+        still ``IN_PROGRESS`` fails with an error that reads like a permissions
+        problem, so the wait is explicit and bounded; a container still pending
+        at the end raises rather than publishing early.
+        """
+        for attempt in range(IG_CONTAINER_POLL_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(IG_CONTAINER_POLL_SECONDS)
+
+            async def do_status() -> dict[str, Any]:
+                resp = await client.get(
+                    f"{GRAPH_BASE}/{creation_id}",
+                    params={"access_token": token, "fields": "status_code,status"},
+                )
+                resp.raise_for_status()
+                return dict(resp.json())
+
+            data = await self._with_http_retries(do_status)
+            status = str(data.get("status_code") or "").upper()
+            if status == "FINISHED":
+                return
+            if status in ("ERROR", "EXPIRED"):
+                raise MediaUploadError(
+                    f"Instagram could not process the media ({status.lower()}): "
+                    f"{data.get('status') or 'no detail returned'}. The video or "
+                    "image may not meet Instagram's format requirements."
+                )
+
+        waited = int(IG_CONTAINER_POLL_SECONDS * (IG_CONTAINER_POLL_ATTEMPTS - 1))
+        raise MediaUploadError(
+            f"Instagram was still processing this media after {waited}s, so it was "
+            "not published. Publishing an unfinished container fails with a "
+            "misleading permissions error. Try again in a few minutes."
+        )
+
+    async def _assert_instagram_quota(
+        self, client: httpx.AsyncClient, ig_user_id: str, token: str
+    ) -> None:
+        """Refuse before publishing when the rolling publish quota is spent.
+
+        ``GET /{ig-user-id}/content_publishing_limit`` reports usage against the
+        account's own quota, so the figure is read rather than hardcoded — Meta
+        has used both 25 and 50, per account. The raw Graph error on the far side
+        of the wall is uninterpretable, and the scheduler publishes unattended, so
+        an account can otherwise burn the window overnight with nobody watching.
+
+        A quota response we cannot parse does **not** block the post: that would
+        turn a Graph field rename into an outage. Only a usage figure at or over
+        the reported limit refuses.
+        """
+
+        async def do_limit() -> dict[str, Any]:
+            resp = await client.get(
+                f"{GRAPH_BASE}/{ig_user_id}/content_publishing_limit",
+                params={"access_token": token, "fields": "config,quota_usage"},
+            )
+            resp.raise_for_status()
+            return dict(resp.json())
+
+        try:
+            data = await self._with_http_retries(do_limit)
+        except (httpx.HTTPStatusError, httpx.RequestError, httpx.TimeoutException) as exc:
+            logger.warning("publish_quota_unreadable", platform="instagram", error=str(exc))
+            return
+
+        rows = data.get("data") or []
+        row = rows[0] if rows and isinstance(rows[0], dict) else {}
+        config = row.get("config") if isinstance(row.get("config"), dict) else {}
+        used = row.get("quota_usage")
+        total = (config or {}).get("quota_total")
+        if not isinstance(used, int) or not isinstance(total, int) or total <= 0:
+            logger.warning("publish_quota_unreadable", platform="instagram", payload=data)
+            return
+
+        if used >= total:
+            duration = (config or {}).get("quota_duration")
+            window = (
+                f"{int(duration) // 3600} hours"
+                if isinstance(duration, int) and duration >= 3600
+                else "24 hours"
+            )
+            raise MediaUploadError(
+                f"Instagram's publishing limit is used up: {used} of {total} posts "
+                f"in the last {window} on this account. Instagram counts a rolling "
+                f"{window} window, so this post can go out once the oldest one "
+                "falls out of it."
+            )
+        logger.info("publish_quota_checked", platform="instagram", used=used, total=total)
+
+    async def _instagram_permalink(self, media_id: str, token: str) -> str:
+        """The published post's permalink, or ``""``.
+
+        Graph does not return one from ``media_publish`` and an Instagram URL
+        cannot be derived from a media id, so it is fetched. Empty rather than
+        guessed when the lookup fails: the post is already live, and inventing a
+        link that 404s is worse than having none.
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{GRAPH_BASE}/{media_id}",
+                    params={"access_token": token, "fields": "permalink"},
+                )
+                resp.raise_for_status()
+                return str(resp.json().get("permalink") or "")
+        except Exception as exc:  # noqa: BLE001 - the post is published either way
+            logger.warning(
+                "publish_permalink_unavailable", platform="instagram", error=str(exc)
+            )
+            return ""
 
 
 publisher = PlatformPublisher()
