@@ -389,6 +389,278 @@ async def test_instagram_stays_unavailable():
 
 
 # ---------------------------------------------------------------------------
+# Instagram — container → publish (Phase 7)
+#
+# Every test here calls ``_publish_instagram`` directly, because ``instagram`` is
+# still in ``UNAVAILABLE_PUBLISH_PLATFORMS`` until Meta app review lands and
+# ``publish()`` short-circuits before the publisher runs. Testing behind the flag
+# is the point: the real publisher has to be in place *before* the flag moves, or
+# the flag move re-creates the stub incident.
+# ---------------------------------------------------------------------------
+IG_QUOTA_OK = {"data": [{"config": {"quota_total": 50, "quota_duration": 86400}, "quota_usage": 3}]}
+
+
+def _ig_responder(
+    *,
+    quota: dict[str, Any] | None = None,
+    statuses: list[str] | None = None,
+):
+    """Answers the whole Instagram flow: quota, containers, status, publish."""
+    created = {"n": 0}
+    polls = {"n": 0}
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "content_publishing_limit" in url:
+            return _json(quota if quota is not None else IG_QUOTA_OK)
+        if url.endswith("/media_publish") or "/media_publish?" in url:
+            return _json({"id": "ig_media_1"})
+        if "/media?" in url or url.endswith("/media"):
+            created["n"] += 1
+            return _json({"id": f"c{created['n']}"})
+        if "fields=status_code" in url or "status_code" in url:
+            seq = statuses or ["FINISHED"]
+            idx = min(polls["n"], len(seq) - 1)
+            polls["n"] += 1
+            return _json({"status_code": seq[idx]})
+        if "permalink" in url:
+            return _json({"permalink": "https://www.instagram.com/p/ABC/"})
+        return _json({"id": "ig_media_1"})
+
+    return responder
+
+
+async def test_instagram_single_image_creates_a_container_then_publishes(transport):
+    rec = transport(_ig_responder())
+
+    out = await PlatformPublisher()._publish_instagram(
+        {"body": "caption", "hashtags": ["ai"], "media_urls": ["https://cdn.example/a.png"]},
+        {"access_token": "tok", "page_id": "ig_17841400000000000"},
+    )
+
+    containers = [
+        c
+        for c in rec.calls
+        if "/media" in str(c.url) and "media_publish" not in str(c.url)
+    ]
+    publishes = rec.to("/media_publish")
+    assert len(containers) == 1
+    assert len(publishes) == 1
+    # Order matters: the container has to exist before it can be published.
+    assert rec.calls.index(containers[0]) < rec.calls.index(publishes[0])
+
+    params = dict(containers[0].url.params)
+    assert params["image_url"] == "https://cdn.example/a.png"
+    assert params["caption"] == "caption\n\n#ai"
+    assert params["access_token"] == "tok"
+    # Addressed at the IG Business Account id carried in ``page_id``.
+    assert "/ig_17841400000000000/media" in str(containers[0].url)
+    assert dict(publishes[0].url.params)["creation_id"] == "c1"
+
+    assert out["post_id"] == "ig_media_1"
+    assert out["url"] == "https://www.instagram.com/p/ABC/"
+
+
+async def test_instagram_carousel_posts_children_then_one_parent(transport):
+    rec = transport(_ig_responder())
+
+    urls = [f"https://cdn.example/{i}.png" for i in range(3)]
+    await PlatformPublisher()._publish_instagram(
+        {"body": "three", "media_urls": urls},
+        {"access_token": "tok", "page_id": "ig_1"},
+    )
+
+    containers = [
+        dict(c.url.params)
+        for c in rec.calls
+        if "/media" in str(c.url) and "media_publish" not in str(c.url)
+    ]
+    children = [c for c in containers if c.get("is_carousel_item") == "true"]
+    parents = [c for c in containers if c.get("media_type") == "CAROUSEL"]
+    assert len(children) == 3
+    assert [c["image_url"] for c in children] == urls
+    assert all("caption" not in c for c in children), "the caption belongs to the parent"
+    assert len(parents) == 1
+    assert parents[0]["children"] == "c1,c2,c3"
+    assert parents[0]["caption"] == "three"
+    assert len(rec.to("/media_publish")) == 1
+    assert dict(rec.to("/media_publish")[0].url.params)["creation_id"] == "c4"
+
+
+async def test_instagram_carousel_is_capped_at_ten(transport):
+    """Without ``MAX_MEDIA_PER_POST["instagram"]`` the lookup default of 1 made a
+    carousel silently become a single image."""
+    assert publishing.MAX_MEDIA_PER_POST["instagram"] == 10
+    urls = [f"https://cdn.example/{i}.png" for i in range(14)]
+    assert len(_media_list({"media_urls": urls}, "instagram")) == 10
+
+    rec = transport(_ig_responder())
+    await PlatformPublisher()._publish_instagram(
+        {"body": "many", "media_urls": urls}, {"access_token": "tok", "page_id": "ig_1"}
+    )
+
+    containers = [
+        dict(c.url.params)
+        for c in rec.calls
+        if "/media" in str(c.url) and "media_publish" not in str(c.url)
+    ]
+    assert len([c for c in containers if c.get("is_carousel_item") == "true"]) == 10
+    assert dict(rec.to("/media_publish")[0].url.params)["creation_id"] == "c11"
+
+
+async def test_instagram_reel_waits_for_the_container_to_finish(transport, monkeypatch):
+    monkeypatch.setattr(publishing, "IG_CONTAINER_POLL_SECONDS", 0.0)
+    rec = transport(_ig_responder(statuses=["IN_PROGRESS", "IN_PROGRESS", "FINISHED"]))
+
+    out = await PlatformPublisher()._publish_instagram(
+        {"body": "reel", "media_urls": ["https://cdn.example/v.mp4"]},
+        {"access_token": "tok", "page_id": "ig_1"},
+    )
+
+    container = dict(
+        [c for c in rec.calls if "/media" in str(c.url) and "media_publish" not in str(c.url)][
+            0
+        ].url.params
+    )
+    assert container["media_type"] == "REELS"
+    assert container["video_url"] == "https://cdn.example/v.mp4"
+    assert len(rec.to("status_code")) == 3
+    # Published only after FINISHED.
+    assert rec.calls.index(rec.to("/media_publish")[0]) > rec.calls.index(
+        rec.to("status_code")[-1]
+    )
+    assert out["post_id"] == "ig_media_1"
+
+
+async def test_instagram_refuses_a_container_stuck_pending(transport, monkeypatch):
+    monkeypatch.setattr(publishing, "IG_CONTAINER_POLL_SECONDS", 0.0)
+    rec = transport(_ig_responder(statuses=["IN_PROGRESS"]))
+
+    with pytest.raises(MediaUploadError, match="still processing"):
+        await PlatformPublisher()._publish_instagram(
+            {"body": "reel", "media_urls": ["https://cdn.example/v.mp4"]},
+            {"access_token": "tok", "page_id": "ig_1"},
+        )
+
+    assert len(rec.to("status_code")) == publishing.IG_CONTAINER_POLL_ATTEMPTS
+    # The whole point: an unfinished container is never published.
+    assert rec.to("/media_publish") == []
+
+
+async def test_instagram_refuses_a_text_only_post(transport):
+    """Not "unsupported" — Instagram's API has no text-only post at all."""
+    rec = transport(_ig_responder())
+
+    with pytest.raises(MediaUploadError, match="text-only"):
+        await PlatformPublisher()._publish_instagram(
+            {"body": "words only"}, {"access_token": "tok", "page_id": "ig_1"}
+        )
+
+    assert rec.calls == []
+
+
+async def test_instagram_text_only_does_not_look_like_a_success(transport, monkeypatch):
+    """Through ``publish()`` with the availability guard lifted, a text-only post
+    is an explicit failure — never the success-shaped body the old stub returned.
+    """
+    transport(_ig_responder())
+    monkeypatch.setattr(publishing, "UNAVAILABLE_PUBLISH_PLATFORMS", {"tiktok": "no"})
+
+    result = await publisher.publish(
+        "instagram", {"body": "hi"}, {"access_token": "tok", "page_id": "ig_1"}
+    )
+
+    assert result["success"] is False
+    assert "text-only" in result["error"]
+    assert "post_id" not in result
+
+
+async def test_instagram_refuses_an_app_relative_media_url(transport, media_on_disk):
+    """Graph fetches the bytes, so the ``local`` driver can never work here."""
+    rec = transport(_ig_responder())
+
+    with pytest.raises(MediaUploadError, match="S3_ENDPOINT_URL"):
+        await PlatformPublisher()._publish_instagram(
+            {"body": "hi", "media_urls": [media_on_disk]},
+            {"access_token": "tok", "page_id": "ig_1"},
+        )
+
+    assert rec.calls == []
+
+
+async def test_instagram_refuses_when_the_publish_quota_is_spent(transport):
+    """The limit is read from the account, never hardcoded at 25 or 50."""
+    spent = {"data": [{"config": {"quota_total": 25, "quota_duration": 86400}, "quota_usage": 25}]}
+    rec = transport(_ig_responder(quota=spent))
+
+    with pytest.raises(MediaUploadError, match="24 hours"):
+        await PlatformPublisher()._publish_instagram(
+            {"body": "hi", "media_urls": ["https://cdn.example/a.png"]},
+            {"access_token": "tok", "page_id": "ig_1"},
+        )
+
+    assert rec.to("content_publishing_limit")
+    assert rec.to("/media_publish") == []
+    assert [c for c in rec.calls if "/media?" in str(c.url)] == []
+
+
+async def test_instagram_quota_message_names_the_window_and_the_numbers(transport):
+    spent = {"data": [{"config": {"quota_total": 50, "quota_duration": 86400}, "quota_usage": 60}]}
+    transport(_ig_responder(quota=spent))
+
+    with pytest.raises(MediaUploadError) as exc:
+        await PlatformPublisher()._publish_instagram(
+            {"body": "hi", "media_urls": ["https://cdn.example/a.png"]},
+            {"access_token": "tok", "page_id": "ig_1"},
+        )
+
+    assert "60 of 50" in str(exc.value)
+    assert "24 hours" in str(exc.value)
+
+
+async def test_instagram_unreadable_quota_does_not_block_the_post(transport):
+    """A Graph field rename must not become an outage."""
+    rec = transport(_ig_responder(quota={"data": []}))
+
+    out = await PlatformPublisher()._publish_instagram(
+        {"body": "hi", "media_urls": ["https://cdn.example/a.png"]},
+        {"access_token": "tok", "page_id": "ig_1"},
+    )
+
+    assert out["post_id"] == "ig_media_1"
+    assert len(rec.to("/media_publish")) == 1
+
+
+async def test_instagram_without_an_account_id_refuses(transport):
+    rec = transport(_ig_responder())
+
+    with pytest.raises(MediaUploadError, match="Instagram Business Account"):
+        await PlatformPublisher()._publish_instagram(
+            {"body": "hi", "media_urls": ["https://cdn.example/a.png"]},
+            {"access_token": "tok"},
+        )
+
+    assert rec.calls == []
+
+
+async def test_instagram_missing_permalink_is_empty_not_invented(transport):
+    def responder(request: httpx.Request) -> httpx.Response:
+        if "permalink" in str(request.url):
+            return _json({"error": {"message": "nope"}}, status=400)
+        return _ig_responder()(request)
+
+    transport(responder)
+
+    out = await PlatformPublisher()._publish_instagram(
+        {"body": "hi", "media_urls": ["https://cdn.example/a.png"]},
+        {"access_token": "tok", "page_id": "ig_1"},
+    )
+
+    assert out["post_id"] == "ig_media_1"
+    assert out["url"] == ""
+
+
+# ---------------------------------------------------------------------------
 # Both call sites carry media_urls — they must not diverge
 # ---------------------------------------------------------------------------
 @pytest.fixture

@@ -29,6 +29,7 @@ from urllib.parse import quote
 import httpx
 import structlog
 
+from agency.services.meta_accounts import GRAPH_BASE
 from agency.utils.encryption import decrypt_token
 
 logger = structlog.get_logger()
@@ -227,7 +228,7 @@ async def fetch_facebook_metrics(post_id: str, access_token: str) -> dict:
 
         async def do_fields():
             resp = await client.get(
-                f"https://graph.facebook.com/v19.0/{post_id}",
+                f"{GRAPH_BASE}/{post_id}",
                 params={
                     "fields": "likes.summary(true),comments.summary(true),shares",
                     "access_token": access_token,
@@ -259,7 +260,7 @@ async def fetch_facebook_metrics(post_id: str, access_token: str) -> dict:
 
             async def do_insights():
                 resp = await client.get(
-                    f"https://graph.facebook.com/v19.0/{post_id}/insights",
+                    f"{GRAPH_BASE}/{post_id}/insights",
                     params={
                         "metric": "post_impressions,post_impressions_unique,"
                         "post_clicks,post_engaged_users",

@@ -15,12 +15,27 @@ from agency.config import Settings, get_settings
 from agency.dependencies import get_current_user, get_db, get_org_id
 from agency.models.tables import Client, PlatformAccount
 from agency.permissions import Capability, require_cap
+from agency.services.meta_accounts import (
+    GRAPH_VERSION,
+    META_PLATFORMS,
+    MetaAccountChoiceRequired,
+    MetaAccountError,
+    resolve_meta_account,
+)
 from agency.services.oauth_state import InvalidOAuthStateError, sign_state, verify_state
 from agency.utils.encryption import encrypt_token
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
+
+
+def _optional_str(value: Any) -> str | None:
+    """A request-body field that is meaningful only when it is a non-empty string."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _first_cors_origin(raw: str) -> str:
@@ -41,10 +56,23 @@ OAUTH_CONFIGS = {
         "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
         "scopes": "openid profile w_member_social",
     },
+    # Meta: both entries use Facebook Login. Graph has no separate Instagram OAuth —
+    # you authorize through Facebook and reach Instagram via the Page it is linked to.
+    # The version comes from ``services.meta_accounts.GRAPH_VERSION`` so OAuth,
+    # publishing and metrics cannot drift onto different Graph versions.
     "facebook": {
-        "authorize_url": "https://www.facebook.com/v18.0/dialog/oauth",
-        "token_url": "https://graph.facebook.com/v18.0/oauth/access_token",
+        "authorize_url": f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth",
+        "token_url": f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token",
         "scopes": "pages_manage_posts,pages_read_engagement",
+    },
+    "instagram": {
+        "authorize_url": f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth",
+        "token_url": f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token",
+        # ``instagram_content_publish`` is the publish grant and the one under Meta
+        # app review; the rest are needed to find the Page and the linked IG account.
+        "scopes": (
+            "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement"
+        ),
     },
 }
 
@@ -52,6 +80,8 @@ PLATFORM_CLIENT_KEYS = {
     "twitter": ("twitter_client_id", "twitter_client_secret"),
     "linkedin": ("linkedin_client_id", "linkedin_client_secret"),
     "facebook": ("meta_app_id", "meta_app_secret"),
+    # Same Meta app as Facebook — one app, two products.
+    "instagram": ("meta_app_id", "meta_app_secret"),
 }
 
 
@@ -76,10 +106,24 @@ PKCE_PLATFORMS = {"twitter"}
 
 
 def oauth_platform_status() -> dict[str, dict[str, Any]]:
-    """Per supported platform: whether its app credentials are set, and the scopes requested."""
+    """Per supported platform: whether its app credentials are set, and the scopes requested.
+
+    A platform whose publishing is still switched off is **omitted**, even when its
+    OAuth config and credentials are complete. This is the whole of product rule 1
+    here: offering "Connect Instagram" while ``UNAVAILABLE_PUBLISH_PLATFORMS`` still
+    refuses an Instagram post would promise a capability the product does not have —
+    and before Meta app review grants ``instagram_content_publish``, the Facebook
+    dialog would reject the authorization anyway. Deriving it from that one dict
+    means the go-live commit (which drops the entry) switches the Connect button on
+    with no second edit, and nothing here has to be remembered.
+    """
+    from agency.services.publishing import UNAVAILABLE_PUBLISH_PLATFORMS
+
     settings = get_settings()
     out: dict[str, dict[str, Any]] = {}
     for platform in OAUTH_CONFIGS:
+        if platform in UNAVAILABLE_PUBLISH_PLATFORMS:
+            continue
         key_attr, _ = PLATFORM_CLIENT_KEYS[platform]
         scopes = _requested_scopes(platform, settings).replace(",", " ").split()
         out[platform] = {"configured": bool(getattr(settings, key_attr, "")), "scopes": scopes}
@@ -252,11 +296,43 @@ async def oauth_callback(
     access_token = token_data.get("access_token", "") or ""
     refresh_token = token_data.get("refresh_token", "") or ""
 
-    access_stored = encrypt_token(access_token) if access_token else None
-    refresh_stored = encrypt_token(refresh_token) if refresh_token else None
-
     account_handle = body.get("account_handle", f"{platform}_user")
     display_name = body.get("display_name", account_handle)
+
+    # Meta is the one flow where the token does not identify what we publish to.
+    # Resolve the Page (and, for Instagram, the IG Business Account linked to it)
+    # server-side and store the **Page** token: a user token cannot publish, and
+    # ``account_handle`` is what ``routers/publishing.py`` passes as ``page_id``.
+    # Until this existed the default ``f"{platform}_user"`` below was stored for
+    # every OAuth connection, so Facebook posted to ``/v19.0/facebook_user/feed``.
+    # ``account_handle``/``display_name`` from the request body are never trusted
+    # for these two platforms — the handle is a fact about the token.
+    if platform in META_PLATFORMS:
+        try:
+            resolved = await resolve_meta_account(
+                platform, access_token, page_id=_optional_str(body.get("page_id"))
+            )
+        except MetaAccountChoiceRequired as exc:
+            # 409, not 400: the request was well-formed and the user now has to pick.
+            # Re-submit the same callback body with ``page_id``.
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={"code": "meta_page_choice_required", "candidates": exc.candidates},
+            ) from None
+        except MetaAccountError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from None
+        account_handle = resolved.account_handle
+        display_name = resolved.display_name
+        access_token = resolved.access_token
+        logger.info(
+            "meta_account_resolved",
+            platform=platform,
+            page_id=resolved.page_id,
+            account_handle=account_handle,
+        )
+
+    access_stored = encrypt_token(access_token) if access_token else None
+    refresh_stored = encrypt_token(refresh_token) if refresh_token else None
 
     account = PlatformAccount(
         client_id=client_uuid,
