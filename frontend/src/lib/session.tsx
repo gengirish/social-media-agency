@@ -28,7 +28,9 @@ export type Capability =
   | "content.override"
   | "oauth.connect"
   | "team.manage"
-  | "billing.manage";
+  | "billing.manage"
+  /** Workspace administration: API keys, branding. Owner/admin. */
+  | "workspace.manage";
 
 export type Role = "owner" | "admin" | "member" | "viewer";
 export type AccountType = "personal" | "business";

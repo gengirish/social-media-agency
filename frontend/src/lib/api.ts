@@ -95,11 +95,15 @@ async function unwrap<T>(res: Response): Promise<T> {
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = await getAuthToken();
 
+  // A FormData body (the branding logo upload) must not carry a JSON content
+  // type: the browser sets multipart/form-data with its boundary itself, and a
+  // hand-set header makes the server reject the body it cannot parse.
+  const isForm = typeof FormData !== "undefined" && options?.body instanceof FormData;
   const send = (bearer: string | null) =>
     fetch(`${API_BASE}${path}`, {
       ...options,
       headers: {
-        "Content-Type": "application/json",
+        ...(isForm ? {} : { "Content-Type": "application/json" }),
         ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
         ...options?.headers,
       },
@@ -536,11 +540,27 @@ export const api = {
   // --- White label / branding ---
   /** Returns `{ is_active: false }` when the org has never configured branding. */
   getWhiteLabel: () => request<WhiteLabelResponse>("/api/v1/integrations/white-label"),
+  /** Partial update (`workspace.manage`); returns the full branding. */
   updateWhiteLabel: (data: WhiteLabelUpdate) =>
-    request<{ status: string }>("/api/v1/integrations/white-label", {
+    request<WhiteLabelBranding>("/api/v1/integrations/white-label", {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  /**
+   * Replace the agency logo (`workspace.manage`). PNG, JPEG or WebP, at most
+   * `LOGO_MAX_BYTES` and 2000 px on the longest edge. The server reads the
+   * MIME from the bytes, not from the file's name or declared type.
+   */
+  uploadWhiteLabelLogo: (file: File) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return request<WhiteLabelBranding>("/api/v1/integrations/white-label/logo", {
+      method: "POST",
+      body: form,
+    });
+  },
+  deleteWhiteLabelLogo: () =>
+    request<WhiteLabelResponse>("/api/v1/integrations/white-label/logo", { method: "DELETE" }),
 
   // --- OAuth ---
   getOAuthUrl: (platform: string) =>
@@ -1567,16 +1587,29 @@ export interface PlatformAccountSummary {
   followers_count: number | null;
 }
 
+/** Upload cap for the agency logo — mirrors `services/white_label.py::LOGO_MAX_BYTES`. */
+export const LOGO_MAX_BYTES = 512 * 1024;
+/** Longest edge the server accepts — mirrors `LOGO_MAX_EDGE`. */
+export const LOGO_MAX_EDGE = 2000;
+export const LOGO_ACCEPT = "image/png,image/jpeg,image/webp";
+
 export interface WhiteLabelBranding {
   id: string;
   custom_domain: string | null;
+  /** An externally hosted logo; used only when nothing has been uploaded. */
   logo_url: string | null;
   primary_color: string | null;
   company_name: string | null;
   support_email: string | null;
   portal_enabled: boolean;
   email_from_name: string | null;
+  /** Off means clients see the workspace name and no logo, whatever is stored here. */
   is_active: boolean;
+  has_logo: boolean;
+  logo_mime: string | null;
+  logo_bytes: number | null;
+  /** The uploaded logo as a `data:` URI — what the pack and the review page carry. */
+  logo_data_url: string | null;
 }
 
 /** `{ is_active: false }` is returned when no branding row exists yet. */

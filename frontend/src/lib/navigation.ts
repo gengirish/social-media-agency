@@ -94,6 +94,15 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Settings",
     tabs: [
       { label: "Workspace", href: "/settings" },
+      // What clients see on review links and campaign packs. Changing it is
+      // workspace administration (the PUT and the logo upload are gated), so
+      // the tab is hidden from seats that would only meet a 403.
+      {
+        label: "Branding",
+        href: "/settings?tab=branding",
+        queryTab: "branding",
+        requires: "workspace.manage",
+      },
       { label: "Team", href: "/team", requires: "team.manage" },
       { label: "Billing", href: "/pricing", requires: "billing.manage" },
     ],

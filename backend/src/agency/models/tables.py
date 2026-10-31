@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -631,7 +632,14 @@ class WhiteLabel(Base):
     org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False, unique=True)
     custom_domain = Column(String(255))
     logo_url = Column(Text)
-    primary_color = Column(String(7), default="#4f46e5")
+    # The uploaded logo (Settings › Branding). Bytes in the row so the campaign
+    # pack can inline it as a data: URI and the public review page can show it
+    # without the authenticated media route. See services/white_label.py.
+    logo_data = Column(LargeBinary)
+    logo_mime = Column(String(100))
+    # No default: an unset colour means "the pack's own accent", not the indigo
+    # the old dashboard used (dropped 261031, db/migrations/261031_white_label_logo.sql).
+    primary_color = Column(String(7))
     company_name = Column(String(255))
     support_email = Column(String(255))
     portal_enabled = Column(Boolean, default=False)

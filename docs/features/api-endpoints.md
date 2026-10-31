@@ -489,8 +489,10 @@ Tests: `tests/test_mark_posted.py`, `tests/test_post_url_patch.py`, `tests/test_
 | POST | `/integrations/api-keys` | Yes | `create_key` | Create API key |
 | GET | `/integrations/api-keys` | Yes | `list_keys` | List org API keys (metadata only) |
 | DELETE | `/integrations/api-keys/{key_id}` | Yes | `revoke_key` | Deactivate API key |
-| GET | `/integrations/white-label` | Yes | `get_branding` | White-label settings |
-| PUT | `/integrations/white-label` | Yes | `update_branding` | Upsert white-label |
+| GET | `/integrations/white-label` | Yes | `get_branding` | Branding: name, colour, support email, `is_active`, and the uploaded logo as `logo_data_url` (`{is_active: false}` when no row) |
+| PUT | `/integrations/white-label` | Yes · `workspace.manage` | `update_branding` | Partial update (`WhiteLabelUpdate`: hex colour, email shape, safe `logo_url` → 422 `logo_url_unsafe`); returns the full branding |
+| POST | `/integrations/white-label/logo` | Yes · `workspace.manage` | `upload_logo` | Multipart `file`. PNG/JPEG/WebP by **bytes**, ≤ 512 KB (413 `logo_too_large`), ≤ 2000 px (422 `logo_dimensions`), SVG refused (422 `logo_unsupported`). A first upload creates the row with `is_active = true` |
+| DELETE | `/integrations/white-label/logo` | Yes · `workspace.manage` | `remove_logo` | Drop the uploaded logo; other fields stay |
 | GET | `/integrations/settings` | Yes | `get_settings_endpoint` | Org settings |
 | PATCH | `/integrations/settings` | Yes | `update_settings_endpoint` | Update org settings |
 | GET | `/integrations/platform-accounts` | Yes | `list_platform_accounts` | Connected platform accounts |
