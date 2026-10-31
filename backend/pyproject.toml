@@ -201,7 +201,6 @@ module = [
     "agency.routers.magic_brief",
     "agency.routers.notifications",
     "agency.routers.oauth",
-    "agency.routers.portal",
     "agency.routers.product_analytics",
     "agency.routers.public_api",
     "agency.routers.publishing",

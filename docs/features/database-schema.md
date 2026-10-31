@@ -1,7 +1,7 @@
 # Database Schema
 <!-- verified: 260929 -->
 
-PostgreSQL (Neon serverless) via SQLAlchemy async. **25 tables** (24 without pgvector). `repurpose_pack` added 260921; `creative_asset` and `inbox_item_state` added 260923; `billing_webhook_event` added 260925.
+PostgreSQL (Neon serverless) via SQLAlchemy async. **28 tables** (27 without pgvector) <!-- verified: 261031 — counted from `models/tables.py` and `db/init.sql`, which agree -->. `repurpose_pack` added 260921; `creative_asset` and `inbox_item_state` added 260923; `billing_webhook_event` added 260925; `media_asset` and `media_job` added 261013; `client_review_link` added 261031.
 
 > ### Pending Neon migrations — Cadence full parity (260923)
 >
@@ -73,7 +73,7 @@ Schema is raw SQL in `db/init.sql` (+ `db/seed.sql`), **not** Alembic migrations
 |--------|------|-------|
 | `id` | UUID PK | |
 | `name` | String | Not unique — never resolve an org by it |
-| `slug` | String(64) **UNIQUE**, nullable | Portal identity. `/api/v1/portal/{org_slug}` is unauthenticated, so this is the only column it resolves on. Null = that org has no portal (fail-closed). Added 260817 — run `db/migrations/260817_org_slug.sql` on existing databases |
+| `slug` | String(64) **UNIQUE**, nullable | Was the identity of the unauthenticated org-slug portal, removed 261031 (client review links replaced it). Still unique and still written at signup; nothing public resolves on it now. Added 260817 — run `db/migrations/260817_org_slug.sql` on existing databases |
 | `domain` | String | Not unique |
 | `settings` | JSONB | |
 | `agentmail_inbox_id` | String | AgentMail integration |
@@ -336,7 +336,13 @@ Per-content per-platform metrics. Fields: date, impressions, reach, engagement, 
 Review comments on content pieces. Fields: content_id, user_id, body text.
 
 ### WhiteLabel [LIVE]
-Org white-label branding config. One per org. Fields: branding strings/text/bool. Also `portal_enabled` (boolean) and `email_from_name` for client portal and outbound labeling.
+Org white-label branding config. One per org. Fields: branding strings/text/bool. Also `portal_enabled` (boolean) and `email_from_name` for outbound labeling. <!-- verified: 261031 --> `portal_enabled` gated the org-slug portal removed 261031 and is now **unread**. When `is_active`, `company_name` / `logo_url` / `primary_color` / `support_email` brand the client review page and the campaign pack (`services/white_label.py::agency_branding`, which re-validates the logo URL and the hex colour because the PUT stores whatever it is sent). No settings UI writes this table yet — it is API-only (`PUT /integrations/white-label`).
+
+### ClientReviewLink [LIVE]
+<!-- verified: 261031 -->
+A private link one client uses to approve or ask for changes without a login. Fields: `org_id`, `client_id`, `campaign_id` (nullable — narrows the link to one campaign), `token_hash` (SHA-256, **unique**; the raw token is never stored), `created_by` (nullable FK users — who gets notified), `expires_at` (NOT NULL), `revoked_at`, `last_used_at`, `created_at`. Index `(org_id, client_id, created_at)`. Revoking sets `revoked_at`; nothing is deleted. **Migration:** `db/migrations/261031_client_review_link.sql` — run on Neon before deploying; only review links break without it.
+
+**`content_piece.metadata` keys added 261031:** `approval = {at, via: dashboard|client_link|retry, by: user id|null, name?}` on every approval (dropped with `moderation` when an edit resets to draft); `client_review = {decision: approved|changes_requested|approval_held, comment, name, at, link_id, held_by?}` — the latest decision through a review link.
 
 ### CampaignTemplate [LIVE]
 Reusable campaign templates (public + org-specific). Fields: name, category, objective_template, channels, content_directives JSONB, is_public, uses_count.

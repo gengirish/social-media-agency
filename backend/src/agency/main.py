@@ -39,6 +39,7 @@ from agency.routers import (
     public_api,
     publishing,
     reports,
+    review_links,
     setup,
     slack,
     stats,
@@ -133,6 +134,7 @@ def create_app() -> FastAPI:
         media,
         workspace,
         setup,
+        review_links,
     ]:
         app.include_router(router.router, prefix="/api/v1")
 

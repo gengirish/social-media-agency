@@ -99,7 +99,7 @@ Pre-approval moderation (product rule 3).
 
 The approval gate; raises `ContentGateError(status_code, detail)` which routers map to HTTP errors.
 
-- `approve_content_piece(db, piece, *, org_id, override, user_id)` — `draft`/`rejected` only; moderates; records `metadata.moderation`; commits. Used by `/content/{id}/approve` and the portal (override always false).
+- `approve_content_piece(db, piece, *, org_id, override, user_id, via="dashboard", reviewer_name=None)` — `draft`/`rejected` only; moderates; records `metadata.moderation` **and** <!-- verified: 261031 --> `metadata.approval = {at, via, by, name?}`; commits. Used by `/content/{id}/approve` and client review links (`via="client_link"`, override always false). `retry_failed_content` records `via="retry"`. `apply_content_edit` drops `approval` with `moderation` when it resets a piece to draft.
 - `ensure_publishable(piece)` — `approved`/`scheduled` only; used by schedule, publish-now and `mark-posted`.
 - <!-- verified: 260929 --> `ensure_published(piece)` — `published` only; 409 `not_published`. Used by `PATCH /publishing/{id}/post-url`, the one edit that may touch an `approved`-or-later piece without resetting it to `draft` (a link records reality, not copy).
 - <!-- verified: 260929 --> `is_manual_channel(db, *, org_id, client_id, platform)` — async; does this org hold a `status = 'manual'` `platform_account` for that client + platform. `org_id` is load-bearing: without it another tenant's manual row carrying this client's id would answer `True` and silently divert a post away from its publisher. Uses `first()`, not `scalar_one_or_none` — an org may legitimately hold more than one row per client + platform.
@@ -285,6 +285,34 @@ Guard for user-typed URLs. Two levels, and picking the wrong one is the mistake 
 
 - `get_white_label(db, org_id)` — Get branding config
 - `upsert_white_label(db, org_id, data)` — Create or update
+- <!-- verified: 261031 --> `agency_branding(db, org)` — `{name, logo_url, primary_color, support_email}` an agency's client sees: the active white-label, else the org name. Re-validates `logo_url` (`url_safety.assert_safe_link`) and `primary_color` (six-digit hex) because both end up on a public page or a shared document.
+
+## Client Review
+**Status**: [LIVE] <!-- verified: 261031 -->
+**File**: `services/client_review.py`
+
+Per-client review links, replacing the org-slug portal. Raises `ReviewLinkError(status_code, code, message)`.
+
+- `create_review_link(db, *, org_id, client_id, campaign_id, created_by, ttl_days=14)` → `(serialized, raw token)`. Resolves the client against `org_id` and the campaign against `org_id` **and** `client_id`. Token `rv_` + 32 random bytes; stores SHA-256 only.
+- `list_review_links` / `revoke_review_link` — org-scoped; revoke is idempotent.
+- `resolve_review_link(db, token)` → `ResolvedLink(link, org, client, campaign)`; 404 unknown, 410 revoked / expired / inactive (archived client, inactive org, campaign gone).
+- `review_page(db, resolved)` — branding + `pending` (draft with content) + `decided` (has a `client_review`); never metadata or moderation issues. Bumps `last_used_at`.
+- `decide(db, resolved, *, content_id, decision, comment, reviewer_name)` — approve via `approve_content_piece(override=False, via="client_link")`, or request changes (comment required, stays `draft`). A gate refusal is recorded as `approval_held` and re-raised as 409. Notifies `link.created_by` (`type="client_review"`, `data.url` → filtered Queue).
+- `_in_scope(resolved)` — the `org_id` + `client_id` (+ `campaign_id`) clauses every read and write carries. Each is covered by a test in `test_tenancy_routers.py` that fails when it is removed.
+
+## Campaign Pack
+**Status**: [LIVE] <!-- verified: 261031 -->
+**File**: `services/campaign_pack.py`
+
+- `build_pack(db, *, org_id, campaign_id)` — JSON: agency branding, client, campaign, strategy (latest completed `strategise` run), keyword themes (`seo_research`), brand QA (`qa_check`), posts and ad variants (failed generations excluded) each with an approval record, summary counts and the AI-use disclosure. User ids in approval / override records resolve to names, org-scoped.
+- `render_pack_html(pack)` — one self-contained, printable HTML document; every value escaped; links re-checked with `assert_safe_link`. PDF = the browser's print → Save as PDF.
+- Deliberately omitted (product rule 4): QA scores (the agent grades itself), keyword volume / difficulty (never measured), any approver name not recorded. KPIs are labelled as proposed targets. An unparsed QA run says the campaign was **not** quality-checked.
+
+## Hand-off
+**Status**: [LIVE] <!-- verified: 261031 -->
+**File**: `services/handoff.py`
+
+The one shape approved content leaves in — used by `GET /public/content` and the `content.approved` webhook's `content` key. `handoff_item(piece, client_name=)` raises on any status outside `HANDOFF_STATUSES = {approved, scheduled, published}`. `approved_event_payload(db, piece)` keeps the four pre-261031 top-level ids for existing receivers.
 
 ## Reporting
 **Status**: [LIVE]
@@ -296,7 +324,7 @@ Guard for user-typed URLs. Two levels, and picking the wrong one is the mistake 
 **Status**: [LIVE]
 **File**: `services/notifications.py`
 
-- `create_notification()` — In-app notification creation. <!-- verified: 260929 --> It has exactly **one** caller since 260929: the scheduler's `posts_due` digest for hand-posted content coming due. `GET /notifications` therefore reports `producers_wired: true` and no longer carries a `reason`. Nothing else in the product writes notifications, so the bell is still near-empty for a workspace with no manual channels.
+- `create_notification()` — In-app notification creation. <!-- verified: 261031 --> Two callers: the scheduler's `posts_due` digest for hand-posted content coming due (260929), and `client_review.decide` — one `client_review` notification to the link's creator per client decision (261031). `GET /notifications` therefore reports `producers_wired: true` and no longer carries a `reason`. Nothing else in the product writes notifications, so the bell is still near-empty for a workspace with no manual channels.
 
 ## Trends
 **Status**: [STUB]
@@ -358,7 +386,7 @@ Slack messaging.
 **Status**: [LIVE]
 **File**: `services/webhook_dispatcher.py`
 
-Event webhook dispatch.
+Event webhook dispatch. Events: `campaign.completed`, `content.approved`. <!-- verified: 261031 --> `content.approved` fires from the dashboard approve **and** from a client review-link approve, and its payload now carries the full hand-off object under `content` (see Hand-off above). Recipes for pushing it into a scheduler: [integrations.md](integrations.md#hand-off-to-your-scheduler).
 
 ## Client Acquisition
 **Status**: [LIVE]

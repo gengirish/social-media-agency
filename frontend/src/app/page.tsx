@@ -85,8 +85,8 @@ const STEPS = [
   },
   {
     step: "STEP 03",
-    title: "Review & publish",
-    copy: "You approve the important beats, QA locks brand consistency, then push everywhere.",
+    title: "Review & hand off",
+    copy: "You approve the important beats, your client signs off from a private link, then it goes to the scheduler you already use.",
   },
 ];
 
@@ -171,20 +171,29 @@ const FEATURES = [
     title: "Real-time streaming",
     copy: "Watch agents reason and draft live over SSE — mission control for campaigns.",
   },
+  /*
+   * This said "Publish straight to X, LinkedIn, and Facebook" while
+   * `OAUTH_CONNECT_ENABLED` (lib/platforms.ts) is false, so a new workspace could
+   * not connect any of them. Copy describes what a new signup can do today; put
+   * direct publishing back here only when that flag flips.
+   */
   {
     dot: "violet",
-    title: "Multi-platform publishing",
-    copy: "Publish straight to X, LinkedIn, and Facebook. Instagram and TikTok drafted and scheduled.",
+    title: "Post where you already post",
+    copy: "Approved posts reach your scheduler through the API or a signed webhook, or you post them by hand and log the link. Nothing goes out without sign-off.",
   },
   {
     dot: "accent",
     title: "Brand learning",
     copy: "Org-level brand profiles keep tone, guardrails, and QA aligned across clients.",
   },
+  // Replaced "Campaign analytics": metrics need a connected account, and a
+  // hand-posted piece can never be measured, so for a new workspace it was a
+  // promise with nothing behind it.
   {
     dot: "violet",
-    title: "Campaign analytics",
-    copy: "Close the loop with performance signals that feed the next brief.",
+    title: "Client-ready campaign pack",
+    copy: "Export strategy, posts, QA findings and the approval record as one document under your name: the deliverable, not a dashboard.",
   },
 ];
 
@@ -252,8 +261,8 @@ export default function Home() {
                 <dd className="cf-stat-l">brief to ship</dd>
               </div>
               <div className="cf-stat">
-                <dt className="cf-stat-n">3</dt>
-                <dd className="cf-stat-l">publish targets</dd>
+                <dt className="cf-stat-n">0</dt>
+                <dd className="cf-stat-l">posts without sign-off</dd>
               </div>
             </dl>
           </div>
@@ -278,7 +287,7 @@ export default function Home() {
                 <span className="cf-caret">_</span>
               </div>
               <div className="cf-panel-foot">
-                <span>human review → qa → publish</span>
+                <span>human review → qa → client sign-off</span>
                 <span className="cf-pct">62%</span>
               </div>
               <div className="cf-track">

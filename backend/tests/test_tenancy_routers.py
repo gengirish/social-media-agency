@@ -1,4 +1,5 @@
-"""Per-router tenant-isolation tests for the six routers fixed on 260817.
+"""Per-router tenant-isolation tests for the six routers fixed on 260817, plus the
+client review links that replaced the org-slug portal on 261031.
 
 There is no row-level security in this database, so the ``org_id`` filter in each
 router *is* the isolation boundary. Every test here is written to fail if its filter is
@@ -24,7 +25,6 @@ from tests.conftest import (
     create_platform_account,
     create_subscription,
     create_user_row,
-    create_white_label,
 )
 
 API = "/api/v1"
@@ -242,64 +242,136 @@ async def test_report_periods_for_own_client(client, orgs):
 
 
 # ---------------------------------------------------------------------------
-# portal — unauthenticated routes, so slug resolution is the whole boundary.
+# client review links — the token is the whole credential on the public side, so
+# the link's org_id + client_id (+ campaign_id) filters are the entire boundary.
+# The org-slug portal these replace listed every client's drafts to anyone with
+# the slug; each test below asserts the specific id that leaked there.
 # ---------------------------------------------------------------------------
-async def test_portal_resolves_on_slug_not_name(client, session_factory):
-    """Two orgs sharing a ``name`` used to make ``scalar_one_or_none`` raise a 500.
-
-    The name is now irrelevant: only the unique slug resolves.
-    """
-    org_a = await create_org(session_factory, "Shared Name", slug="tenant-a")
-    org_b = await create_org(session_factory, "Shared Name", slug="tenant-b")
-    await create_white_label(session_factory, org_a, company_name="Tenant A")
-    await create_white_label(session_factory, org_b, company_name="Tenant B")
-
-    client_a = await create_client_row(session_factory, org_a)
-    await create_content_row(session_factory, org_a, client_a)
-
-    resp = await client.get(f"{API}/portal/tenant-a/campaigns")
-    assert resp.status_code == 200
-    assert resp.json()["branding"]["company_name"] == "Tenant A"
-
-    # The shared name resolves to nothing at all.
-    assert (await client.get(f"{API}/portal/Shared Name/campaigns")).status_code == 404
-
-
-async def test_portal_content_does_not_leak_across_orgs(client, session_factory):
-    org_a = await create_org(session_factory, "Portal A", slug="portal-a")
-    org_b = await create_org(session_factory, "Portal B", slug="portal-b")
-    await create_white_label(session_factory, org_a)
-    await create_white_label(session_factory, org_b)
-
-    client_b = await create_client_row(session_factory, org_b)
-    content_b = await create_content_row(session_factory, org_b, client_b)
-
-    resp = await client.get(f"{API}/portal/portal-a/content")
-    assert resp.status_code == 200
-    assert str(content_b) not in {item["id"] for item in resp.json()["items"]}
-
-    # And A's slug cannot mutate B's content.
-    review = await client.patch(
-        f"{API}/portal/portal-a/content/{content_b}", json={"decision": "approve"}
+async def _make_link(client, headers, client_id, **body):
+    resp = await client.post(
+        f"{API}/clients/{client_id}/review-links", json=body, headers=headers
     )
-    assert review.status_code == 404
+    assert resp.status_code == 200, resp.text
+    return resp.json()["token"]
 
 
-async def test_portal_without_slug_is_unreachable(client, session_factory):
-    """An org with no slug has no portal — the fail-closed default after the migration."""
-    org = await create_org(session_factory, "No Slug Org", slug=None)
-    await create_white_label(session_factory, org)
+async def test_review_link_cannot_be_made_for_another_orgs_client(
+    client, session_factory, orgs
+):
+    from agency.models.tables import ClientReviewLink
 
-    assert (await client.get(f"{API}/portal/No Slug Org/campaigns")).status_code == 404
-    assert (await client.get(f"{API}/portal/no-slug-org/campaigns")).status_code == 404
+    headers = await auth_for(session_factory, orgs["org_a"])
+    resp = await client.post(
+        f"{API}/clients/{orgs['client_b']}/review-links", json={}, headers=headers
+    )
+    assert resp.status_code == 404
+    async with session_factory() as s:
+        assert (await s.execute(select(ClientReviewLink))).scalars().all() == []
 
 
-async def test_portal_requires_flag(client, session_factory):
-    org = await create_org(session_factory, "Disabled Portal", slug="disabled-portal")
-    await create_white_label(session_factory, org, portal_enabled=False)
+async def test_review_link_campaign_must_belong_to_the_same_client(client, session_factory):
+    """Client A's link scoped to client B's campaign would list B's drafts."""
+    from tests.conftest import create_campaign_row
 
-    resp = await client.get(f"{API}/portal/disabled-portal/campaigns")
-    assert resp.status_code == 403
+    org = await create_org(session_factory, "Two Clients")
+    client_1 = await create_client_row(session_factory, org, "One")
+    client_2 = await create_client_row(session_factory, org, "Two")
+    campaign_2 = await create_campaign_row(session_factory, org, client_2)
+    headers = await auth_for(session_factory, org)
+
+    resp = await client.post(
+        f"{API}/clients/{client_1}/review-links",
+        json={"campaign_id": str(campaign_2)},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "campaign_not_found"
+
+
+async def test_review_page_lists_only_the_links_client(client, session_factory, orgs):
+    """Another client in the same org — the exact leak of the slug portal — and another org."""
+    other_client_a = await create_client_row(session_factory, orgs["org_a"], "Brand A2")
+    mine = await create_content_row(session_factory, orgs["org_a"], orgs["client_a"])
+    sibling = await create_content_row(session_factory, orgs["org_a"], other_client_a)
+    foreign = await create_content_row(session_factory, orgs["org_b"], orgs["client_b"])
+
+    headers = await auth_for(session_factory, orgs["org_a"])
+    token = await _make_link(client, headers, orgs["client_a"])
+
+    resp = await client.get(f"{API}/portal/review/{token}")
+    assert resp.status_code == 200, resp.text
+    ids = {item["id"] for item in resp.json()["pending"]}
+    assert str(mine) in ids
+    assert str(sibling) not in ids
+    assert str(foreign) not in ids
+
+
+async def test_review_decision_refuses_content_outside_the_link(client, session_factory, orgs):
+    other_client_a = await create_client_row(session_factory, orgs["org_a"], "Brand A2")
+    sibling = await create_content_row(session_factory, orgs["org_a"], other_client_a)
+    foreign = await create_content_row(session_factory, orgs["org_b"], orgs["client_b"])
+
+    headers = await auth_for(session_factory, orgs["org_a"])
+    token = await _make_link(client, headers, orgs["client_a"])
+
+    from agency.models.tables import ContentPiece
+
+    for content_id in (sibling, foreign):
+        resp = await client.post(
+            f"{API}/portal/review/{token}/content/{content_id}",
+            json={"decision": "request_changes", "comment": "Not mine to judge"},
+        )
+        assert resp.status_code == 404
+        async with session_factory() as s:
+            piece = await s.get(ContentPiece, content_id)
+            assert piece is not None
+            assert "client_review" not in (piece.metadata_ or {})
+
+
+async def test_campaign_scoped_link_excludes_the_clients_other_campaigns(
+    client, session_factory, orgs
+):
+    from tests.conftest import create_campaign_row
+
+    campaign_1 = await create_campaign_row(session_factory, orgs["org_a"], orgs["client_a"])
+    campaign_2 = await create_campaign_row(session_factory, orgs["org_a"], orgs["client_a"])
+    in_scope = await create_content_row(
+        session_factory, orgs["org_a"], orgs["client_a"], campaign_1
+    )
+    out_of_scope = await create_content_row(
+        session_factory, orgs["org_a"], orgs["client_a"], campaign_2
+    )
+    headers = await auth_for(session_factory, orgs["org_a"])
+    token = await _make_link(client, headers, orgs["client_a"], campaign_id=str(campaign_1))
+
+    page = (await client.get(f"{API}/portal/review/{token}")).json()
+    ids = {item["id"] for item in page["pending"]}
+    assert ids == {str(in_scope)}
+
+    resp = await client.post(
+        f"{API}/portal/review/{token}/content/{out_of_scope}",
+        json={"decision": "request_changes", "comment": "Wrong campaign"},
+    )
+    assert resp.status_code == 404
+
+
+async def test_review_links_list_and_revoke_are_org_scoped(client, session_factory, orgs):
+    headers_a = await auth_for(session_factory, orgs["org_a"])
+    headers_b = await auth_for(session_factory, orgs["org_b"])
+    await _make_link(client, headers_a, orgs["client_a"])
+    link_id = (
+        await client.get(f"{API}/clients/{orgs['client_a']}/review-links", headers=headers_a)
+    ).json()["items"][0]["id"]
+
+    listed = await client.get(f"{API}/clients/{orgs['client_a']}/review-links", headers=headers_b)
+    assert listed.status_code == 404
+
+    revoked = await client.post(f"{API}/review-links/{link_id}/revoke", headers=headers_b)
+    assert revoked.status_code == 404
+    still = (
+        await client.get(f"{API}/clients/{orgs['client_a']}/review-links", headers=headers_a)
+    ).json()["items"][0]
+    assert still["state"] == "active"
 
 
 # ---------------------------------------------------------------------------

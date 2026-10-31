@@ -17,8 +17,10 @@ import { platformLabel } from "@/lib/platforms";
 import { AdVariantCard } from "@/components/content/ad-variant-card";
 import { LiveAgentDashboard } from "@/components/agents/live-agent-dashboard";
 import { toast } from "sonner";
-import { FileText, CheckCircle2, Bot, ArrowLeft, RotateCcw, AlertTriangle } from "lucide-react";
+import { FileText, CheckCircle2, Bot, ArrowLeft, RotateCcw, AlertTriangle, Share2, FileDown } from "lucide-react";
 import { trackFeature } from "@/lib/analytics";
+import { useActiveClient } from "@/lib/active-client";
+import { ShareReviewDialog } from "@/components/review/share-review-dialog";
 import { Button } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/panel";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -36,6 +38,9 @@ export default function CampaignDetailPage() {
   const [rerunning, setRerunning] = useState(false);
   // Bumped on re-run so the dashboard remounts and opens the new run's stream.
   const [runKey, setRunKey] = useState(0);
+  const [sharing, setSharing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const { clients } = useActiveClient();
 
   useEffect(() => {
     if (!id) return;
@@ -82,6 +87,39 @@ export default function CampaignDetailPage() {
     }
   }
 
+  /*
+   * The pack is fetched with the bearer token (it is an authenticated route), then
+   * opened from a blob: the document carries its own "Print / Save as PDF" button,
+   * which is the PDF path. The tab is opened before the await so the browser does
+   * not treat it as an unrequested popup.
+   */
+  async function handleExportPack() {
+    if (!id || exporting) return;
+    setExporting(true);
+    const tab = window.open("", "_blank");
+    // The pack is a standalone document; it has no business reaching back into the app.
+    if (tab) tab.opener = null;
+    try {
+      const html = await api.getCampaignPackHtml(id);
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+      if (tab) {
+        tab.location.href = url;
+      } else {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${campaign?.name ?? "campaign"}-campaign-pack.html`;
+        a.click();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      trackFeature("campaign-pack-export");
+    } catch (err) {
+      tab?.close();
+      toast.error(err instanceof Error ? err.message : "Couldn't build the campaign pack");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   function handlePipelineComplete() {
     loadContent();
     toast.success("Campaign pipeline completed!");
@@ -105,6 +143,8 @@ export default function CampaignDetailPage() {
   }
 
   const failureSummary = campaignFailureSummary(campaign);
+  const clientName = clients.find((c) => c.id === campaign.client_id)?.brand_name ?? "this client";
+  const pendingCount = content.filter((p) => p.status === "draft" && unusableReason(p) === null).length;
 
   return (
     <div className="space-y-6">
@@ -127,8 +167,20 @@ export default function CampaignDetailPage() {
               ))}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <CampaignStatusBadge status={campaign.status} className="px-2.5 py-1 text-xs" />
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setSharing(true)}
+              disabled={pendingCount === 0}
+              title={pendingCount === 0 ? "Nothing is pending review in this campaign" : undefined}
+            >
+              <Share2 className="h-3.5 w-3.5" /> Share for review
+            </Button>
+            <Button size="sm" variant="secondary" onClick={handleExportPack} disabled={exporting}>
+              <FileDown className="h-3.5 w-3.5" /> {exporting ? "Building…" : "Export pack"}
+            </Button>
             {campaign.status !== "autonomous" && (
               <Button size="sm" variant="secondary" onClick={handleRerun} disabled={rerunning}>
                 <RotateCcw className="h-3.5 w-3.5" /> {rerunning ? "Restarting…" : "Re-run"}
@@ -137,6 +189,15 @@ export default function CampaignDetailPage() {
           </div>
         </div>
       </div>
+
+      <ShareReviewDialog
+        open={sharing}
+        onOpenChange={setSharing}
+        clientId={campaign.client_id}
+        clientName={clientName}
+        campaignId={campaign.id}
+        campaignName={campaign.name}
+      />
 
       {/* CF-07: a failed campaign used to show only a red badge, so there was
           nothing to act on and no way to tell a bad key from a bad prompt. */}

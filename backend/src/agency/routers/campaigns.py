@@ -9,6 +9,7 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import Query as QueryParam
+from fastapi.responses import HTMLResponse
 from jose import JWTError
 from jose import jwt as jose_jwt
 from sqlalchemy import func, select
@@ -46,8 +47,10 @@ from agency.services import product_analytics as pa
 from agency.services.ad_variants import normalize as normalize_ad
 from agency.services.ad_variants import render_body as render_ad_body
 from agency.services.billing import PLAN_CONFIG
+from agency.services.campaign_pack import PackError, build_pack, render_pack_html
 from agency.services.tracing import merge_config, trace_config
 from agency.services.webhook_dispatcher import EVENT_CAMPAIGN_COMPLETED, dispatch_webhook
+from agency.utils.slug import slugify
 
 logger = structlog.get_logger()
 
@@ -1000,6 +1003,51 @@ async def get_campaign_content(
     )
     pieces = result.scalars().all()
     return {"items": pieces, "total": len(pieces)}
+
+
+@router.get("/{campaign_id}/pack")
+async def get_campaign_pack(
+    campaign_id: UUID,
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """The campaign pack as JSON — see ``services/campaign_pack.py``."""
+    try:
+        return await build_pack(db, org_id=org_id, campaign_id=campaign_id)
+    except PackError as exc:
+        raise HTTPException(exc.status_code, exc.message) from None
+
+
+@router.get("/{campaign_id}/pack.html", response_class=HTMLResponse)
+async def get_campaign_pack_html(
+    campaign_id: UUID,
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """The campaign pack as one printable HTML file (print → Save as PDF for a PDF).
+
+    Sent as an attachment and with a restrictive CSP: the document is opened from a
+    blob or a download, outside the app, and carries client copy written by a model.
+    Every value is escaped at render; the CSP is the second line.
+    """
+    try:
+        pack = await build_pack(db, org_id=org_id, campaign_id=campaign_id)
+    except PackError as exc:
+        raise HTTPException(exc.status_code, exc.message) from None
+    stem = slugify(pack["campaign"]["name"]) or "campaign"
+    return HTMLResponse(
+        render_pack_html(pack),
+        headers={
+            "Content-Disposition": f'attachment; filename="{stem}-campaign-pack.html"',
+            "Content-Security-Policy": (
+                "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; "
+                "script-src 'unsafe-inline'"
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.patch(

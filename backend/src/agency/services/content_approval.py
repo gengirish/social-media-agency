@@ -5,7 +5,8 @@ Status lifecycle enforced here (DB values; the UI labels ``draft`` as *Pending*)
     draft / rejected --approve (moderated)--> approved --schedule--> scheduled --> published
                                                   \\------publish now------------------/
 
-- :func:`approve_content_piece` is the single approval path (dashboard and portal).
+- :func:`approve_content_piece` is the single approval path (dashboard and client
+  review links, ``services/client_review.py``).
   It runs :func:`~agency.services.moderation.moderate_content` first.
 - :func:`ensure_publishable` guards schedule and publish-now.
 - :func:`ensure_schedulable` adds the scheduler's own precondition, which depends on
@@ -43,6 +44,11 @@ PUBLISHABLE_STATUSES: Final = frozenset({"approved", "scheduled"})
 GATED_STATUSES: Final = frozenset({"approved", "scheduled", "published"})
 #: Statuses a plain PATCH may set.
 PATCHABLE_STATUSES: Final = frozenset({"draft", "rejected"})
+
+#: ``metadata.approval.via`` — which path approved a piece.
+APPROVED_VIA_DASHBOARD: Final = "dashboard"
+APPROVED_VIA_CLIENT_LINK: Final = "client_link"
+APPROVED_VIA_RETRY: Final = "retry"
 
 
 #: A ``models.tables.ContentPiece`` row. Typed ``Any`` because the models use classic
@@ -116,10 +122,16 @@ async def approve_content_piece(
     org_id: UUID,
     override: bool = False,
     user_id: UUID | None = None,
+    via: str = APPROVED_VIA_DASHBOARD,
+    reviewer_name: str | None = None,
 ) -> dict[str, Any]:
     """Moderate, then approve. Commits on success; leaves the piece untouched on refusal.
 
     ``piece`` must already have been loaded with an ``org_id`` filter by the caller.
+
+    ``via`` and ``reviewer_name`` go into ``metadata.approval`` (see
+    :func:`_moderate_then_approve`). A client approving through a review link has no
+    ``user_id``; ``reviewer_name`` is the name they typed, self-reported.
 
     Raises :class:`ContentGateError`:
 
@@ -133,7 +145,13 @@ async def approve_content_piece(
     if piece.status not in APPROVABLE_STATUSES:
         raise ContentGateError(409, {"code": "invalid_status", "status": piece.status})
     return await _moderate_then_approve(
-        db, piece, org_id=org_id, override=override, user_id=user_id
+        db,
+        piece,
+        org_id=org_id,
+        override=override,
+        user_id=user_id,
+        via=via,
+        reviewer_name=reviewer_name,
     )
 
 
@@ -170,6 +188,7 @@ async def retry_failed_content(
         org_id=org_id,
         override=override,
         user_id=user_id,
+        via=APPROVED_VIA_RETRY,
         # The previous attempt's error must not linger: the card renders it from
         # metadata, so leaving it would label a retried post as still failing.
         clear_metadata_keys=("publish_error",),
@@ -234,12 +253,19 @@ async def _moderate_then_approve(
     org_id: UUID,
     override: bool,
     user_id: UUID | None,
+    via: str = APPROVED_VIA_DASHBOARD,
+    reviewer_name: str | None = None,
     clear_metadata_keys: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """The shared body of approve and retry: check, moderate, set ``approved``.
 
     Kept in one place so a second route into ``approved`` cannot drift from the
     first — the gate is only worth anything if every path runs it.
+
+    Writes ``metadata.approval = {"at", "via", "by", "name"}`` beside the moderation
+    record. Before 261031 only an *override* recorded who acted, so nothing could say
+    who approved a clean post; the campaign pack's approval log reads this. Rows
+    approved earlier have no ``approval`` key and the pack says so rather than guess.
     """
     # Before moderation: there is nothing to moderate, and approving it would put an
     # empty post in the publish queue.
@@ -304,7 +330,14 @@ async def _moderate_then_approve(
         for key in clear_metadata_keys:
             meta.pop(key, None)
         piece.metadata_ = meta
-    _merge_metadata(piece, {"moderation": record})
+    approval: dict[str, Any] = {
+        "at": now,
+        "via": via,
+        "by": str(user_id) if user_id else None,
+    }
+    if reviewer_name:
+        approval["name"] = reviewer_name
+    _merge_metadata(piece, {"moderation": record, "approval": approval})
     await db.commit()
 
     return {
@@ -468,6 +501,8 @@ def apply_content_edit(
         piece.scheduled_at = None
         meta = dict(piece.metadata_ or {})
         meta.pop("moderation", None)
+        # The approval was of the old copy; it must not be shown against the new one.
+        meta.pop("approval", None)
         piece.metadata_ = meta
 
     if status is not None:

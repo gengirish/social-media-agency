@@ -24,17 +24,17 @@ Living documentation of all platform features. Updated whenever the codebase cha
 
 | Document | Description | Last Updated |
 |----------|-------------|-------------|
-| [api-endpoints.md](api-endpoints.md) | All 138 REST API endpoints, approval gate, manual publishing, Amplify, generator contract, Setup, Post Studio, Create, Inbox, Insights, Workspace, OAuth | 260929 |
-| [database-schema.md](database-schema.md) | 25 tables, columns, relationships, pending Neon migrations | 260929 |
-| [services.md](services.md) | Business logic services, moderation, shared generator services, inbox, insights, scheduler reminders | 260929 |
+| [api-endpoints.md](api-endpoints.md) | All REST API endpoints, approval gate, manual publishing, client review links, campaign pack, public hand-off, Amplify, generator contract, Setup, Post Studio, Create, Inbox, Insights, Workspace, OAuth | 261031 |
+| [database-schema.md](database-schema.md) | 28 tables, columns, relationships, pending Neon migrations | 261031 |
+| [services.md](services.md) | Business logic services, moderation, client review, campaign pack, hand-off, shared generator services, inbox, insights, scheduler reminders | 261031 |
 | [workers.md](workers.md) | Asyncio background tasks | 260817 |
-| [integrations.md](integrations.md) | Social publishing + Inbox reading, Dodo Payments, Clerk, AgentMail, LLM, fal.ai, Slack, Exa | 260925 |
+| [integrations.md](integrations.md) | Social publishing + Inbox reading, scheduler hand-off recipes, Dodo Payments, Clerk, AgentMail, LLM, fal.ai, Slack, Exa | 261031 |
 | [websocket.md](websocket.md) | SSE real-time agent streaming (no WebSocket) | 260921 |
-| [frontend-pages.md](frontend-pages.md) | 26 UI pages, top-nav IA + shortcuts, active client, Welcome, Setup, Create, Queue/Calendar, Inbox, Insights, Settings | 260929 |
+| [frontend-pages.md](frontend-pages.md) | 27 UI pages, top-nav IA + shortcuts, active client, Welcome, Setup, Create, Queue/Calendar, client review, Inbox, Insights, Settings | 261031 |
 | [frontend-components.md](frontend-components.md) | Design system, `ui/` primitives, shell, feature components, lib + `api-*` modules | 260929 |
-| [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, capability matrix, multi-tenancy, portal, OAuth state | 260929 |
+| [auth-and-rbac.md](auth-and-rbac.md) | Clerk + legacy JWT, capability matrix, multi-tenancy, client review links, OAuth state | 261031 |
 | [billing.md](billing.md) | Dodo Payments billing (implemented, not yet live), 4 plan tiers, shared generation quota, post meter | 260929 |
-| [changelog.md](changelog.md) | Chronological change log | 260929 |
+| [changelog.md](changelog.md) | Chronological change log | 261031 |
 
 ## Feature Honesty
 
@@ -66,6 +66,8 @@ Remaining gaps — all surfaced honestly to the user:
 | Org logo upload | no endpoint | Not implemented | Settings shows "Logo upload not available yet" |
 | Slack campaign creation | `routers/slack.py` | No pipeline is started | `/campaignforge create` replies that it is unavailable |
 | Analytics agent insights | `agents/analytics.py` | Needs published + measured content | Returns `status: unavailable` with a reason instead of calling the LLM on `{}` |
+| Agency branding (logo, colour, name) | `services/white_label.py`, `PUT /integrations/white-label` | <!-- verified: 261031 --> Used by the client review page and the campaign pack, but **no settings UI writes it** — API only | Not told; both simply show the workspace name, which is true |
+| Native scheduler push (GoHighLevel) | — | <!-- verified: 261031 --> Planned, not built ([ghl-handoff-plan-261031.md](../ghl-handoff-plan-261031.md)). Hand-off today is the API and signed webhooks | Nothing in the UI mentions GoHighLevel |
 | Amplify output quality | `agents/amplify.py` | Validated structurally (angles, limits, duplicates); not yet reviewed on real generations | Nothing reaches the queue until a human keeps it; every draft still needs moderated approval |
 
 ## Architecture Overview

@@ -80,6 +80,8 @@ Brief → Orchestrator → [Strategy ∥ SEO] → [Content ∥ Ads]
 
 After the pipeline, every post lands in **Posts › Queue** as *Pending* and needs a person to approve it. Approval runs a moderation check first (brain tier, plus code-level character-limit and brand-excluded-vocabulary checks); flagged posts need an explicit, recorded override. Only approved posts can be scheduled or published — publishing is real (X, LinkedIn, Facebook).
 
+**Client review, pack, hand-off (261031).** A client approves or asks for changes from a private, expiring link with no account (moderation still runs; no override from outside). Each campaign exports as one branded, printable **campaign pack**: strategy, posts, QA findings and the approval record. Approved posts leave for the agency's own scheduler through `GET /api/v1/public/content` or a signed `content.approved` webhook.
+
 **Amplify** turns one existing post or pasted text into up to 8 drafts, each on a different angle, in the client's brand voice. Drafts are reviewed before anything is saved, land in the Queue as Pending, and each pack counts against a per-plan generation quota.
 
 ## App Layout
@@ -118,7 +120,7 @@ docs/
   features/       # Living feature documentation
 ```
 
-Schema changes take **three** edits: `db/init.sql`, `models/tables.py`, and a dated forward-only script in `db/migrations/` that must be run by hand on existing databases (Neon) — `init.sql` only runs on a fresh one. Pending for this release: `db/migrations/260921_amplify.sql`.
+Schema changes take **three** edits: `db/init.sql`, `models/tables.py`, and a dated forward-only script in `db/migrations/` that must be run by hand on existing databases (Neon) — `init.sql` only runs on a fresh one. Pending for this release: `db/migrations/261031_client_review_link.sql`.
 
 ## Testing
 

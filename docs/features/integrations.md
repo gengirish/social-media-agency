@@ -116,3 +116,24 @@ HTTP fetch of target URL + LLM-powered brand profile extraction. No external API
 **File**: `backend/src/agency/services/exa_client.py`
 
 Shared Exa client, keyed by `EXA_API_KEY`. Callers: `services/trends.py`, `agents/competitive_intel.py`, and (260923) `services/competitor_research.py` for Create › Content comparison pages and niche scans. With no key or a failed search, callers return an explicit `unavailable` record with the reason — output is never presented as web-researched when it was not. (This section previously said `[PLANNED]`; that was stale since Phase 1.)
+
+## Hand-off to your scheduler
+**Status**: [LIVE] <!-- verified: 261031 -->
+**Files**: `backend/src/agency/services/handoff.py`, `routers/public_api.py`, `services/webhook_dispatcher.py`
+
+Agencies keep the scheduler they already use; CampaignForge hands it **approved** posts. Two exits carry the same object (`handoff_item`): `id`, `client_id`, `client_name`, `campaign_id`, `platform`, `content_type`, `title`, `body`, `hashtags`, `media_urls`, `status`, `scheduled_at`, `published_at`, `approved_at`, `approved_via`, `ad_fields`, `updated_at`. Neither exit will ever carry a draft.
+
+| Exit | How | Use it when |
+|------|-----|-------------|
+| **Webhook** `content.approved` | Settings › Integrations registers an endpoint (`POST /integrations/webhooks`). Body is `{"event", "sent_at", "data"}`; `data.content` is the hand-off object (the four pre-261031 ids stay beside it). Signed: `X-Webhook-Signature: sha256=<hex HMAC-SHA256 of the raw body with the endpoint's secret>`, plus `X-Webhook-Event` and `X-Webhook-Id`. Fires on dashboard approve **and** client review-link approve | You want the post in the scheduler the moment it is approved |
+| **Polling** `GET /api/v1/public/content` | `X-API-Key` (Settings › Integrations › API keys). `?status=approved` (default), `scheduled` or `published`; `client_id`; `since` (ISO time, on `updated_at`); `limit` ≤ 100. Newest change first | The tool can only poll, or you want a backfill |
+
+### Recipes (Zapier / Make / n8n)
+
+These use only generic building blocks — a catch-hook or HTTP-poll trigger and the destination tool's own "create post" action. **Check that your scheduler offers a create-post action in your automation tool before relying on one**; CampaignForge has no app listing in any of them, and none is claimed here.
+
+1. **Push on approval (recommended).** Trigger: *Webhooks by Zapier → Catch Raw Hook* (Make: *Custom webhook*; n8n: *Webhook*). Register the hook URL as a CampaignForge webhook for `content.approved`. Optional but advised: a code step that recomputes `sha256=` HMAC over the raw body with the endpoint secret and stops on mismatch — a catch-hook URL is otherwise callable by anyone who learns it. Filter on `data.content.client_name` / `platform`, then map `body` + `hashtags` → caption and `media_urls` → media in the scheduler's create-post action, **as a draft** so a human sets the time there.
+2. **Poll for new approvals.** Trigger: *Webhooks by Zapier → Retrieve Poll* (Make: *HTTP → Make a request* on a schedule) against `/api/v1/public/content?status=approved` with header `X-API-Key`. Zapier's poll trigger dedupes on `id`; elsewhere keep the last `updated_at` and pass it back as `since`.
+3. **Close the loop by hand.** Once the scheduler has posted it, record it in CampaignForge with Posts › Queue → *Post it yourself* → *I posted it* (optional link) on a manual channel, so Insights and the post meter count it.
+
+Native push into GoHighLevel Social Planner is planned, not built — see [docs/ghl-handoff-plan-261031.md](../ghl-handoff-plan-261031.md).

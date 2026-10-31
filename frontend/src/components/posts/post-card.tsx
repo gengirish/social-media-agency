@@ -17,6 +17,7 @@ import {
   Layers,
   Link2,
   Loader2,
+  MessageSquare,
   Palette,
   PenLine,
   RotateCcw,
@@ -27,7 +28,13 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { adVariantOf, unusableReason, type MediaAsset, type QueuePost } from "@/lib/api";
+import {
+  adVariantOf,
+  unusableReason,
+  type ClientReviewNote,
+  type MediaAsset,
+  type QueuePost,
+} from "@/lib/api";
 import { AdVariantCard } from "@/components/content/ad-variant-card";
 import {
   CreateImageButton,
@@ -717,6 +724,7 @@ export const PostCard = memo(function PostCard({
   const manuallyPosted = post.metadata_?.publish_mode === "manual";
   const publishError = post.metadata_?.publish_error;
   const publishBlocked = post.metadata_?.publish_blocked;
+  const clientReview = post.metadata_?.client_review ?? null;
   /*
    * A due reminder that nobody has confirmed. Read from the metadata rather than
    * from `isManual`, because the manual-channel map comes from a separate request
@@ -961,6 +969,13 @@ export const PostCard = memo(function PostCard({
         </div>
       )}
 
+      {/* What the client said through a review link. Shown while the piece is still
+          Pending (changes requested, or an approval moderation held) and as a
+          receipt once the client approved it. */}
+      {clientReview?.decision && post.status !== "published" && (
+        <ClientReviewNotice review={clientReview} status={post.status} />
+      )}
+
       {/* CF-01: the post is fine — the workspace was not ready for it. It sits in
           Approved with its schedule cleared, rather than in Failed where the only
           action used to be Delete. */}
@@ -1195,4 +1210,41 @@ function ComingSoonAction({
       </span>
     </Button>
   );
+}
+
+function ClientReviewNotice({ review, status }: { review: ClientReviewNote; status: string }) {
+  const who = review.name || "Client";
+  const at = review.at ? parseISO(review.at) : null;
+  const when = at && isValid(at) ? formatDistanceToNow(at, { addSuffix: true }) : null;
+  if (review.decision === "changes_requested" && status === "draft") {
+    return (
+      <div className="mt-3 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+        <p>
+          <span className="font-medium">{who} asked for changes{when ? ` ${when}` : ""}:</span>{" "}
+          {review.comment}
+        </p>
+      </div>
+    );
+  }
+  if (review.decision === "approval_held" && status === "draft") {
+    return (
+      <div className="mt-3 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+        <p>
+          {who} approved this{when ? ` ${when}` : ""}, but moderation flagged it, so it is still
+          Pending. Review it, then approve it here.
+        </p>
+      </div>
+    );
+  }
+  if (review.decision === "approved" && status !== "draft") {
+    return (
+      <p className="mt-3 flex items-center gap-1.5 text-xs text-emerald-700">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        Approved by {who} via review link{when ? ` ${when}` : ""}
+      </p>
+    );
+  }
+  return null;
 }

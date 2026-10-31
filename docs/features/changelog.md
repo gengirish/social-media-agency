@@ -4,6 +4,23 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 261031 — Client review links, campaign pack, scheduler hand-off
+
+The agency wedge from [competitive-gtm-261030.md](../competitive-gtm-261030.md) §6, items ①–④a. Native GoHighLevel push (④b) is planned, not built: [ghl-handoff-plan-261031.md](../ghl-handoff-plan-261031.md).
+
+- **Security fix — removed** `GET /portal/{org_slug}/campaigns`, `GET /portal/{org_slug}/content`, `PATCH /portal/{org_slug}/content/{id}`. Unauthenticated and org-wide: anyone with an agency's slug could list every client's drafts and approve or reject any of them. Nothing in the frontend called them.
+- **Added**: client review links. Table `client_review_link` (`db/migrations/261031_client_review_link.sql`), `services/client_review.py`, `routers/review_links.py` (create / list / revoke, `content.approve` to share), public `GET /portal/review/{token}` and `POST /portal/review/{token}/content/{id}`, page `/review/[token]` (public in `middleware.ts`), `ShareReviewDialog` on the campaign page and the Queue, client feedback on Queue cards, `client_review` notifications to the link's creator.
+- **Added**: `metadata.approval = {at, via, by, name?}` on every approval (`services/content_approval.py`).
+- **Added**: campaign pack — `services/campaign_pack.py`, `GET /campaigns/{id}/pack` and `/pack.html`, **Export pack** on the campaign page (`trackFeature("campaign-pack-export")`).
+- **Added**: hand-off — `services/handoff.py`, `GET /public/content`; the `content.approved` webhook now carries the post under `content` and also fires on client-link approvals. Settings › **API & webhooks** registers webhooks (secret shown once).
+- **Fixed**: creating an API key discarded the key, so no key was ever usable; it is now shown once.
+- **Changed**: landing copy no longer claims direct publishing (`OAUTH_CONNECT_ENABLED` is false) or campaign analytics; it describes hand-off, client sign-off and the pack.
+- **Moved**: `routers/portal.py` off the mypy baseline (fully annotated).
+- **Tests**: `test_client_review.py` (21), `test_campaign_pack.py` (8), `test_handoff.py` (10), review-link cases in `test_tenancy_routers.py` (6, each verified to fail when its filter is removed) and `test_approval_gate.py` (6), `e2e/client-review.spec.ts` (4).
+- **Follow-ups**: webhook registration has no capability gate; no settings UI writes `white_label`, so branding is the workspace name in practice.
+
+---
+
 ## 260929 — Manual publishing ("Post it yourself")
 
 For an operator whose business pages were created **outside** CampaignForge and who does not want the product touching them. The product generates, moderates, approves, reminds and records; a human opens the platform and posts. Plan and locked decisions: [manual-publish-plan-260929.md](../manual-publish-plan-260929.md).
