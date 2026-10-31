@@ -96,7 +96,9 @@ jobs:
 
   e2e:
     name: E2E Tests
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 on 261031 and Playwright 1.58 cannot
+    # install chromium there ("does not support chromium on ubuntu26.04-x64").
+    runs-on: ubuntu-24.04
     needs: [backend, frontend]
     services:
       postgres:
