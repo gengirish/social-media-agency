@@ -641,6 +641,31 @@ class WhiteLabel(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ClientReviewLink(Base):
+    """A private link one client uses to approve or ask for changes (no login).
+
+    Mirrors db/init.sql. Only the token's SHA-256 is stored; see
+    ``services/client_review.py`` for scope and expiry rules.
+    """
+
+    __tablename__ = "client_review_link"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("client.id"), nullable=False)
+    campaign_id = Column(UUID(as_uuid=True), ForeignKey("campaign.id"), nullable=True)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True))
+    last_used_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_client_review_link_org_client", "org_id", "client_id", "created_at"),
+    )
+
+
 class CampaignTemplate(Base):
     __tablename__ = "campaign_template"
 

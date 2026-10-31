@@ -6,6 +6,9 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
   "/legal",
   "/api/webhooks/(.*)",
+  // A client opens a review link with no CampaignForge account; the token in the
+  // path is checked by the API on every request (routers/portal.py).
+  "/review/(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, request) => {

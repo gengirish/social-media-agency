@@ -28,6 +28,7 @@ import { Field, Input, Select } from "@/components/ui/field";
 import { EmptyState, LoadingState, Notice } from "@/components/ui/empty-state";
 import { buttonVariants } from "@/components/ui/button";
 import { useActiveClient } from "@/lib/active-client";
+import { ShownOnce, WebhooksPanel } from "@/components/settings/webhooks-panel";
 import Link from "next/link";
 import {
   AccountsTab,
@@ -156,6 +157,9 @@ function SettingsContent() {
   const [apiKeys, setApiKeys] = useState<ApiKeyRow[]>([]);
   const [keysLoading, setKeysLoading] = useState(false);
   const [keysBusy, setKeysBusy] = useState(false);
+  // The plaintext key the server returns once. It used to be discarded on create,
+  // which left every key unusable — the list only ever shows the prefix.
+  const [newKey, setNewKey] = useState<string | null>(null);
 
   const loadGeneral = useCallback(async () => {
     setGeneralLoading(true);
@@ -203,7 +207,7 @@ function SettingsContent() {
     { id: "activity", label: "Activity log", icon: ListChecks },
     { id: "export", label: "Export", icon: Download },
     { id: "general", label: "Workspace", icon: Settings },
-    { id: "api-keys", label: "API Keys", icon: Key },
+    { id: "api-keys", label: "API & webhooks", icon: Key },
     { id: "notifications", label: "Notifications", icon: Bell },
   ];
 
@@ -231,8 +235,9 @@ function SettingsContent() {
     const trimmed = name.trim() || "Integration";
     setKeysBusy(true);
     try {
-      await api.createApiKey(trimmed, ["read", "write"]);
-      toast.success("API key created");
+      const created = await api.createApiKey(trimmed, ["read", "write"]);
+      setNewKey(created.key);
+      toast.success("API key created — copy it now");
       await loadApiKeys();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Could not create key");
@@ -397,13 +402,20 @@ function SettingsContent() {
                 <div className="space-y-1.5">
                   <Eyebrow>Integrations</Eyebrow>
                   <h3 className="font-display text-lg font-semibold text-ink">API Keys</h3>
-                  <p className="text-sm text-muted">Manage API keys for external integrations.</p>
+                  <p className="text-sm text-muted">
+                    A key authenticates the public API (<code className="font-mono text-xs">X-API-Key</code>) — for
+                    example <code className="font-mono text-xs">GET /api/v1/public/content</code>, which lists
+                    approved posts for your scheduler to pick up.
+                  </p>
                 </div>
                 <Button disabled={keysBusy || keysLoading} onClick={() => void handleCreateApiKey()}>
                   {keysBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                   Create Key
                 </Button>
               </div>
+              {newKey && (
+                <ShownOnce label="Your new API key" value={newKey} onDismiss={() => setNewKey(null)} />
+              )}
               {keysLoading ? (
                 <InlineLoading>Loading API keys…</InlineLoading>
               ) : apiKeys.length === 0 ? (
@@ -432,6 +444,9 @@ function SettingsContent() {
                   ))}
                 </ul>
               )}
+              <div className="border-t border-line pt-6">
+                <WebhooksPanel />
+              </div>
             </div>
           )}
 

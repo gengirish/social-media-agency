@@ -17,6 +17,7 @@ import {
   Loader2,
   RefreshCw,
   Send,
+  Share2,
   TrendingUp,
   Wand2,
   X,
@@ -52,6 +53,7 @@ import { SegmentedTabs } from "@/components/ui/tabs";
 import { statusLabel } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
 import { PostDialog } from "@/components/posts/dialog";
+import { ShareReviewDialog } from "@/components/review/share-review-dialog";
 import { GeneratePostsModal } from "@/components/posts/generate-posts-modal";
 import { ModerationWarning } from "@/components/posts/moderation-warning";
 import { PostCard, type ManualChannel, type PostAction, type PostEdit } from "@/components/posts/post-card";
@@ -167,6 +169,7 @@ export default function QueuePage() {
   const [sub, setSub] = useState<SubscriptionInfo | null>(null);
 
   const [genModalOpen, setGenModalOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
   const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
@@ -965,6 +968,18 @@ export default function QueuePage() {
                 }}
               />
             )}
+            {/* A personal workspace markets its own brand: there is no client to send it to. */}
+            {!isPersonal && active && scope === "client" && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setShareOpen(true)}
+                disabled={(active.pending ?? 0) === 0}
+                title={(active.pending ?? 0) === 0 ? "Nothing is pending for this client" : undefined}
+              >
+                <Share2 className="h-3.5 w-3.5" /> Share for review
+              </Button>
+            )}
             <Link href="/calendar" className={buttonVariants({ variant: "secondary", size: "sm" })}>
               <CalendarDays className="h-3.5 w-3.5" />
               Calendar
@@ -972,6 +987,14 @@ export default function QueuePage() {
           </>
         }
       />
+      {active && (
+        <ShareReviewDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          clientId={active.id}
+          clientName={clientLabel(active)}
+        />
+      )}
 
       {noClient ? (
         <EmptyState

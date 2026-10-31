@@ -22,6 +22,7 @@ from structlog.testing import capture_logs
 from agency.models.tables import BrandProfile, ContentPiece, MediaAsset
 from agency.services import moderation
 from tests.conftest import (
+    auth_for,
     auth_header_for,
     create_client_row,
     create_content_row,
@@ -29,7 +30,6 @@ from tests.conftest import (
     create_platform_account,
     create_subscription,
     create_user_row,
-    create_white_label,
 )
 
 API = "/api/v1"
@@ -822,53 +822,110 @@ async def test_unchanged_body_does_not_reset(client, session_factory, tenant):
 
 
 # ---------------------------------------------------------------------------
-# Portal approve — same moderation, no override
+# Client review link approve — same moderation, no override from outside
 # ---------------------------------------------------------------------------
 @pytest.fixture
-async def portal(session_factory):
-    org_id = await create_org(session_factory, "Portal Org", slug="gate-portal")
-    await create_white_label(session_factory, org_id)
+async def review_link(client, session_factory):
+    """A client review link and the org/client behind it."""
+    org_id = await create_org(session_factory, "Review Org")
     client_id = await create_client_row(session_factory, org_id)
-    return SimpleNamespace(org_id=org_id, client_id=client_id)
+    headers = await auth_for(session_factory, org_id, role="member")
+    resp = await client.post(
+        f"{API}/clients/{client_id}/review-links", json={}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    return SimpleNamespace(org_id=org_id, client_id=client_id, token=resp.json()["token"])
 
 
 @pytest.mark.parametrize("query", ["", "?override=true"])
-async def test_portal_approve_flagged_is_409(client, session_factory, portal, brain, query):
+async def test_client_link_approve_flagged_is_held(
+    client, session_factory, review_link, brain, query
+):
+    """A client cannot wave a moderation flag through — not by body, not by query."""
     brain(FLAGGED)
-    content_id = await create_content_row(session_factory, portal.org_id, portal.client_id)
+    content_id = await create_content_row(
+        session_factory, review_link.org_id, review_link.client_id
+    )
 
-    resp = await client.patch(
-        f"{API}/portal/gate-portal/content/{content_id}{query}",
+    resp = await client.post(
+        f"{API}/portal/review/{review_link.token}/content/{content_id}{query}",
         json={"decision": "approve", "override": True},
     )
 
     assert resp.status_code == 409
-    detail = resp.json()["detail"]
-    assert detail["code"] == "moderation_flagged"
-    assert detail["issues"][0]["severity"] == "high"
-    assert (await _piece(session_factory, content_id)).status == "draft"
+    assert resp.json()["detail"]["code"] == "approval_held"
+    # Moderation's issues are the agency's notes; the client is not shown them.
+    assert "issues" not in resp.json()["detail"]
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == "draft"
+    assert piece.metadata_["client_review"]["decision"] == "approval_held"
+    assert piece.metadata_["client_review"]["held_by"] == "moderation_flagged"
+    assert "moderation" not in piece.metadata_
 
 
-async def test_portal_approve_clean_approves(client, session_factory, portal, brain):
+async def test_client_link_approve_clean_approves(client, session_factory, review_link, brain):
     stub = brain(CLEAN)
-    content_id = await create_content_row(session_factory, portal.org_id, portal.client_id)
+    content_id = await create_content_row(
+        session_factory, review_link.org_id, review_link.client_id
+    )
 
-    resp = await client.patch(
-        f"{API}/portal/gate-portal/content/{content_id}", json={"decision": "approve"}
+    resp = await client.post(
+        f"{API}/portal/review/{review_link.token}/content/{content_id}",
+        json={"decision": "approve", "name": "Dana at Brand"},
     )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["moderation"]["status"] == "passed"
+    assert resp.json()["item"]["status"] == "approved"
     assert len(stub.prompts) == 1
-    assert (await _piece(session_factory, content_id)).status == "approved"
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == "approved"
+    assert piece.metadata_["moderation"]["status"] == "passed"
+    assert piece.metadata_["approval"]["via"] == "client_link"
+    assert piece.metadata_["approval"]["by"] is None
+    assert piece.metadata_["approval"]["name"] == "Dana at Brand"
 
 
-async def test_portal_reject_still_works(client, session_factory, portal, brain):
+async def test_client_link_request_changes_skips_moderation(
+    client, session_factory, review_link, brain
+):
+    """Asking for changes approves nothing, so it must not spend a moderation call."""
     stub = brain(CLEAN)
-    content_id = await create_content_row(session_factory, portal.org_id, portal.client_id)
-    resp = await client.patch(
-        f"{API}/portal/gate-portal/content/{content_id}", json={"decision": "reject"}
+    content_id = await create_content_row(
+        session_factory, review_link.org_id, review_link.client_id
     )
-    assert resp.status_code == 200
+    resp = await client.post(
+        f"{API}/portal/review/{review_link.token}/content/{content_id}",
+        json={"decision": "request_changes", "comment": "Softer opening line, please."},
+    )
+    assert resp.status_code == 200, resp.text
     assert stub.prompts == []
-    assert (await _piece(session_factory, content_id)).status == "rejected"
+    piece = await _piece(session_factory, content_id)
+    # Still Pending: ``rejected`` is on no Queue tab and would hide the feedback.
+    assert piece.status == "draft"
+    assert piece.metadata_["client_review"]["comment"] == "Softer opening line, please."
+
+
+async def test_dashboard_approval_records_approver(client, session_factory, tenant, brain):
+    """``metadata.approval`` names the seat that approved — the pack's approval log."""
+    brain(CLEAN)
+    content_id = await _new(session_factory, tenant)
+    resp = await client.post(f"{API}/content/{content_id}/approve", headers=tenant.headers)
+    assert resp.status_code == 200, resp.text
+    approval = (await _piece(session_factory, content_id)).metadata_["approval"]
+    assert approval["via"] == "dashboard"
+    assert approval["by"] == str(tenant.user_id)
+    assert approval["at"]
+
+
+async def test_edit_after_approval_drops_approval_record(client, session_factory, tenant, brain):
+    brain(CLEAN)
+    content_id = await _new(session_factory, tenant)
+    await client.post(f"{API}/content/{content_id}/approve", headers=tenant.headers)
+
+    resp = await client.patch(
+        f"{API}/content/{content_id}", json={"body": "New copy"}, headers=tenant.headers
+    )
+    assert resp.status_code == 200, resp.text
+    piece = await _piece(session_factory, content_id)
+    assert piece.status == "draft"
+    assert "approval" not in piece.metadata_

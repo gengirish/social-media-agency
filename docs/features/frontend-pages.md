@@ -65,6 +65,8 @@ Defined as data in `src/lib/navigation.ts` (`NAV_GROUPS`) and resolved by `resol
 **File**: `src/app/page.tsx` | **Server Component**
 Public marketing site in the Cadence look. Static markup with two client islands: `AuthCta` (session-aware buttons) and `ThemeToggle`. Sections: hero, How it works, the 7-agent pipeline, features, pricing (monthly only — no annual toggle, because there are no annual Dodo products), closing CTA.
 
+<!-- verified: 261031 --> Copy follows what a **new** signup can do while `OAUTH_CONNECT_ENABLED` is `false`: "Publish straight to X, LinkedIn, and Facebook" became "Post where you already post" (API / signed webhook / by hand); "Campaign analytics" became "Client-ready campaign pack"; the hero stat "3 publish targets" became "0 posts without sign-off"; How it works step 3 is "Review & hand off" with client sign-off from a private link. Put direct publishing back in the copy only when that flag flips.
+
 The placeholder logo strip and testimonials flagged in the 260817 stub audit are **gone**.
 
 > Pricing on this page is hardcoded separately from `PLAN_CONFIG` and must be kept in sync by hand. It lists Free as "1 client / 30 posts / mo", while the in-app `/pricing` page lists "1 client / 5 campaigns / mo" — see [billing.md](billing.md#plan-tiers).
@@ -76,6 +78,10 @@ Brand bar with theme toggle, Clerk `<SignIn />` / `<SignUp />` themed per light/
 ### Welcome `/welcome` — logo target
 **File**: `src/app/(dashboard)/welcome/page.tsx` | **Client** | [LIVE] <!-- verified: 260923 -->
 Cadence's Welcome for the **active client**, from `GET /clients/overview` (real counts only). Until its three steps are done it is adaptive onboarding — **Set up the brand profile** → **Connect social accounts** → **Generate your first post** — each with its CTA and a done state; the last two stay locked until the brand profile is done. Afterwards it is a welcome-back hub linking to Posts, Create and Insights. No clients → prompt to add one; load failure → error with retry. Not in the nav; the top-bar logo links here.
+
+### Client review `/review/[token]` — public
+**File**: `src/app/review/[token]/page.tsx` | **Client** | [LIVE] <!-- verified: 261031 -->
+What an agency's client opens from a review link. Public in `middleware.ts` (`/review/(.*)`); outside the `(dashboard)` group, so no nav and **no CampaignForge branding** — the agency's name, logo and colour from `agency_branding`. Lists **Waiting for you** (Approve / Request changes with a required comment; optional name kept in `localStorage`) and **Already reviewed**. A held approval says the agency needs to check the post, never why. Revoked / expired / unknown links show "This link has ended" with the server's reason. Calls only `requestPublic` — never attaches an org token.
 
 ### Legal `/legal` — public
 **File**: `src/app/legal/page.tsx` | **Client** | [LIVE] <!-- verified: 260923 -->
@@ -135,6 +141,8 @@ Campaign list with `CampaignStatusBadge`. Links to detail and `/campaigns/new`. 
 
 ### Campaign Detail `/campaigns/[id]`
 **File**: `src/app/(dashboard)/campaigns/[id]/page.tsx` | **Client**
+<!-- verified: 261031 --> Header actions: **Share for review** (`ShareReviewDialog`, campaign-scoped link; disabled when nothing in the campaign is pending) and **Export pack** — fetches `GET /campaigns/{id}/pack.html` with the bearer token and opens it from a blob in a tab opened *before* the await (popup blockers); the document's own button prints / saves as PDF. `trackFeature("campaign-pack-export")` — the activation event in `docs/competitive-gtm-261030.md`.
+
 `SegmentedTabs`:
 - **Live Agents**: `<LiveAgentDashboard />` — SSE pipeline progress, review buttons
 - **Content**: generated pieces with `StatusBadge`; **Approve** on `draft` pieces calls `api.approveContent()`
@@ -173,7 +181,8 @@ H1 is **"Queue"**. Every post waits here for a person. Rebuilt 260923 as Cadence
 - **Bulk actions** on selected posts: approve (one moderation pass per post — a bulk click never skips the check), publish (one confirmation for the batch), delete.
 - **Delete** (`DELETE /content/{id}`) — single or bulk — with an 8-second **undo** toast; the request is only sent when the undo window closes.
 - Every card keeps its **Amplify** link → `/amplify?source=<id>`.
-- `rejected` posts (portal rejections) still have no tab.
+- `rejected` posts still have no tab. <!-- verified: 261031 --> Client review links therefore never write `rejected`: "Request changes" keeps the post Pending and the card shows an amber **"<name> asked for changes: …"** notice from `metadata_.client_review`; an approval moderation held shows as "approved this, but moderation flagged it"; a client approval shows a small "Approved by … via review link" receipt.
+- <!-- verified: 261031 --> **Share for review** in the header (client scope, non-personal workspaces, disabled with nothing pending) opens `ShareReviewDialog` for the active client: create a link (shown once — only a hash is stored), copy it, see active links with expiry / last-opened, **Turn off**. `trackFeature("review-link-create", { scope })`.
 - <!-- verified: 260929 --> **Manual channels — "Post it yourself"**: the page loads each client's manual channels from `GET /setup/{id}/accounts` (filtered to `status === "manual"`, keyed by platform — no new endpoint) and passes the matching one to each card. On such a card, **Schedule and Publish now are replaced, not supplemented** — both would fail server-side and offering them would claim the product posts to a page it cannot reach. One click writes the post text to the clipboard *and* opens the composer in the same user gesture, before any `await`, or a popup blocker eats the tab. Only X prefills the body (`https://x.com/intent/post?text=`); the other channels open an empty composer and the copy says "copied — paste it into the composer". A channel with no verified composer link falls back to its `profile_url`, and to no tab at all when there is none. Then a confirm panel: **I posted it** (optional link) → `POST /publishing/{id}/mark-posted`, or **Cancel**, which writes nothing and charges nothing. **Schedule as a reminder** / **Move the reminder** sits beside it, deliberately secondary — the label avoids the word "Schedule" on its own because nothing will go out. `trackFeature("content-post-manual", { platform })`.
 - <!-- verified: 260929 --> **Honest states for a hand-posted post**: **"Posted manually — no link, metrics unavailable"** with a permanent inline **Add link** (`PATCH /publishing/{id}/post-url`) — never a `0`. A scheduled manual post reads **"Reminder around \<time\>"**, never "Publishes"; "around" because the scheduler's sleep is capped at `MAX_SLEEP_SECONDS = 3600` and `notify_scheduled()` only wakes the *local* process, so a post scheduled on another Fly machine can be reminded up to an hour late. A reminded-but-unconfirmed post (`metadata_.reminder_sent_at` in the past, still `scheduled`) shows a notice saying nothing will publish it.
 - <!-- verified: 260929 --> **Bulk publish skips manual posts** and says how many were left for the operator to post by hand — `publish` would 400 once per post on a tokenless channel.

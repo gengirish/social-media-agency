@@ -46,7 +46,7 @@ Adopted from the Cadence Crew prototype (see [docs/cadence-port-plan-260921.md](
 
 1. **Never imply a capability that isn't real.** Publishing *is* real here (X, LinkedIn, Facebook post to live client accounts), which raises the stakes — Instagram/TikTok publishing, image posting, DMs, ad-account actions and email sending are not, and the UI must say so where it matters (`lib/platforms.ts::publishUnavailableReason`). Since 260929 a channel can also be **manual** — registered with no tokens so a human posts it — and there the copy must never imply the product published anything (see [Manual publishing](#manual-publishing-post-it-yourself)). The Inbox reads X mentions live and LinkedIn comments only when `LINKEDIN_INBOX_SCOPE` is set; everything else reports a per-account status, never seed data.
 2. **A human has final say.** No path auto-approves or auto-publishes. `autonomous_operator.py` plans; it must never schedule.
-3. **Moderation runs before approval, on every path that creates a post** — pipeline, manual, portal, Amplify, repurpose. Schedule and publish accept only approved content (enforced — see [Approval gate](#approval-gate-moderation-before-approval)).
+3. **Moderation runs before approval, on every path that creates a post** — pipeline, manual, client review link, Amplify, repurpose. Schedule and publish accept only approved content (enforced — see [Approval gate](#approval-gate-moderation-before-approval)).
 4. **No invented numbers.** Real data or an explicit empty state — never a placeholder metric, predicted CTR, or fabricated score. Same discipline as the marketing layer's data-reliability rules.
 5. **LLM access only through the four tier getters** (see [LLM routing](#llm-routing-servicesllm_providerpy)).
 6. **Before presenting a change:** `ruff` + `mypy` + `pytest` for backend, `npm run lint` + `npm run build` for frontend. A clean compile has missed runtime crashes before; run the tests.
@@ -167,7 +167,8 @@ Agent progress streams over **SSE**, not WebSocket, despite `docs/features/webso
 
 `content_piece.status` stays `draft` in the database for anything awaiting review; the UI calls it **Pending**. The only path to `approved` is `POST /content/{id}/approve`, which runs [services/moderation.py](backend/src/agency/services/moderation.py) first — logic lives in [services/content_approval.py](backend/src/agency/services/content_approval.py), routers stay thin.
 
-- **Flagged** → `409 {code: "moderation_flagged", issues}`; `?override=true` approves anyway and records `metadata.moderation.override_by`. The portal approve path never allows override.
+- **Flagged** → `409 {code: "moderation_flagged", issues}`; `?override=true` approves anyway and records `metadata.moderation.override_by`. A client review link never allows override (see [Client review links](#client-review-links-campaign-pack-and-hand-off)).
+- Every approval also writes `metadata.approval = {at, via: dashboard|client_link|retry, by, name?}` — the campaign pack's approval log reads it. An edit that resets a piece to `draft` drops it with `moderation`. Rows approved before 261031 have none, and the pack says "approver not recorded" rather than guess.
 - **Fail-open:** an LLM error/timeout/no provider approves with `metadata.moderation.status = "unavailable"` and logs `moderation_unavailable` — never silent. The character-limit and brand `vocabulary_exclude` checks run in code, so they still flag when the LLM is down.
 - **Schedule, publish and `mark-posted`** accept only `approved`/`scheduled` (`409 not_approved` otherwise). `PATCH /content/{id}` cannot set `approved`/`scheduled`/`published`, and editing the body or hashtags of approved/scheduled content resets it to `draft` so the edit is re-moderated. The **one** exception is `PATCH /publishing/{id}/post-url`, which writes `metadata.post_url` on a `published` piece without resetting anything — a link records where a post ended up, not the copy, so there is nothing to re-moderate. Do not widen that reasoning to any other field.
 - Every content-creating path (pipeline, repurpose, variants, Amplify) writes `draft`. Keep it that way — a new path that writes `approved` or `scheduled` bypasses moderation and, since publishing is real, posts unreviewed copy to a client's live account.
@@ -188,6 +189,15 @@ For an operator whose pages were created outside the product. The product genera
 - `profile_url` and `post_url` go through `url_safety.assert_safe_link` (shape only, no DNS) because only the browser opens them — not `assert_public_url`, which resolves and would reject a good link that is momentarily unresolvable.
 
 Tests: `test_manual_channels.py`, `test_mark_posted.py`, `test_post_url_patch.py`, `test_manual_reminders.py`, `test_insights_manual_posts.py`, `frontend/e2e/manual-publish.spec.ts`.
+
+### Client review links, campaign pack and hand-off
+
+The agency wedge ([docs/competitive-gtm-261030.md](docs/competitive-gtm-261030.md) §6): the client signs off, the agency exports a deliverable, approved posts leave for whatever scheduler the agency already uses. All three shipped 261031.
+
+- **Client review links** ([services/client_review.py](backend/src/agency/services/client_review.py), public routes in `routers/portal.py`, page `app/review/[token]`). One link = one client (optionally one campaign); token `rv_…` shown once, only its SHA-256 stored; 14-day default expiry, revocable; making one needs `content.approve`. They **replaced** the org-slug portal, which listed every client's drafts to anyone with the agency's slug. Every client-side read and write goes through `_in_scope(resolved)` (org + client [+ campaign]); `test_tenancy_routers.py` fails if any of those clauses is removed — keep it that way. Approve runs the normal gate with `override=False`; a flag answers `409 approval_held` and **the client is never told why**. "Request changes" keeps the piece `draft` with `metadata.client_review` — never `rejected`, which no Queue tab shows. Each decision notifies the link's creator.
+- **Campaign pack** ([services/campaign_pack.py](backend/src/agency/services/campaign_pack.py), `GET /campaigns/{id}/pack[.html]`). One printable HTML document; PDF is the browser's print. It is client-facing, so rule 4 is enforced in code: **no QA scores** (the QA agent grades itself), **no keyword volume/difficulty** (never measured), KPIs labelled as proposed targets, no approver name that was not recorded. Every value is escaped and every link re-checked. The export is the activation event (`trackFeature("campaign-pack-export")`).
+- **Hand-off** ([services/handoff.py](backend/src/agency/services/handoff.py)). One object, two exits: `GET /public/content` (API key, polling) and the `content.approved` webhook's `content` key (also fired by client-link approvals). `handoff_item` raises on anything not `approved`/`scheduled`/`published` — a draft must never reach a tool that posts. Settings › API & webhooks shows a new API key and a webhook secret **once**; before 261031 the key was discarded on create, so no key was usable. Native GoHighLevel push is planned, not built: [docs/ghl-handoff-plan-261031.md](docs/ghl-handoff-plan-261031.md).
+- Branding on the review page and the pack comes from `white_label.agency_branding` (active white-label, else the org name). **No settings UI writes `white_label` yet** — it is API-only, so in practice both show the workspace name.
 
 ### Amplify (repurposing engine)
 
@@ -248,7 +258,9 @@ Schema is raw SQL in [db/init.sql](db/init.sql) (+ `db/seed.sql`), **not** Alemb
 
 The Cadence-parity release needs, in order: `260923_creative_asset.sql`, `260923_amplify_asset_source.sql` (adds a column that references `creative_asset`), `260923_inbox.sql`. Manual publishing needs `260929_manual_channels.sql` (`platform_account.profile_url`) — one nullable column, but SQLAlchemy names every mapped column in its `SELECT`, so skipping it breaks **every** `platform_account` read, publishing and inbox included.
 
-`organization.slug` is the portal's identity column and is `UNIQUE` deliberately: `/api/v1/portal/{org_slug}` is unauthenticated, and the previous `domain`-then-`name` resolution used non-unique columns. A null slug means that org has no portal.
+Client review links need `261031_client_review_link.sql` (new table; only review links break without it).
+
+`organization.slug` stays `UNIQUE` and is still written at signup, but since 261031 nothing public resolves on it: the unauthenticated `/api/v1/portal/{org_slug}` routes it identified were removed (client review links replaced them). `white_label.portal_enabled`, which gated those routes, is now unread.
 
 ### CORS
 
@@ -283,4 +295,4 @@ Reporting style: sacrifice grammar for concision; list unresolved questions at t
 
 `docs/features/` holds living feature docs (API endpoints, database schema, services, frontend pages, auth/RBAC, billing, changelog). After adding, modifying, or removing a feature, refresh them via the `feature-docs` skill. `docs/beta-testing-plan.md` defines the beta program; `docs/yc-pitch.md` the investor narrative.
 
-Known drift to watch for: `docs/features/websocket.md` is named for a WebSocket layer this codebase does not have — its contents describe the SSE implementation accurately and carry a filename note, so only the filename is stale. Also live: `clients/overview` returns a field called `connected_accounts` that since 260929 counts manual channels too, so `/welcome` and the client switcher say "connected" about pages nothing is connected to. A code fix, not a doc fix.
+Known drift to watch for: `docs/features/websocket.md` is named for a WebSocket layer this codebase does not have — its contents describe the SSE implementation accurately and carry a filename note, so only the filename is stale. Also live: `clients/overview` returns a field called `connected_accounts` that since 260929 counts manual channels too, so `/welcome` and the client switcher say "connected" about pages nothing is connected to. A code fix, not a doc fix. Also: webhook registration (`routers/webhooks_config.py`) has no capability gate while API keys need `workspace.manage`, and since 261031 a `content.approved` webhook carries full post copy — gate it, which means giving `test_webhooks.py` a fixture with real users and orgs (it builds only the webhook tables today).

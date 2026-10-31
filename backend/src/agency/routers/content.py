@@ -30,6 +30,7 @@ from agency.services.content_approval import (
     approve_content_piece,
     retry_failed_content,
 )
+from agency.services.handoff import approved_event_payload
 from agency.services.media_generation import generate_image_for_piece
 from agency.services.tracing import trace_config
 from agency.services.webhook_dispatcher import EVENT_CONTENT_APPROVED, dispatch_webhook
@@ -586,17 +587,14 @@ async def approve_content(
     except ContentGateError as exc:
         raise HTTPException(exc.status_code, exc.detail) from None
 
-    # After the response: retries + backoff must not sit in the request path.
+    # After the response: retries + backoff must not sit in the request path. The
+    # payload carries the full hand-off object (services/handoff.py) so a scheduler
+    # recipe can create the post without calling back.
     background.add_task(
         dispatch_webhook,
         org_id,
         EVENT_CONTENT_APPROVED,
-        {
-            "content_id": str(content_id),
-            "campaign_id": str(piece.campaign_id) if piece.campaign_id else None,
-            "client_id": str(piece.client_id),
-            "platform": piece.platform,
-        },
+        await approved_event_payload(db, piece),
     )
     return response
 

@@ -61,6 +61,8 @@ Tenancy: every handler resolves `client_id` against the caller's `org_id` first 
 | GET | `/campaigns/{campaign_id}/content` | Yes | `get_campaign_content` | Content pieces for campaign |
 | GET | `/campaigns/{campaign_id}/stream` | Token query | `stream_campaign` | SSE agent progress events (token via `?token=`) |
 | PATCH | `/campaigns/{campaign_id}/review` | Yes | `submit_human_review` | Human review decision; resumes pipeline |
+| GET | `/campaigns/{campaign_id}/pack` | Yes | `get_campaign_pack` | Campaign pack as JSON (`services/campaign_pack.py`) <!-- verified: 261031 --> |
+| GET | `/campaigns/{campaign_id}/pack.html` | Yes | `get_campaign_pack_html` | Campaign pack as one printable HTML attachment (print → Save as PDF); restrictive CSP |
 
 ### SSE Stream Details
 
@@ -108,7 +110,9 @@ Lifecycle (DB values; `draft` is labelled *Pending* in the UI): `draft`/`rejecte
 
 **`POST /publishing/{id}/schedule`, `POST /publishing/{id}/publish`** — only `approved` or `scheduled` pieces; otherwise 409 `{"code": "not_approved", "status": <current>}` (including `published`, so a repeated publish cannot double-post). Schedule additionally refuses platforms with no working publisher (Instagram, TikTok) → 409 `{"code": "platform_unavailable", "platform", "reason"}`, since a scheduled post there would only fail when due. The scheduler loop only ever publishes `scheduled` rows. Both endpoints, and the scheduler when a post comes due, also refuse posts whose client is archived → 409 `{"code": "client_archived"}` (the scheduler marks the post `failed` with `publish_error: "Client is archived"`).
 
-**Portal** `PATCH /portal/{org_slug}/content/{id}` with `decision: "approve"` runs the same moderation with **no override**; a flag returns the same 409 `moderation_flagged` shape.
+**Client review link** `POST /portal/review/{token}/content/{id}` with `decision: "approve"` runs the same moderation with **no override**. A flag answers 409 `approval_held` (not `moderation_flagged`: the issues are the agency's notes and are not sent to the client), leaves the piece `draft`, and records the client's yes in `metadata.client_review`. <!-- verified: 261031 -->
+
+**Approval record** <!-- verified: 261031 --> — every approval writes `metadata.approval = {at, via, by, name?}` beside `metadata.moderation`. `via` is `dashboard`, `client_link` or `retry`; `by` is the user id (`null` for a client link, where `name` is the self-reported name the client typed). Editing approved copy back to `draft` drops it with the moderation record. Rows approved before 261031 have no `approval` key.
 
 #### Manual mode is not a bypass (260929)
 <!-- verified: 260929 -->
@@ -565,17 +569,26 @@ Platforms: `twitter`, `linkedin`, `facebook`. The redirect URI is `{first CORS_O
 |--------|------|------|---------|---------|
 | POST | `/competitive/clients/{client_id}/scan` | Yes | `trigger_competitive_scan` | Run competitive scan |
 
-## Portal
-**Status**: [LIVE]
-**File**: `backend/src/agency/routers/portal.py`
+## Client Review (public)
+**Status**: [LIVE] <!-- verified: 261031 -->
+**File**: `backend/src/agency/routers/portal.py` · logic in `services/client_review.py`
+
+The token in the path is the whole credential. Every read and write is scoped to the link's `org_id` + `client_id` (+ `campaign_id` when the link was made for one campaign); a content id outside that scope is 404. Replaced the `/portal/{org_slug}/*` routes on 261031 — those listed, and accepted approvals for, **every** client's content to anyone holding the org's slug.
 
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
-> `{org_slug}` resolves against `Organization.slug` **only** (unique, nullable). It previously fell back to `domain` then `name`, neither of which is unique — two orgs sharing a name 500'd every portal route. An org with no slug has no portal and returns 404.
+| GET | `/portal/review/{token}` | Token | `get_review` | Agency branding, client, campaign, `pending` + `decided` items. 404 `link_not_found`; 410 `link_revoked` / `link_expired` / `link_inactive` (archived client or inactive org) |
+| POST | `/portal/review/{token}/content/{content_id}` | Token | `post_review_decision` | `{decision: "approve" \| "request_changes", comment?, name?}`. `comment` required for changes (400 `comment_required`). 409 `already_decided` once not `draft`; 409 `approval_held` when a gate refused the approve. Approve fires `content.approved` |
 
-| GET | `/portal/{org_slug}/campaigns` | No | `portal_campaigns` | White-label campaign list |
-| GET | `/portal/{org_slug}/content` | No | `portal_content` | White-label content list |
-| PATCH | `/portal/{org_slug}/content/{content_id}` | No | `portal_review_content` | Client approve (moderated, no override — 409 `moderation_flagged`) / reject |
+## Review Links (agency side)
+**Status**: [LIVE] <!-- verified: 261031 -->
+**File**: `backend/src/agency/routers/review_links.py`
+
+| Method | Path | Auth | Handler | Purpose |
+|--------|------|------|---------|---------|
+| POST | `/clients/{client_id}/review-links` | `content.approve` | `create_link` | `{campaign_id?, ttl_days?=14 (1–30)}` → `{link, token, path}`. Token shown **once**; only its SHA-256 is stored. 404 for another org's client or a campaign of another client; 409 `client_archived` |
+| GET | `/clients/{client_id}/review-links` | Yes | `list_links` | The client's links, newest first, with `state` (`active`/`revoked`/`expired`) and `last_used_at`. Never the token |
+| POST | `/review-links/{link_id}/revoke` | `content.approve` | `revoke_link` | Idempotent; 404 for another org's link |
 
 ## Slack
 **Status**: [LIVE]
@@ -606,6 +619,7 @@ Authentication: `X-API-Key` header (API key), not JWT.
 |--------|------|------|---------|---------|
 | GET | `/public/me` | API Key | `public_me` | API key org info |
 | GET | `/public/campaigns` | API Key | `public_list_campaigns` | List campaigns via API key |
+| GET | `/public/content` | API Key | `public_list_content` | Hand-off to a scheduler: `?status=approved` (default) \| `scheduled` \| `published`, `client_id`, `since` (ISO), `limit` ≤100. Any other status → 400 `status_not_handed_off`. Items are the `services/handoff.py` shape <!-- verified: 261031 --> |
 
 ## Acquisition
 **Status**: [LIVE]

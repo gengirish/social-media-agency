@@ -2,9 +2,9 @@
 
 > **Pricing superseded 260926.** Paid tiers are now $20 / $36 / $168 (20% under
 > Metricool's USD monthly list, anchored on brand-count parity). The analysis below
-> reasons about the previous $49 / $149 / $399 ladder and has NOT been re-run against
-> the new numbers. Its conclusions about segment and price floor should be re-read with
-> that in mind -- see the PLAN_CONFIG comment in services/billing.py for the anchor.
+> reasons about the previous $49 / $149 / $399 ladder. **Re-run 261030** against the new
+> numbers and the current market in [competitive-gtm-261030.md](competitive-gtm-261030.md),
+> which supersedes §3–§7 here. See the PLAN_CONFIG comment in services/billing.py for the anchor.
 
 <!-- created: 260817 -->
 

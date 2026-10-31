@@ -144,6 +144,28 @@ async function requestPublic<T>(path: string, options?: RequestInit): Promise<T>
  * from their own backend; the methods below are here so an in-app "test your key"
  * flow can exercise them without a second HTTP client.
  */
+/**
+ * Authenticated fetch of a text body (the campaign pack's HTML). Same bearer and
+ * one-shot 401 retry as `request`; errors still carry the server's JSON detail.
+ */
+async function requestText(path: string): Promise<string> {
+  const send = async (bearer: string | null) =>
+    fetch(`${API_BASE}${path}`, {
+      headers: bearer ? { Authorization: `Bearer ${bearer}` } : {},
+    });
+  const token = await getAuthToken();
+  let res = await send(token);
+  if (res.status === 401 && _clerkGetToken) {
+    const fresh = await _clerkGetToken().catch(() => null);
+    if (fresh && fresh !== token) res = await send(fresh);
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, detailMessage(body.detail), body.detail);
+  }
+  return res.text();
+}
+
 async function requestWithApiKey<T>(
   path: string,
   apiKey: string,
@@ -618,21 +640,32 @@ export const api = {
   // absent: they are Slack's receivers (signed with SLACK_SIGNING_SECRET, and
   // /commands takes form-encoded data). Nothing in the browser calls them.
 
-  // --- Client portal (unauthenticated, white-label) ---
-  // These three carry no bearer token by design — see requestPublic above.
-  getPortalCampaigns: (orgSlug: string, clientId?: string) =>
-    requestPublic<PortalCampaignsResponse>(
-      `/api/v1/portal/${encodeURIComponent(orgSlug)}/campaigns${qs({ client_id: clientId })}`
+  // --- Client review links ---
+  // Agency side: authenticated. `token`/`path` come back once, on create — the
+  // server keeps only a hash, so a lost link is revoked and replaced, not re-shown.
+  createReviewLink: (clientId: string, body: { campaign_id?: string; ttl_days?: number } = {}) =>
+    request<ReviewLinkCreated>(`/api/v1/clients/${clientId}/review-links`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listReviewLinks: (clientId: string) =>
+    request<{ items: ReviewLink[] }>(`/api/v1/clients/${clientId}/review-links`),
+  revokeReviewLink: (linkId: string) =>
+    request<{ link: ReviewLink }>(`/api/v1/review-links/${linkId}/revoke`, { method: "POST" }),
+
+  // Client side: unauthenticated by design — the token in the path is the whole
+  // credential (see requestPublic above). Never attach an org token here.
+  getReview: (token: string) =>
+    requestPublic<ReviewPage>(`/api/v1/portal/review/${encodeURIComponent(token)}`),
+  decideReview: (token: string, contentId: string, body: ReviewDecisionBody) =>
+    requestPublic<{ item: ReviewItem }>(
+      `/api/v1/portal/review/${encodeURIComponent(token)}/content/${contentId}`,
+      { method: "POST", body: JSON.stringify(body) }
     ),
-  getPortalContent: (orgSlug: string, statusFilter?: string) =>
-    requestPublic<PortalContentResponse>(
-      `/api/v1/portal/${encodeURIComponent(orgSlug)}/content${qs({ status_filter: statusFilter })}`
-    ),
-  reviewPortalContent: (orgSlug: string, contentId: string, decision: PortalDecision) =>
-    requestPublic<PortalReviewResponse>(
-      `/api/v1/portal/${encodeURIComponent(orgSlug)}/content/${contentId}`,
-      { method: "PATCH", body: JSON.stringify({ decision }) }
-    ),
+
+  // --- Campaign pack ---
+  getCampaignPackHtml: (campaignId: string) =>
+    requestText(`/api/v1/campaigns/${campaignId}/pack.html`),
 
   // --- Public REST API (X-API-Key) ---
   publicMe: (apiKey: string) => requestWithApiKey<{ org_id: string }>("/api/v1/public/me", apiKey),
@@ -1008,6 +1041,8 @@ export interface ContentMetadata {
     platform?: string;
     at?: string;
   } | null;
+  /** What the client said through a review link, latest decision only. */
+  client_review?: ClientReviewNote | null;
   [key: string]: unknown;
 }
 
@@ -1728,46 +1763,70 @@ export interface WebhookDeliveryListResponse {
   total: number;
 }
 
-// --- Client portal (unauthenticated) ---
+// --- Client review links ---
 
-export interface PortalBranding {
-  company_name: string | null;
-  logo_url: string | null;
-  primary_color: string | null;
-}
+export type ReviewLinkState = "active" | "revoked" | "expired";
 
-export interface PortalCampaign {
+export interface ReviewLink {
   id: string;
-  name: string;
-  status: string;
-  channels: string[];
-  start_date: string | null;
-  end_date: string | null;
-}
-
-export interface PortalCampaignsResponse {
-  branding: PortalBranding;
-  items: PortalCampaign[];
-}
-
-export interface PortalContentItem {
-  id: string;
-  platform: string;
-  title: string;
-  body: string;
-  status: string;
+  client_id: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  state: ReviewLinkState;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
   created_at: string | null;
 }
 
-export interface PortalContentResponse {
-  items: PortalContentItem[];
+export interface ReviewLinkCreated {
+  link: ReviewLink;
+  token: string;
+  /** Relative (`/review/<token>`): prefix with the app's own origin. */
+  path: string;
 }
 
-export type PortalDecision = "approve" | "reject";
+/** `metadata_.client_review` on a piece, and the same shape on the public page. */
+export interface ClientReviewNote {
+  decision: "approved" | "changes_requested" | "approval_held" | string | null;
+  comment?: string | null;
+  name?: string | null;
+  at?: string | null;
+  held_by?: string | null;
+}
 
-export interface PortalReviewResponse {
-  status: string;
-  content_id: string;
+export interface ReviewItem {
+  id: string;
+  platform: string;
+  content_type: string;
+  title: string;
+  body: string;
+  hashtags: string[];
+  media_urls: string[];
+  /** `pending` is a draft awaiting a decision. */
+  status: "pending" | "approved" | "scheduled" | "published" | string;
+  scheduled_at: string | null;
+  client_review: ClientReviewNote | null;
+}
+
+export interface ReviewPage {
+  agency: {
+    name: string;
+    logo_url: string | null;
+    primary_color: string | null;
+    support_email: string | null;
+  };
+  client: { name: string };
+  campaign: { id: string; name: string } | null;
+  expires_at: string | null;
+  pending: ReviewItem[];
+  decided: ReviewItem[];
+}
+
+export interface ReviewDecisionBody {
+  decision: "approve" | "request_changes";
+  comment?: string;
+  name?: string;
 }
 
 // --- Public REST API ---

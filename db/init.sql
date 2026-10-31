@@ -284,14 +284,40 @@ CREATE TABLE IF NOT EXISTS white_label (
     primary_color VARCHAR(7) DEFAULT '#4f46e5',
     company_name VARCHAR(255),
     support_email VARCHAR(255),
-    -- Gates every /api/v1/portal/{org_slug} route. Defaults FALSE so an org that
-    -- has branding rows but has not opted in still 403s.
+    -- Gated the old /api/v1/portal/{org_slug} routes, removed 261031. Unused now:
+    -- client review links (client_review_link) are per client and need no opt-in.
     portal_enabled BOOLEAN DEFAULT FALSE,
     email_from_name VARCHAR(255),
     is_active BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ---------------------------------------------------------------------------
+-- client_review_link — a private link an agency sends one client so the client
+-- can approve or ask for changes without a CampaignForge login. Replaces the
+-- org-slug portal, which listed every client's drafts to anyone holding the slug.
+--
+-- The link carries a random token; only its SHA-256 is stored, so read access to
+-- this table is not the power to approve a client's posts. Scope is one client,
+-- narrowed to one campaign when campaign_id is set. Revoking sets revoked_at;
+-- nothing is deleted, so the approval trail keeps the link it came through.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS client_review_link (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    client_id UUID NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    campaign_id UUID REFERENCES campaign(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_client_review_link_org_client
+    ON client_review_link(org_id, client_id, created_at DESC);
 
 -- Campaign templates
 CREATE TABLE IF NOT EXISTS campaign_template (
