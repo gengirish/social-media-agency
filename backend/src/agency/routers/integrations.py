@@ -2,14 +2,23 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 
 from agency.dependencies import get_current_user, get_db, get_org_id
+from agency.models.schemas import WhiteLabelUpdate
 from agency.models.tables import CampaignTemplate
 from agency.permissions import Capability, require_cap
 from agency.services.api_keys import create_api_key, list_api_keys, revoke_api_key
-from agency.services.white_label import get_white_label, upsert_white_label
+from agency.services.white_label import (
+    LOGO_MAX_BYTES,
+    BrandingError,
+    clear_logo,
+    get_white_label,
+    set_logo,
+    upsert_white_label,
+    validate_logo,
+)
 
 router = APIRouter(prefix="/integrations", tags=["Integrations"])
 
@@ -59,7 +68,14 @@ async def revoke_key(
     return result
 
 
-# --- White Label ---
+# --- White Label (Settings › Branding) ---
+
+
+#: Branding goes on every client review page and campaign pack the org sends
+#: out, under the agency's name. Changing it is workspace administration, the
+#: same tier as API keys; reading it is not, because the pack and the review
+#: page are visible to every seat anyway.
+_BRANDING_GATE = Depends(require_cap(Capability.WORKSPACE_MANAGE))
 
 
 @router.get("/white-label")
@@ -72,14 +88,50 @@ async def get_branding(
     return wl or {"is_active": False}
 
 
-@router.put("/white-label")
+@router.put("/white-label", dependencies=[_BRANDING_GATE])
 async def update_branding(
-    body: dict,
+    body: WhiteLabelUpdate,
     user=Depends(get_current_user),
     db=Depends(get_db),
     org_id: UUID = Depends(get_org_id),
 ):
-    return await upsert_white_label(db, org_id, body)
+    """Partial update; returns the full branding so the screen needs no re-fetch."""
+    try:
+        return await upsert_white_label(db, org_id, body.model_dump(exclude_unset=True))
+    except BrandingError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
+
+
+@router.post("/white-label/logo", dependencies=[_BRANDING_GATE])
+async def upload_logo(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """Replace the agency logo. PNG, JPEG or WebP, ≤ ``LOGO_MAX_BYTES``, ≤ 2000 px.
+
+    Reads one byte past the cap and stops, so an oversized upload is refused
+    without being held in memory. 413 ``logo_too_large``, 422
+    ``logo_unsupported`` / ``logo_dimensions`` / ``logo_empty``.
+    """
+    payload = await file.read(LOGO_MAX_BYTES + 1)
+    try:
+        data, mime = validate_logo(payload)
+        return await set_logo(db, org_id, data, mime)
+    except BrandingError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
+
+
+@router.delete("/white-label/logo", dependencies=[_BRANDING_GATE])
+async def remove_logo(
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """Drop the uploaded logo. The row and the other branding fields stay."""
+    wl = await clear_logo(db, org_id)
+    return wl or {"is_active": False}
 
 
 # --- Organization Settings ---

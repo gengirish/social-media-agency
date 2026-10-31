@@ -475,3 +475,48 @@ class WebhookDeliveryResponse(BaseModel):
 class WebhookDeliveryListResponse(BaseModel):
     items: list[WebhookDeliveryResponse]
     total: int
+
+
+# --- Agency branding (white-label) ---
+
+
+class WhiteLabelUpdate(BaseModel):
+    """``PUT /integrations/white-label``. Partial: only the fields sent change.
+
+    Blank strings clear a field (the settings screen sends ``""`` for an emptied
+    input), so every optional text field is normalised to ``None`` before its
+    constraint runs. The logo itself is not here — it only changes through the
+    upload route, which validates the bytes.
+    """
+
+    company_name: str | None = Field(default=None, max_length=255)
+    primary_color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    support_email: str | None = Field(default=None, max_length=255)
+    logo_url: str | None = Field(default=None, max_length=2048)
+    custom_domain: str | None = Field(default=None, max_length=255)
+    email_from_name: str | None = Field(default=None, max_length=255)
+    portal_enabled: bool | None = None
+    is_active: bool | None = None
+
+    @field_validator(
+        "company_name",
+        "primary_color",
+        "support_email",
+        "logo_url",
+        "custom_domain",
+        "email_from_name",
+        mode="before",
+    )
+    @classmethod
+    def _blank_is_none(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("support_email")
+    @classmethod
+    def _looks_like_an_address(cls, value: str | None) -> str | None:
+        if value is not None and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value):
+            raise ValueError("support_email must be an email address")
+        return value
