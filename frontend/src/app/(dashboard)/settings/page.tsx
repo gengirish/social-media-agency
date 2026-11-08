@@ -10,7 +10,6 @@ import {
   Plus,
   Trash2,
   Loader2,
-  AlertTriangle,
   UserRound,
   Link2,
   CalendarClock,
@@ -18,6 +17,7 @@ import {
   ListChecks,
   Download,
   Users,
+  Palette,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -29,6 +29,7 @@ import { EmptyState, LoadingState, Notice } from "@/components/ui/empty-state";
 import { buttonVariants } from "@/components/ui/button";
 import { useActiveClient } from "@/lib/active-client";
 import { ShownOnce, WebhooksPanel } from "@/components/settings/webhooks-panel";
+import { BrandingTab } from "@/components/settings/branding-tab";
 import Link from "next/link";
 import {
   AccountsTab,
@@ -53,6 +54,7 @@ type Tab =
   | "activity"
   | "export"
   | "general"
+  | "branding"
   | "api-keys"
   | "notifications";
 
@@ -64,6 +66,7 @@ const TABS: readonly Tab[] = [
   "activity",
   "export",
   "general",
+  "branding",
   "api-keys",
   "notifications",
 ];
@@ -207,6 +210,7 @@ function SettingsContent() {
     { id: "activity", label: "Activity log", icon: ListChecks },
     { id: "export", label: "Export", icon: Download },
     { id: "general", label: "Workspace", icon: Settings },
+    { id: "branding", label: "Branding", icon: Palette },
     { id: "api-keys", label: "API & webhooks", icon: Key },
     { id: "notifications", label: "Notifications", icon: Bell },
   ];
@@ -356,20 +360,18 @@ function SettingsContent() {
                     />
                   </Field>
                   <div className="space-y-1.5">
-                    <p className="text-xs font-medium text-muted">Logo</p>
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-canvas/40 font-mono text-[11px] text-muted">
-                        No logo
-                      </div>
-                      <div className="text-sm text-muted">
-                        {/* No upload endpoint exists — render the state, not a button
-                            that only fires a toast. */}
-                        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
-                          <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-                          Logo upload not available yet
-                        </span>
-                      </div>
-                    </div>
+                    <p className="text-xs font-medium text-muted">Logo and colours</p>
+                    <p className="text-sm text-muted">
+                      What clients see on review links and campaign packs lives under{" "}
+                      <button
+                        type="button"
+                        className="font-medium text-accent-text underline-offset-2 hover:underline"
+                        onClick={() => setActiveTab("branding")}
+                      >
+                        Branding
+                      </button>
+                      .
+                    </p>
                   </div>
                   <Field label="Default Timezone" htmlFor="settings-timezone">
                     <Select id="settings-timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
@@ -395,6 +397,8 @@ function SettingsContent() {
               )}
             </div>
           )}
+
+          {activeTab === "branding" && <BrandingTab />}
 
           {activeTab === "api-keys" && (
             <div className="space-y-6">

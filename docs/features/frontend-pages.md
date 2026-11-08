@@ -50,7 +50,7 @@ Defined as data in `src/lib/navigation.ts` (`NAV_GROUPS`) and resolved by `resol
 | 4 | **Posts** | Queue `/content` · Calendar `/calendar` |
 | 5 | **Inbox** | Inbox `/inbox` |
 | 6 | **Insights** | Analytics `/analytics` |
-| 7 | **Settings** | Workspace `/settings` · Team `/team` · Billing `/pricing` |
+| 7 | **Settings** | Workspace `/settings` · Branding `/settings?tab=branding` (`workspace.manage`) · Team `/team` · Billing `/pricing` |
 
 - **Ads** became its own group (260925), moving Ads and Templates out of Create. Note that `/templates` holds **campaign** templates, not ad creatives — launching one routes to `/campaigns/new`. It sits under Ads by request; nothing ads-specific was added to it.
 - Group order is also the keyboard-shortcut order. It deliberately differs from Cadence's (Setup, Posts, Create): Create comes before Posts because the Queue is empty until something has been created (commit 70a67a9).
@@ -236,7 +236,8 @@ Cadence tabs, per **active client**:
 - **Export** (`export`): download everything stored for the client as JSON (`GET /workspace/export`; analytics `settings-export`)
 
 Workspace-wide tabs that predate the port:
-- **General**: org name, domain/settings, save
+- **General**: org name, domain/settings, save. The old "Logo upload not available yet" badge is gone; it points at Branding.
+- <!-- verified: 261031 --> **Branding** (`branding`, `components/settings/branding-tab.tsx`): what a client sees on a review link and a campaign pack cover — agency name (blank = workspace name), logo (uploads at once via `POST /integrations/white-label/logo`; PNG/JPEG/WebP ≤ 512 KB, client-side size check then the server's), accent colour (picker + hex), support email, and the **Show this branding to clients** switch (`is_active`). A live cover mock-up shows what the pack will carry. Read-only for seats without `workspace.manage`. The copy states the scope: two client-facing surfaces, no custom domain, nothing inside the app changes. `trackFeature`: `branding-logo-upload`, `branding-save`. E2E: `e2e/branding.spec.ts`.
 - **API Keys**: create/delete keys with prefix display
 - **Notifications**: "Not available yet" notice
 

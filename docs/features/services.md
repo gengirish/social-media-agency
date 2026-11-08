@@ -284,8 +284,9 @@ Guard for user-typed URLs. Two levels, and picking the wrong one is the mistake 
 **File**: `services/white_label.py`
 
 - `get_white_label(db, org_id)` — Get branding config
-- `upsert_white_label(db, org_id, data)` — Create or update
-- <!-- verified: 261031 --> `agency_branding(db, org)` — `{name, logo_url, primary_color, support_email}` an agency's client sees: the active white-label, else the org name. Re-validates `logo_url` (`url_safety.assert_safe_link`) and `primary_color` (six-digit hex) because both end up on a public page or a shared document.
+- `upsert_white_label(db, org_id, data)` — Create or update; re-checks `logo_url` as a safe link (422 `logo_url_unsafe`) and returns the serialized row
+- <!-- verified: 261031 --> `validate_logo(payload)` / `set_logo(db, org_id, payload, mime)` / `clear_logo(db, org_id)` — the uploaded logo. MIME from the bytes via Pillow (header only, no full decode); `LOGO_MAX_BYTES` 512 KB, `LOGO_MAX_EDGE` 2000 px, `LOGO_FORMATS` PNG/JPEG/WebP (no SVG: unreadable by Pillow and the one format that can carry script). `BrandingError` carries `{code, message}`.
+- <!-- verified: 261031 --> `agency_branding(db, org)` — `{name, logo_url, primary_color, support_email}` an agency's client sees: the active white-label, else the org name. `logo_url` is the uploaded logo as a `data:` URI when one exists, else the external `logo_url` re-validated with `url_safety.assert_safe_link`; `primary_color` is re-validated as a six-digit hex. Both end up on a public page or a shared document.
 
 ## Client Review
 **Status**: [LIVE] <!-- verified: 261031 -->

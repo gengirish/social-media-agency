@@ -4,6 +4,19 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 261031 — Settings › Branding: the agency's logo on the pack
+
+Closes the follow-up from the entry below ("no settings UI writes `white_label`"). The campaign pack and the client review page now carry the agency's name, logo and colour, set from a screen rather than by hand against the API.
+
+- **Added**: `white_label.logo_data` (BYTEA) + `logo_mime` — `db/migrations/261031_white_label_logo.sql`, **run on Neon before deploying**; without it every `white_label` read fails, review page and pack included. Bytes in the row, not a `media_storage` key: the pack is one self-contained HTML file, so the logo must travel inside it as a `data:` URI, and the public review page cannot fetch from the authenticated local media route. The same migration drops `primary_color`'s old indigo default — NULL now means the pack's own accent.
+- **Added**: `POST` / `DELETE /integrations/white-label/logo` (`workspace.manage`). PNG, JPEG or WebP by **bytes** (Pillow reads the header; the client's declared type and filename are ignored), ≤ 512 KB (413 `logo_too_large`), ≤ 2000 px (422 `logo_dimensions`), SVG refused (422 `logo_unsupported`). A first upload creates the row switched on. The upload wins over `logo_url`.
+- **Changed**: `PUT /integrations/white-label` is now gated on `workspace.manage` and validated (`WhiteLabelUpdate`: hex colour, email shape, blank clears, unsafe `logo_url` → 422 `logo_url_unsafe` instead of being stored and silently dropped at render). It returns the full branding.
+- **Added**: Settings › **Branding** tab (`components/settings/branding-tab.tsx`, nav tab hidden without `workspace.manage`): name, logo, accent colour, support email, the **Show this branding to clients** switch, and a live pack-cover preview. The Workspace tab's "Logo upload not available yet" badge is gone. `lib/api.ts::request` now sends a `FormData` body without the JSON content type; `lib/session.tsx` learned `workspace.manage`.
+- **Tests**: `test_white_label_logo.py` (20: upload / MIME-from-bytes / refusals / role gate / org scoping / pack inlines the logo / review page shows it / inactive hides it), `e2e/branding.spec.ts` (3).
+- **Not done**: custom domain and in-app theming — the screen says so. `custom_domain`, `email_from_name` and `portal_enabled` remain accepted by the PUT for API compatibility but have no UI and nothing reads them.
+
+---
+
 ## 261031 — Client review links, campaign pack, scheduler hand-off
 
 The agency wedge from [competitive-gtm-261030.md](../competitive-gtm-261030.md) §6, items ①–④a. Native GoHighLevel push (④b) is planned, not built: [ghl-handoff-plan-261031.md](../ghl-handoff-plan-261031.md).

@@ -281,7 +281,14 @@ CREATE TABLE IF NOT EXISTS white_label (
     org_id UUID NOT NULL UNIQUE REFERENCES organization(id) ON DELETE CASCADE,
     custom_domain VARCHAR(255),
     logo_url TEXT,
-    primary_color VARCHAR(7) DEFAULT '#4f46e5',
+    -- An uploaded logo (261031). Bytes in the row, not a media_storage key: the
+    -- campaign pack is a self-contained HTML file, so the logo is inlined as a
+    -- data: URI, and the public review page cannot fetch from the authenticated
+    -- local media route. Wins over logo_url when both are set.
+    logo_data BYTEA,
+    logo_mime VARCHAR(100),
+    -- No default (dropped 261031): NULL means the pack's own accent colour.
+    primary_color VARCHAR(7),
     company_name VARCHAR(255),
     support_email VARCHAR(255),
     -- Gated the old /api/v1/portal/{org_slug} routes, removed 261031. Unused now:
