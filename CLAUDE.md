@@ -27,9 +27,9 @@ Backend config lives in [backend/fly.toml](backend/fly.toml) — note `internal_
 
 ### Deploying
 
-CI is [.github/workflows/ci.yml](.github/workflows/ci.yml) (backend lint/type/test, frontend lint/build, E2E). There is **no deploy job**.
+CI is [.github/workflows/ci.yml](.github/workflows/ci.yml) (backend lint/type/test, frontend lint/build, E2E, then backend deploy).
 
-- **Backend:** `fly deploy` from `backend/`. `flyctl secrets set` also redeploys on its own.
+- **Backend:** the `deploy-backend` job runs `flyctl deploy --remote-only` on a push to `main` after every other job passes, only when `backend/` changed (a manual `workflow_dispatch` on main always deploys). It needs the repo secret `FLY_API_TOKEN` (`fly tokens create deploy -a campaignforge-api`) and runs in the `production` GitHub environment, where required reviewers can be added. It does **not** run `db/migrations/` — apply those on Neon before merging. Manual fallback: `fly deploy` from `backend/`. `flyctl secrets set` also redeploys on its own.
 - **Frontend:** Vercel project `campaignforge-ai` (Root Directory `frontend`), deployed by Git integration on push to `main`.
 
 The Vercel project's **Root Directory is `frontend`**, which makes CLI deploys counter-intuitive: running `vercel --prod` from inside `frontend/` fails with `frontendrontend does not exist`, because the setting is applied on top of your cwd. Deploy from the **repo root** instead, and pass `--archive=tgz` or the upload trips the 15,000-file cap on this repo:
