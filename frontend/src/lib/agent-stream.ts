@@ -17,7 +17,9 @@ export function connectAgentStream(
       const event: AgentStreamEvent = JSON.parse(e.data);
       onEvent(event);
 
-      if (event.type === "complete" || event.type === "error") {
+      // waiting_human is terminal too: the server parks the run at the review
+      // gate and ends this stream; a review decision resumes it on a new one.
+      if (event.type === "complete" || event.type === "error" || event.type === "waiting_human") {
         source.close();
       }
     } catch {

@@ -569,6 +569,22 @@ class BillingService:
         sub.generations_limit = plan["generations_limit"]
         sub.media_credits_limit = plan["media_credits_limit"]
 
+    async def _unlock_clients(self, db: AsyncSession, sub: Subscription) -> None:
+        """A plan that sells more than one client makes the workspace a business one.
+
+        The UI hides "Add client" for ``account_type='personal'``, and before this
+        only a team invite flipped it (``services/team.py``) — so an agency that
+        paid for Starter's 3 clients still could not add a second. The flip is
+        one-way, as for an invite: a later downgrade keeps the clients it has, and
+        ``clients_limit`` is what stops it adding more.
+        """
+        if sub.clients_limit <= 1 or sub.org_id is None:
+            return
+        org = await db.get(Organization, sub.org_id)
+        if org is not None and org.account_type != "business":
+            org.account_type = "business"
+            logger.info("account_type_business_on_plan", org_id=str(sub.org_id))
+
     def _apply_period(self, sub: Subscription, data: dict) -> None:
         start = _as_utc(data.get("previous_billing_date"))
         end = _as_utc(data.get("next_billing_date"))
@@ -613,6 +629,7 @@ class BillingService:
         if subscription_id:
             sub.billing_subscription_id = subscription_id
         self._apply_plan(sub, tier)
+        await self._unlock_clients(db, sub)
         self._apply_period(sub, data)
         sub.status = "active"
         logger.info("subscription_activated", org_id=str(sub.org_id), plan=tier)
@@ -665,6 +682,7 @@ class BillingService:
             return self._unknown_product(data, org_id, sub)
 
         self._apply_plan(sub, tier)
+        await self._unlock_clients(db, sub)
         self._apply_period(sub, data)
         sub.status = data.get("status") or sub.status
         logger.info(

@@ -40,7 +40,9 @@ from agency.models.tables import (
     AgentRun,
     Campaign,
     Client,
+    ContentComment,
     ContentPiece,
+    MediaAsset,
     Subscription,
     Workflow,
 )
@@ -51,6 +53,7 @@ from agency.services.ad_variants import normalize as normalize_ad
 from agency.services.ad_variants import render_body as render_ad_body
 from agency.services.billing import PLAN_CONFIG
 from agency.services.campaign_pack import PackError, build_pack, render_pack_html
+from agency.services.content_approval import PRE_REVIEW_MARKER
 from agency.services.tracing import merge_config, trace_config
 from agency.services.webhook_dispatcher import EVENT_CAMPAIGN_COMPLETED, dispatch_webhook
 from agency.utils.slug import slugify
@@ -568,11 +571,8 @@ async def _run_campaign_pipeline(
         async for event in graph.astream(initial_state, config=run_config, stream_mode="updates"):
             for node_name, node_output in event.items():
                 if node_name == "__interrupt__":
-                    await queue.put(AgentStreamEvent(
-                        type="waiting_human",
-                        agent="human_review",
-                        content="Content generated. Awaiting human review.",
-                    ).model_dump_json())
+                    # Reported once, after the loop, from the checkpoint itself
+                    # (_finish_run) — not every langgraph version yields this.
                     continue
 
                 current_idx = AGENT_ORDER.index(node_name) if node_name in AGENT_ORDER else 0
@@ -586,32 +586,10 @@ async def _run_campaign_pipeline(
                 ).model_dump_json())
 
                 # Track agent run in DB
-                if node_name != "__interrupt__":
-                    completed.add(node_name)
-                    await _record_agent_step(campaign_id, org_id, node_name, node_output)
+                completed.add(node_name)
+                await _record_agent_step(campaign_id, org_id, node_name, node_output)
 
-        await queue.put(AgentStreamEvent(
-            type="complete",
-            agent="pipeline",
-            content="Campaign pipeline completed successfully.",
-            progress=100,
-        ).model_dump_json())
-
-        # Persist content pieces to DB
-        await _persist_campaign_results(campaign_id, org_id, client_id, graph, config)
-
-        await pa.track_detached(
-            name=pa.CAMPAIGN_COMPLETED,
-            org_id=org_id,
-            campaign_id=campaign_id,
-            properties={"resumed": False},
-        )
-
-        await dispatch_webhook(
-            org_id,
-            EVENT_CAMPAIGN_COMPLETED,
-            {"campaign_id": str(campaign_id), "client_id": str(client_id), "resumed": False},
-        )
+        await _finish_run(queue, graph, config, campaign_id, org_id, client_id, resumed=False)
 
     except Exception as e:
         await queue.put(AgentStreamEvent(
@@ -630,10 +608,138 @@ async def _run_campaign_pipeline(
         _active_pipelines.discard(campaign_id)
 
 
+async def _paused_at_review(graph, config: dict) -> bool:
+    """True when the checkpoint is waiting on the human review gate.
+
+    The graph compiles with ``interrupt_before=["human_review"]``, so ``astream``
+    simply *returns* at the gate — finishing the loop does not mean the run is done.
+    ``graph=None`` resolves the runtime graph here, so an uninitialised runtime
+    reads as "not paused" rather than raising on a read path.
+    """
+    try:
+        if graph is None:
+            graph = get_runtime_compiled_graph()
+        snapshot = await graph.aget_state(config)
+    except Exception as e:  # noqa: BLE001 — an unreadable checkpoint is not a pause
+        logger.warning("campaign_state_unreadable", error=str(e))
+        return False
+    return bool(snapshot and "human_review" in (snapshot.next or ()))
+
+
+async def _finish_run(
+    queue: asyncio.Queue,
+    graph,
+    config: dict,
+    campaign_id: str,
+    org_id: str,
+    client_id: str,
+    *,
+    resumed: bool,
+) -> None:
+    """Close out one ``astream`` pass: either paused for review, or finished.
+
+    Content is saved before the terminal event so a client that reloads its
+    library on that event finds the drafts already there.
+    """
+    if await _paused_at_review(graph, config):
+        await _persist_campaign_results(
+            campaign_id, org_id, client_id, graph, config, paused=True
+        )
+        await queue.put(AgentStreamEvent(
+            type="waiting_human",
+            agent="human_review",
+            content="Content generated. Awaiting your review.",
+        ).model_dump_json())
+        return
+
+    await _persist_campaign_results(campaign_id, org_id, client_id, graph, config)
+    await queue.put(AgentStreamEvent(
+        type="complete",
+        agent="pipeline",
+        content=(
+            "Campaign completed after human review."
+            if resumed
+            else "Campaign pipeline completed successfully."
+        ),
+        progress=100,
+    ).model_dump_json())
+
+    await pa.track_detached(
+        name=pa.CAMPAIGN_COMPLETED,
+        org_id=org_id,
+        campaign_id=campaign_id,
+        properties={"resumed": resumed},
+    )
+    await dispatch_webhook(
+        org_id,
+        EVENT_CAMPAIGN_COMPLETED,
+        {"campaign_id": str(campaign_id), "client_id": str(client_id), "resumed": resumed},
+    )
+
+
+async def _replace_untouched_pre_review(
+    db, campaign_id: UUID, org_id: UUID
+) -> set[tuple[str, str]]:
+    """Delete this campaign's pre-review drafts that nobody has acted on.
+
+    Returns ``(platform, body)`` of every piece that stays, so the caller does not
+    insert a second copy of a piece the user kept (e.g. approved at the gate).
+
+    Untouched means: still carries the marker (no edit), still ``draft``/``failed``
+    (not approved, rejected, scheduled or published), no client-review decision,
+    and no comments or attached media hanging off it.
+    """
+    rows = (
+        await db.execute(
+            select(ContentPiece).where(
+                ContentPiece.campaign_id == campaign_id, ContentPiece.org_id == org_id
+            )
+        )
+    ).scalars().all()
+
+    candidates = [
+        p for p in rows
+        if (p.metadata_ or {}).get(PRE_REVIEW_MARKER)
+        and p.status in ("draft", "failed")
+        and not (p.metadata_ or {}).get("client_review")
+    ]
+    ids = [p.id for p in candidates]
+    referenced: set = set()
+    if ids:
+        for model in (ContentComment, MediaAsset):
+            referenced |= set(
+                (
+                    await db.execute(
+                        select(model.content_id).where(model.content_id.in_(ids))
+                    )
+                ).scalars().all()
+            )
+
+    kept: set[tuple[str, str]] = set()
+    for p in rows:
+        if p in candidates and p.id not in referenced:
+            await db.delete(p)
+        else:
+            kept.add((p.platform or "", p.body or ""))
+    return kept
+
+
 async def _persist_campaign_results(
-    campaign_id: str, org_id: str, client_id: str, graph, config: dict
+    campaign_id: str | UUID,
+    org_id: str | UUID,
+    client_id: str | UUID,
+    graph,
+    config: dict,
+    *,
+    paused: bool = False,
 ):
-    """Save agent outputs to the database after pipeline completes."""
+    """Save agent outputs to the database.
+
+    Called at the review gate (``paused=True``: drafts marked pre-review so the
+    reviewer can read them, campaign ``paused``) and again when the run finishes.
+    Each call first replaces the previous call's untouched pre-review drafts, so a
+    run that pauses, resumes and finishes leaves one set of drafts, not two.
+    """
     try:
         state = await graph.aget_state(config)
         if not state or not state.values:
@@ -641,10 +747,21 @@ async def _persist_campaign_results(
 
         values = state.values
         factory = get_session_factory()
+        # The pipeline carries ids as strings; the UUID columns want UUIDs.
+        campaign_id, org_id, client_id = (
+            UUID(str(campaign_id)), UUID(str(org_id)), UUID(str(client_id))
+        )
+
+        def _meta(base: dict) -> dict:
+            return {**base, PRE_REVIEW_MARKER: True} if paused else base
 
         async with factory() as db:
+            kept = await _replace_untouched_pre_review(db, campaign_id, org_id)
+
             # Save content pieces
             for piece in values.get("content_pieces", []):
+                if (piece.get("platform", ""), piece.get("body", "")) in kept:
+                    continue
                 cp = ContentPiece(
                     campaign_id=campaign_id,
                     client_id=client_id,
@@ -654,7 +771,7 @@ async def _persist_campaign_results(
                     title=piece.get("title", ""),
                     body=piece.get("body", ""),
                     hashtags=piece.get("hashtags", []),
-                    metadata_=piece.get("metadata", {}),
+                    metadata_=_meta(piece.get("metadata", {}) or {}),
                     ai_generated=True,
                     status="draft",
                 )
@@ -681,6 +798,9 @@ async def _persist_campaign_results(
                         "status": "incomplete",
                         "missing": ad["missing"],
                     }
+                body = render_ad_body(ad)
+                if (ad["platform"], body) in kept:
+                    continue
                 cp = ContentPiece(
                     campaign_id=campaign_id,
                     client_id=client_id,
@@ -688,8 +808,8 @@ async def _persist_campaign_results(
                     content_type=f"{ad['platform']}_ad",
                     platform=ad["platform"],
                     title=f"Ad Variant {ad['variant']} - {ad['angle']}",
-                    body=render_ad_body(ad),
-                    metadata_=metadata,
+                    body=body,
+                    metadata_=_meta(metadata),
                     ai_generated=True,
                     status="failed" if ad["is_empty"] else "draft",
                 )
@@ -701,7 +821,9 @@ async def _persist_campaign_results(
             )
             campaign = result.scalar_one_or_none()
             if campaign:
-                campaign.status = "completed"
+                # "paused" at the gate: the run is not finished, and reporting it
+                # as completed is what hid the review step on every reload.
+                campaign.status = "paused" if paused else "completed"
                 campaign.agent_plan = values.get("execution_plan", {})
 
             # Update workflow
@@ -710,8 +832,14 @@ async def _persist_campaign_results(
             )
             workflow = result.scalar_one_or_none()
             if workflow:
-                workflow.status = "completed"
-                workflow.completed_at = datetime.now(UTC)
+                workflow.status = "paused" if paused else "completed"
+                if not paused:
+                    workflow.completed_at = datetime.now(UTC)
+
+            if paused:
+                # Brand learnings are recorded once, from the final output.
+                await db.commit()
+                return
 
             try:
                 from agency.services.brand_learning import update_brand_learnings
@@ -736,7 +864,7 @@ async def _persist_campaign_results(
                         for kw in values.get("seo_keywords", [])[:5]
                     ]
                 await update_brand_learnings(
-                    db, UUID(client_id), content_summary
+                    db, client_id, content_summary
                 )
             except Exception as e:  # noqa: BLE001 — brand learning is non-critical
                 logger.warning("brand_learning_update_failed", error=str(e))
@@ -789,20 +917,21 @@ async def get_campaign_progress(
     progress = int((max(completed) + 1) / len(AGENT_ORDER) * 100) if completed else 0
 
     is_active = str(campaign_id) in _active_pipelines
-    if campaign.status == "completed":
-        progress = 100
-    elif (
-        campaign.status == "running"
-        and "human_review" not in agent_statuses
-        and "create_content" in agent_statuses
-        and "write_ads" in agent_statuses
-    ):
-        # Paused at the review gate: the graph interrupts *before* human_review, so
-        # that node never runs and never writes a row of its own.
+    # Paused at the review gate: the graph interrupts *before* human_review, so that
+    # node never writes a row of its own. Campaigns paused before the "paused"
+    # status existed were saved as "completed"; the checkpoint still knows.
+    awaiting_review = campaign.status == "paused" or (
+        campaign.status == "completed"
+        and not is_active
+        and await _paused_at_review(None, {"configurable": {"thread_id": str(campaign_id)}})
+    )
+    if awaiting_review:
         agent_statuses["human_review"] = "waiting"
+    elif campaign.status == "completed":
+        progress = 100
 
     return CampaignProgressResponse(
-        campaign_status=campaign.status,
+        campaign_status="paused" if awaiting_review else campaign.status,
         progress=progress,
         agent_statuses=agent_statuses,
         is_active=is_active,
@@ -890,7 +1019,9 @@ async def stream_campaign(
                 yield event_data
 
                 parsed = json.loads(event_data)
-                if parsed.get("type") in ("complete", "error"):
+                # waiting_human ends the stream too: the run is parked until a
+                # review decision, which resumes it on a new queue and stream.
+                if parsed.get("type") in ("complete", "error", "waiting_human"):
                     _campaign_streams.pop(campaign_id, None)
                     break
             except TimeoutError:
@@ -1102,6 +1233,19 @@ async def submit_human_review(
 
     graph = get_runtime_compiled_graph()
     config = {"configurable": {"thread_id": str(campaign_id)}}
+    campaign_id_str = str(campaign_id)
+
+    # The checkpoint, not campaign.status, decides: campaigns paused before the
+    # "paused" status existed were recorded as "completed". This also turns a
+    # double-click into a 409 instead of a second resume of the same run.
+    if campaign_id_str in _active_pipelines or not await _paused_at_review(graph, config):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "not_awaiting_review",
+                "message": "This campaign is not waiting for a review decision.",
+            },
+        )
 
     await graph.aupdate_state(
         config,
@@ -1120,12 +1264,19 @@ async def submit_human_review(
         campaign_id=campaign_id,
         properties={"decision": decision.get("decision", "approved")},
     )
+    campaign.status = "running"
+    workflow = (
+        await db.execute(select(Workflow).where(Workflow.campaign_id == campaign_id))
+    ).scalar_one_or_none()
+    if workflow:
+        workflow.status = "running"
     await db.commit()
 
-    # Resume the pipeline
-    campaign_id_str = str(campaign_id)
-    if campaign_id_str not in _campaign_streams:
-        _campaign_streams[campaign_id_str] = asyncio.Queue()
+    # Resume the pipeline on a fresh queue: one left over from the first pass (if
+    # nobody was connected when it paused) still holds that pass's events, and
+    # would replay them — ending with its "waiting_human" — to the new stream.
+    _campaign_streams[campaign_id_str] = asyncio.Queue()
+    _active_pipelines.add(campaign_id_str)
 
     asyncio.create_task(
         _resume_pipeline(
@@ -1162,11 +1313,7 @@ async def _resume_pipeline(
         async for event in graph.astream(None, config=run_config, stream_mode="updates"):
             for node_name, node_output in event.items():
                 if node_name == "__interrupt__":
-                    await queue.put(AgentStreamEvent(
-                        type="waiting_human",
-                        agent="human_review",
-                        content="Awaiting human review.",
-                    ).model_dump_json())
+                    # A revision loops back through the gate; _finish_run reports it.
                     continue
 
                 current_idx = AGENT_ORDER.index(node_name) if node_name in AGENT_ORDER else 0
@@ -1182,27 +1329,7 @@ async def _resume_pipeline(
                 completed.add(node_name)
                 await _record_agent_step(campaign_id, org_id, node_name, node_output)
 
-        await queue.put(AgentStreamEvent(
-            type="complete",
-            agent="pipeline",
-            content="Campaign completed after human review.",
-            progress=100,
-        ).model_dump_json())
-
-        await _persist_campaign_results(campaign_id, org_id, client_id, graph, config)
-
-        await pa.track_detached(
-            name=pa.CAMPAIGN_COMPLETED,
-            org_id=org_id,
-            campaign_id=campaign_id,
-            properties={"resumed": True},
-        )
-
-        await dispatch_webhook(
-            org_id,
-            EVENT_CAMPAIGN_COMPLETED,
-            {"campaign_id": str(campaign_id), "client_id": str(client_id), "resumed": True},
-        )
+        await _finish_run(queue, graph, config, campaign_id, org_id, client_id, resumed=True)
 
     except Exception as e:
         await queue.put(AgentStreamEvent(

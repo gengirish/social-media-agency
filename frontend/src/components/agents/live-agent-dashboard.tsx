@@ -76,6 +76,9 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
   const [events, setEvents] = useState<AgentStreamEvent[]>([]);
   const [isComplete, setIsComplete] = useState(false);
   const [reviewSubmitting, setReviewSubmitting] = useState<ReviewDecision | null>(null);
+  // Bumped after a review decision: the stream ended at the gate, and the resumed
+  // run reports on a new one.
+  const [streamKey, setStreamKey] = useState(0);
   const disconnectRef = useRef<(() => void) | null>(null);
 
   /**
@@ -95,8 +98,10 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
         ...prev,
         human_review: decision === "approved" ? "complete" : "running",
       }));
+      setIsComplete(false);
+      setStreamKey((k) => k + 1);
       toast.success(
-        decision === "approved" ? "Approved — resuming pipeline" : "Revisions requested"
+        decision === "approved" ? "Approved — running the QA check" : "Revisions requested"
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not submit review";
@@ -129,6 +134,7 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
       setAgentStatuses((prev) => mergeStatuses(prev, p.agent_statuses));
       setProgress((prev) => Math.max(prev, p.progress));
       if (p.campaign_status === "completed") setIsComplete(true);
+      if (p.campaign_status === "paused") onWaitingHumanRef.current?.();
     } catch {
       // A failed sync must leave whatever the stream has already shown intact.
     }
@@ -222,7 +228,7 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
       disconnectRef.current?.();
       disconnectRef.current = null;
     };
-  }, [campaignId, getToken]);
+  }, [campaignId, getToken, streamKey]);
 
 
   function getStatusIcon(agentId: string) {
@@ -342,11 +348,13 @@ export function LiveAgentDashboard({ campaignId, onComplete, onWaitingHuman }: L
             <h3 className="font-display font-semibold text-amber-900">Review Required</h3>
           </div>
           <p className="mb-4 text-sm text-amber-800">
-            Content has been generated. Review the content tab and approve or request revisions.
+            The drafts are in the Content tab. Continue to run the QA / brand check on them,
+            or ask for revisions. Each post still needs its own approval before it can be
+            scheduled.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => submitDecision("approved")} disabled={reviewSubmitting !== null}>
-              {reviewSubmitting === "approved" ? "Approving…" : "Approve & Continue"}
+              {reviewSubmitting === "approved" ? "Continuing…" : "Continue to QA check"}
             </Button>
             <Button
               variant="secondary"

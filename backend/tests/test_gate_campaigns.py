@@ -72,7 +72,8 @@ class _FakeGraph:
         self.updates: list[dict[str, Any]] = []
 
     async def aget_state(self, _config: dict) -> Any:
-        return SimpleNamespace(values={})
+        # Parked at the review gate, so PATCH /review has something to resume.
+        return SimpleNamespace(values={}, next=("human_review",))
 
     async def aupdate_state(self, _config: dict, values: dict, **_kw: Any) -> None:
         self.updates.append(values)
