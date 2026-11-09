@@ -38,6 +38,11 @@ from agency.services.publishing import UNAVAILABLE_PUBLISH_PLATFORMS
 
 logger = structlog.get_logger()
 
+#: ``metadata`` key on a campaign draft saved while its run waited at the human
+#: review gate. The run's next save replaces any such draft nobody has touched;
+#: an edit (``apply_edit``) drops the key, which makes the piece the user's own.
+PRE_REVIEW_MARKER = "pipeline_pre_review"
+
 APPROVABLE_STATUSES: Final = frozenset({"draft", "rejected"})
 PUBLISHABLE_STATUSES: Final = frozenset({"approved", "scheduled"})
 #: Statuses only the dedicated endpoints may set.
@@ -480,12 +485,21 @@ def apply_content_edit(
         hashtags is not None and list(hashtags) != list(piece.hashtags or [])
     )
 
+    touched = content_changed or (title is not None and title != piece.title)
+
     if title is not None:
         piece.title = title
     if body is not None:
         piece.body = body
     if hashtags is not None:
         piece.hashtags = hashtags
+
+    if touched and (piece.metadata_ or {}).get(PRE_REVIEW_MARKER):
+        # The user has worked on this draft, so the campaign run's next save must
+        # keep it rather than replace it (routers/campaigns.py).
+        meta = dict(piece.metadata_ or {})
+        meta.pop(PRE_REVIEW_MARKER, None)
+        piece.metadata_ = meta
 
     if content_changed and piece.status in APPROVABLE_STATUSES:
         # Insights' quality signal: an edit while still pending means the draft

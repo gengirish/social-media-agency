@@ -312,16 +312,18 @@ export function ConnectedAccounts({ showContinue = true }: { showContinue?: bool
               Continue to posts <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           ) : (
-            <Button disabled>
-              Continue to posts <ArrowRight className="h-3.5 w-3.5" />
-            </Button>
+            // Drafting needs no channel — only scheduling and posting do — so a
+            // workspace with none is not stuck here.
+            <Link href="/campaigns/new" className={buttonVariants({ variant: "secondary" })}>
+              Draft posts first <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           )}
           <span className="text-[11.5px] text-muted">
             {hasAnyChannel
               ? "Nice — you're ready to post"
               : mayConnect
-                ? "Add a page you manage yourself to continue"
-                : "No pages yet — an owner or admin adds them"}
+                ? "You can add a page later — you'll need one to schedule or post"
+                : "No pages yet — an owner or admin adds them before anything is posted"}
           </span>
         </div>
       )}

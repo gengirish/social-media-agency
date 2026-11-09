@@ -84,8 +84,13 @@ async def test_progress_ignores_the_previous_run(client, session_factory):
 
 
 async def test_progress_surfaces_the_review_pause(client, session_factory):
-    """The graph interrupts *before* human_review, so that node never writes a row."""
-    org, campaign_id = await _setup(session_factory)
+    """The graph interrupts *before* human_review, so that node never writes a row.
+
+    The run marks the campaign ``paused`` at the gate; that status, not the shape
+    of the ``agent_run`` rows, is what reports the pause — a resumed run is
+    ``running`` with the same rows and must not show the gate again.
+    """
+    org, campaign_id = await _setup(session_factory, status="paused")
     await _add_runs(
         session_factory,
         org,
@@ -97,6 +102,22 @@ async def test_progress_surfaces_the_review_pause(client, session_factory):
         f"{API}/campaigns/{campaign_id}/progress", headers=await auth_for(session_factory, org)
     )
     assert resp.json()["agent_statuses"]["human_review"] == "waiting"
+    assert resp.json()["campaign_status"] == "paused"
+
+
+async def test_progress_does_not_show_the_gate_while_resumed_run_runs(client, session_factory):
+    org, campaign_id = await _setup(session_factory, status="running")
+    await _add_runs(
+        session_factory,
+        org,
+        campaign_id,
+        ["orchestrate", "strategise", "seo_research", "create_content", "write_ads"],
+    )
+
+    resp = await client.get(
+        f"{API}/campaigns/{campaign_id}/progress", headers=await auth_for(session_factory, org)
+    )
+    assert resp.json()["agent_statuses"].get("human_review") != "waiting"
 
 
 async def test_progress_marks_failed_runs(client, session_factory):

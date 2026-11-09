@@ -44,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         */}
         <ClerkProvider
           signInFallbackRedirectUrl="/clients"
-          signUpFallbackRedirectUrl="/clients"
+          signUpFallbackRedirectUrl="/welcome"
           appearance={{ variables: { colorPrimary: "#F2C14E", colorTextOnPrimaryBackground: "#1A1406" } }}
         >
           <ClerkTokenSync />

@@ -145,7 +145,8 @@ async def _resolve_clerk_user(clerk_payload: dict, settings) -> dict:
                 org_name = f"{full_name}'s Org"
                 # New org: its first user owns it, and it starts personal.
                 # ``account_type`` flips one-way to 'business' on the first team
-                # invite or growth-tier purchase. Kept identical to
+                # invite or a plan with more than one client
+                # (``services/billing.py::_unlock_clients``). Kept identical to
                 # ``routers/auth.py::signup`` — if the two provisioning paths
                 # disagree, the two auth modes disagree about who owns an org.
                 org = Organization(

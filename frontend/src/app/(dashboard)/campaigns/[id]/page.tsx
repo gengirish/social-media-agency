@@ -50,6 +50,13 @@ export default function CampaignDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
+  // The status badge is read once on load; a run that pauses for review or
+  // finishes while the page is open must not leave it saying "running".
+  const refreshCampaign = useCallback(() => {
+    if (!id) return;
+    api.getCampaign(id).then(setCampaign).catch(() => {});
+  }, [id]);
+
   const loadContent = useCallback(() => {
     if (!id) return;
     api.getCampaignContent(id)
@@ -122,8 +129,15 @@ export default function CampaignDetailPage() {
 
   function handlePipelineComplete() {
     loadContent();
+    refreshCampaign();
     toast.success("Campaign pipeline completed!");
   }
+
+  // Drafts are saved when the run pauses, so the reviewer can read them now.
+  const handleWaitingHuman = useCallback(() => {
+    loadContent();
+    refreshCampaign();
+  }, [loadContent, refreshCampaign]);
 
   if (loading) {
     return <LoadingState label="Loading campaign" />;
@@ -236,6 +250,7 @@ export default function CampaignDetailPage() {
           key={runKey}
           campaignId={id}
           onComplete={handlePipelineComplete}
+          onWaitingHuman={handleWaitingHuman}
         />
       </div>
 
