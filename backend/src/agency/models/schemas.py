@@ -1,10 +1,10 @@
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
-from typing import Final
+from typing import Final, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 # --- Enums ---
 
@@ -219,6 +219,75 @@ class CampaignBrief(BaseModel):
         # These three are the fields that reach a prompt as the campaign's intent,
         # so a label here becomes the brief the agents actually work from.
         return reject_field_label(value, info.field_name or "This field")
+
+
+#: Longest window a suggestion request may span. A quarter (92 days) is the
+#: longest single campaign the brief form is used for; longer is a plan, not a
+#: campaign.
+SUGGESTION_MAX_WINDOW_DAYS: Final[int] = 92
+#: ``end_date`` default when only ``start_date`` is given: a 30-day window.
+SUGGESTION_DEFAULT_SPAN_DAYS: Final[int] = 29
+
+SuggestionAngle = Literal["launch_offer", "thought_leadership", "community", "timely"]
+
+
+class CampaignSuggestionRequest(BaseModel):
+    """``POST /campaigns/suggestions`` — propose briefs for the New Campaign form.
+
+    Dates default from the *server's* UTC date, never the model's idea of today.
+    The window is resolved here so the route and the service see one answer.
+    """
+
+    client_id: UUID
+    start_date: date | None = None
+    end_date: date | None = None
+    hint: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _resolve_window(self) -> "CampaignSuggestionRequest":
+        today = datetime.now(UTC).date()
+        start = self.start_date or today
+        end = self.end_date or (start + timedelta(days=SUGGESTION_DEFAULT_SPAN_DAYS))
+        # One day of grace: the form sends the user's *local* date, and west of UTC
+        # that is still "yesterday" for the server in the evening.
+        if start < today - timedelta(days=1):
+            raise ValueError("start_date cannot be in the past")
+        if end < start:
+            raise ValueError("end_date must be on or after start_date")
+        if (end - start).days + 1 > SUGGESTION_MAX_WINDOW_DAYS:
+            raise ValueError(
+                f"The window can be at most {SUGGESTION_MAX_WINDOW_DAYS} days long"
+            )
+        self.start_date, self.end_date = start, end
+        if self.hint is not None:
+            self.hint = self.hint.strip() or None
+        return self
+
+
+class SuggestionWindow(BaseModel):
+    start_date: date
+    end_date: date
+
+
+class CampaignSuggestion(BaseModel):
+    """One ready-to-use brief. Field names match ``CampaignBrief`` so the form can fill."""
+
+    angle: SuggestionAngle
+    campaign_name: str = Field(..., min_length=3, max_length=80)
+    objective: str = Field(..., min_length=10, max_length=500)
+    target_audience: str
+    key_messages: list[str] = Field(..., min_length=1, max_length=5)
+    channels: list[str] = Field(..., min_length=1)
+    start_date: date
+    end_date: date
+    additional_context: str
+    rationale: str = Field(..., max_length=400)
+
+
+class CampaignSuggestionsResponse(BaseModel):
+    client_id: UUID
+    window: SuggestionWindow
+    suggestions: list[CampaignSuggestion] = Field(..., min_length=2, max_length=3)
 
 
 class CampaignResponse(BaseModel):

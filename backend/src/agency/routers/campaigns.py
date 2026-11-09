@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi import Query as QueryParam
 from fastapi.responses import HTMLResponse
 from jose import JWTError
@@ -33,6 +33,8 @@ from agency.models.schemas import (
     CampaignListResponse,
     CampaignProgressResponse,
     CampaignResponse,
+    CampaignSuggestionRequest,
+    CampaignSuggestionsResponse,
 )
 from agency.models.tables import (
     AgentRun,
@@ -43,6 +45,7 @@ from agency.models.tables import (
     Workflow,
 )
 from agency.permissions import Capability, require_cap
+from agency.services import campaign_suggestions
 from agency.services import product_analytics as pa
 from agency.services.ad_variants import normalize as normalize_ad
 from agency.services.ad_variants import render_body as render_ad_body
@@ -223,6 +226,30 @@ Languages: {', '.join(brief.languages) if brief.languages else 'Default (brief l
     )
 
     return campaign
+
+
+@router.post(
+    "/suggestions",
+    response_model=CampaignSuggestionsResponse,
+    # Same gate as creating a campaign: this is the first step of New Campaign,
+    # and it spends a generation from the org's allowance.
+    dependencies=[Depends(require_cap(Capability.CAMPAIGN_RUN))],
+)
+async def suggest_campaigns(
+    body: CampaignSuggestionRequest,
+    request: Request,
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+    org_id: UUID = Depends(get_org_id),
+):
+    """2–3 ready-to-use briefs for the New Campaign form. Saves nothing.
+
+    Charges one generation only when at least two usable suggestions came back.
+    The user still edits the chosen brief and presses Launch (``POST /campaigns``).
+    """
+    return await campaign_suggestions.suggest_campaigns(
+        db, org_id=org_id, body=body, cancelled=request.is_disconnected
+    )
 
 
 def _build_brand_context(client: Client) -> BrandContext:

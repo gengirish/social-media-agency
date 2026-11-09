@@ -268,6 +268,22 @@ export const api = {
     request<Campaign>("/api/v1/campaigns", { method: "POST", body: JSON.stringify(data) }),
   rerunCampaign: (id: string) =>
     request<Campaign>(`/api/v1/campaigns/${id}/rerun`, { method: "POST" }),
+  /**
+   * Ask for 2–3 different campaign ideas for a client. Spends one generation per
+   * successful set and creates nothing — the wizard only copies a pick into the
+   * form, and the user still launches it themselves.
+   *
+   * Errors: `404` unknown client, `409 brand_profile_required`, `402`
+   * generation quota used up, `422` bad dates, `502` unusable model output (no
+   * quota used). `signal` only stops the browser waiting; a request the server
+   * finishes is still charged.
+   */
+  suggestCampaigns: (data: CampaignSuggestionsRequest, signal?: AbortSignal) =>
+    request<CampaignSuggestionsResponse>("/api/v1/campaigns/suggestions", {
+      method: "POST",
+      body: JSON.stringify(data),
+      signal,
+    }),
 
   getCampaignProgress: (id: string) =>
     request<CampaignProgress>(`/api/v1/campaigns/${id}/progress`),
@@ -976,6 +992,38 @@ export interface CampaignBriefRequest {
   end_date: string;
   additional_context?: string;
   languages?: string[];
+}
+
+/** `POST /campaigns/suggestions`. Dates are YYYY-MM-DD; omit them to let the server default (today, +29 days). */
+export interface CampaignSuggestionsRequest {
+  client_id: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  /** What's on the user's mind, at most 500 characters. */
+  hint?: string | null;
+}
+
+export type CampaignSuggestionAngle = "launch_offer" | "thought_leadership" | "community" | "timely";
+
+export interface CampaignSuggestion {
+  angle: CampaignSuggestionAngle;
+  campaign_name: string;
+  objective: string;
+  target_audience: string;
+  key_messages: string[];
+  /** Organic channels only: linkedin, twitter, instagram, facebook, tiktok. */
+  channels: string[];
+  start_date: string;
+  end_date: string;
+  additional_context: string;
+  rationale: string;
+}
+
+export interface CampaignSuggestionsResponse {
+  client_id: string;
+  window: { start_date: string; end_date: string };
+  /** 2 or 3 items. */
+  suggestions: CampaignSuggestion[];
 }
 
 export type ReviewDecision = "approved" | "revise_content" | "revise_ads";

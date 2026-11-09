@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api, type Client } from "@/lib/api";
+import { api, type CampaignSuggestion, type Client } from "@/lib/api";
 import { useActiveClient } from "@/lib/active-client";
 import { trackFeature } from "@/lib/analytics";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/panel";
 import { SectionCard } from "@/components/ui/section-card";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { CampaignSuggestions } from "@/components/campaigns/campaign-suggestions";
 
 const STEP_LABELS = ["Brief", "Channels", "Launch"] as const;
 
@@ -124,6 +125,7 @@ function NewCampaignForm() {
   // dependency of it, or ticking a channel would re-run the prefill.
   const channelsTouched = useRef(false);
   const [templateName, setTemplateName] = useState<string | null>(null);
+  const [suggestionName, setSuggestionName] = useState<string | null>(null);
   const [targetAudience, setTargetAudience] = useState("");
   const [keyMessages, setKeyMessages] = useState("");
   /*
@@ -191,6 +193,55 @@ function NewCampaignForm() {
       cancelled = true;
     };
   }, [templateId]);
+
+  /*
+   * "Use this" on a campaign suggestion: copy it into the brief.
+   *
+   * Same fields the CF-14 template prefill touches plus audience, dates and
+   * additional context — never the budget or the paid-ad ticks, which are a
+   * spend decision the model has no business making. Organic channels are
+   * replaced; any ad network the user already ticked is kept. The suggestion
+   * component has already asked before overwriting typed values, so this
+   * replaces rather than filling only the blanks. Blank suggestion fields leave
+   * what is there. Nothing is created — the user still goes through the steps
+   * and presses Launch.
+   */
+  function applySuggestion(s: CampaignSuggestion) {
+    if (s.campaign_name) setCampaignName(s.campaign_name);
+    if (s.objective) setObjective(s.objective);
+    if (s.target_audience) setTargetAudience(s.target_audience);
+    const messages = Array.isArray(s.key_messages) ? s.key_messages.filter((m) => typeof m === "string" && m.trim()) : [];
+    if (messages.length) setKeyMessages(messages.join("\n"));
+    const organic = (Array.isArray(s.channels) ? s.channels : []).filter((c) =>
+      CHANNEL_OPTIONS.some((o) => o.id === c)
+    );
+    if (organic.length) {
+      channelsTouched.current = true;
+      setChannels((prev) => [
+        ...organic,
+        ...prev.filter((c) => AD_CHANNEL_OPTIONS.some((o) => o.id === c)),
+      ]);
+    }
+    if (s.start_date) setStartDate(s.start_date);
+    if (s.end_date) setEndDate(s.end_date);
+    if (s.additional_context) setAdditionalContext(s.additional_context);
+    setTemplateName(null);
+    setSuggestionName(s.campaign_name || "a suggestion");
+    toast.success("Brief filled in — review it, then carry on through the steps.");
+  }
+
+  // Values a suggestion would overwrite. The untouched default channel pair is
+  // not the user's choice, so it does not count.
+  const briefHasEdits = Boolean(
+    campaignName.trim() ||
+      objective.trim() ||
+      targetAudience.trim() ||
+      keyMessages.trim() ||
+      additionalContext.trim() ||
+      startDate ||
+      endDate ||
+      channelsTouched.current
+  );
 
   function toggleChannel(ch: string) {
     channelsTouched.current = true;
@@ -365,6 +416,22 @@ function NewCampaignForm() {
               ))}
             </Select>
           </Field>
+          <CampaignSuggestions
+            clientId={clientId}
+            startDate={startDate}
+            endDate={endDate}
+            hasEdits={briefHasEdits}
+            onUse={applySuggestion}
+          />
+          {suggestionName && (
+            <p
+              className="rounded-lg border border-line bg-canvas/40 px-3 py-2 text-xs text-muted"
+              data-testid="suggestion-note"
+            >
+              Filled from suggestion: <span className="font-medium text-ink">{suggestionName}</span>. Everything
+              below — and the channels and dates on the next step — is yours to edit before you launch.
+            </p>
+          )}
           <Field label="Campaign Name *" htmlFor="campaign-name" error={errors.campaignName}>
             <Input
               id="campaign-name"
