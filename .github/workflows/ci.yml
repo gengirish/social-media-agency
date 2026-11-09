@@ -195,3 +195,74 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report/
           retention-days: 14
+
+  deploy-backend:
+    name: Deploy Backend (Fly)
+    # Only a push to main ships, and only after every check above passed —
+    # E2E included, so a backend change that breaks the browser flow stays out.
+    # PRs and develop never reach this job.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [backend, frontend, e2e]
+    runs-on: ubuntu-latest
+    # A GitHub environment so required reviewers or a wait timer can be added in
+    # Settings › Environments › production without editing this file.
+    environment:
+      name: production
+      url: https://campaignforge-api.fly.dev/api/v1/health
+    # Two merges in quick succession must deploy in order, never in parallel and
+    # never cancel a half-finished rollout.
+    concurrency:
+      group: fly-deploy-campaignforge-api
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A frontend- or docs-only merge has nothing to ship to Fly; redeploying
+      # anyway restarts the warm machine and can kill an in-flight campaign task
+      # (see fly.toml). A manual dispatch always deploys.
+      - name: Detect backend changes
+        id: changes
+        env:
+          BEFORE: ${{ github.event.before }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ] \
+             || [ -z "$BEFORE" ] \
+             || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --quiet "$BEFORE" "$GITHUB_SHA" -- backend/; then
+            echo "No backend changes in $BEFORE..$GITHUB_SHA — skipping deploy."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --stat "$BEFORE" "$GITHUB_SHA" -- backend/
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: steps.changes.outputs.deploy == 'true'
+
+      # Schema changes are NOT applied here: db/migrations/ scripts are run by hand
+      # on Neon, before the merge whose code needs them. Merging first would deploy
+      # code that SELECTs a column prod does not have yet.
+      - name: fly deploy
+        if: steps.changes.outputs.deploy == 'true'
+        working-directory: backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only -a campaignforge-api
+
+      # One-shot smoke test against the dependency-free liveness route — it does
+      # not touch Neon, so it cannot wake the database.
+      - name: Smoke test
+        if: steps.changes.outputs.deploy == 'true'
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS https://campaignforge-api.fly.dev/api/v1/health; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::campaignforge-api did not answer /api/v1/health after deploy"
+          exit 1
