@@ -54,6 +54,7 @@ Tenancy: every handler resolves `client_id` against the caller's `org_id` first 
 | Method | Path | Auth | Handler | Purpose |
 |--------|------|------|---------|---------|
 | POST | `/campaigns` | Yes | `create_campaign` | Create campaign + workflow, start LangGraph pipeline |
+| POST | `/campaigns/suggestions` | Yes (`campaign.run`) | `suggest_campaigns` | 2–3 LLM-proposed briefs for New Campaign, one per code-assigned angle. Saves nothing; 1 generation on success. 404 / 409 `brand_profile_required` / 402 / 422 / 502 (no charge) |
 | GET | `/campaigns` | Yes | `list_campaigns` | Paginated campaigns; optional `client_id` filter |
 | GET | `/campaigns/trends` | Yes | `get_trends` | Trending topics per platform |
 | POST | `/campaigns/autonomous` | Yes | `create_autonomous_campaign` | Create autonomous weekly-cycle campaign |

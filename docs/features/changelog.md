@@ -4,6 +4,19 @@ Chronological record of feature changes. Newest first.
 
 ---
 
+## 261109 — Suggest campaigns on New Campaign
+
+Instead of filling the brief by hand, pick a client and ask for suggestions; **Use this** fills the form, and the user still edits and launches.
+
+- **Added**: `POST /api/v1/campaigns/suggestions` (`services/campaign_suggestions.py`, `campaign.run`). Grounded in the brand profile + campaign focus, the client's last 10 campaigns (org- and client-scoped), the server's UTC date and an optional hint. `worker` tier, traced as `campaign-suggestions`. Saves nothing.
+- **Angles assigned in code** (`plan_angles`): 3 of `launch_offer` / `thought_leadership` / `community` / `timely`, dropping the one the most recent campaign resembles (default `timely`, since there is no live event data). The model fills one per angle.
+- **Validated in code**: organic channels only (no ad networks, no budget), dates clamped into the window, form labels rejected, past-name repeats dropped, and any objective / rationale / context / key message that **forecasts a result** dropped (rule 4). Fewer than 2 survivors → `502`, no charge; otherwise 1 generation.
+- **Frontend**: `components/campaigns/campaign-suggestions.tsx` on step 1 of `/campaigns/new`; inline Keep mine / Replace before overwriting typed fields; `trackFeature("campaign-suggestions")` and `("campaign-suggestion-used", {angle})`.
+- **Tests**: `test_campaign_suggestions.py` (49), two cases in `test_tenancy_routers.py` (verified to fail with the org filter removed), `e2e/campaign-suggestions.spec.ts` (Clerk-gated).
+- **Known limits**: the forecast check is keyword-based — see the module docstring for its false positives/negatives.
+
+---
+
 ## 261031 — Settings › Branding: the agency's logo on the pack
 
 Closes the follow-up from the entry below ("no settings UI writes `white_label`"). The campaign pack and the client review page now carry the agency's name, logo and colour, set from a screen rather than by hand against the API.

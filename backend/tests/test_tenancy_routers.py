@@ -796,3 +796,93 @@ async def test_post_url_succeeds_inside_own_org(client, orgs, session_factory, m
         assert own is not None
         assert (own.metadata_ or {})["post_url"] == link
         assert own.status == "published"
+
+
+# ---------------------------------------------------------------------------
+# campaign suggestions — the client id comes from the request body, and the
+# model would be prompted with another tenant's brand if it were trusted.
+# ---------------------------------------------------------------------------
+def _suggestions_stub(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    def brief(angle, name):
+        return {
+            "angle": angle,
+            "campaign_name": name,
+            "objective": "Grow demo bookings among operations leads.",
+            "target_audience": "Operations leads",
+            "key_messages": ["Setup takes an afternoon"],
+            "channels": ["linkedin"],
+            "start_date": None,
+            "end_date": None,
+            "additional_context": "",
+            "rationale": "Setup speed is the brand's differentiator.",
+        }
+
+    class _Stub:
+        calls = 0
+
+        async def ainvoke(self, *_a, **_k):
+            type(self).calls += 1
+            return SimpleNamespace(
+                content=json.dumps(
+                    {"suggestions": [brief("launch_offer", "One Campaign"),
+                                     brief("community", "Two Campaign")]}
+                )
+            )
+
+    monkeypatch.setattr(
+        "agency.services.campaign_suggestions.get_worker_llm", lambda *_a, **_k: _Stub()
+    )
+    return _Stub
+
+
+async def _profile_both(session_factory, orgs):
+    """Both clients get a profile, so dropping the org filter lets the request through."""
+    from tests.test_campaign_suggestions import _brand_profile
+
+    await _brand_profile(session_factory, orgs["org_a"], orgs["client_a"])
+    await _brand_profile(session_factory, orgs["org_b"], orgs["client_b"])
+
+
+async def _generations(session_factory, org_id):
+    from agency.models.tables import Subscription
+
+    async with session_factory() as session:
+        sub = (
+            await session.execute(select(Subscription).where(Subscription.org_id == org_id))
+        ).scalar_one()
+        return sub.generations_used
+
+
+async def test_campaign_suggestions_reject_other_orgs_client(
+    client, orgs, session_factory, monkeypatch
+):
+    await _profile_both(session_factory, orgs)
+    stub = _suggestions_stub(monkeypatch)
+    resp = await client.post(
+        f"{API}/campaigns/suggestions",
+        json={"client_id": str(orgs["client_b"])},
+        headers=orgs["headers_a"],
+    )
+    assert resp.status_code == 404
+    assert stub.calls == 0
+    assert await _generations(session_factory, orgs["org_a"]) == 0
+    assert await _generations(session_factory, orgs["org_b"]) == 0
+
+
+async def test_campaign_suggestions_own_client_succeeds(
+    client, orgs, session_factory, monkeypatch
+):
+    """Positive control for the test above."""
+    await _profile_both(session_factory, orgs)
+    _suggestions_stub(monkeypatch)
+    resp = await client.post(
+        f"{API}/campaigns/suggestions",
+        json={"client_id": str(orgs["client_a"])},
+        headers=orgs["headers_a"],
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["suggestions"]) == 2
+    assert await _generations(session_factory, orgs["org_a"]) == 1
