@@ -500,6 +500,32 @@ def build_prompt(
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
+def reply_diagnostics(response: Any, text: str, raw: Any) -> dict[str, Any]:
+    """Shape of a model reply, for the log line of a failed generation.
+
+    Which model answered matters because the tier's fallbacks switch providers
+    silently: a primary that errors is replaced without any log. The text head is
+    capped and goes only to server logs, never to the client.
+    """
+    meta = getattr(response, "response_metadata", None) or {}
+    usage = getattr(response, "usage_metadata", None) or {}
+    content = getattr(response, "content", None)
+    blocks = (
+        [b.get("type") if isinstance(b, dict) else type(b).__name__ for b in content]
+        if isinstance(content, list)
+        else type(content).__name__
+    )
+    return {
+        "reply_model": meta.get("model") or meta.get("model_name"),
+        "stop_reason": meta.get("stop_reason") or meta.get("finish_reason"),
+        "output_tokens": usage.get("output_tokens"),
+        "content_blocks": blocks,
+        "text_len": len(text),
+        "parsed_shape": sorted(raw.keys())[:5] if isinstance(raw, dict) else type(raw).__name__,
+        "text_head": text[:300],
+    }
+
+
 def _bad_gateway(message: str) -> HTTPException:
     return HTTPException(status.HTTP_502_BAD_GATEWAY, message)
 
@@ -538,7 +564,8 @@ async def suggest_campaigns(
             [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)],
             config=trace_config("campaign-suggestions", org_id=org_id),
         )
-        raw = parse_llm_json(llm_text(response))
+        text = llm_text(response)
+        raw = parse_llm_json(text)
     except HTTPException:
         raise
     except Exception as exc:
@@ -558,6 +585,7 @@ async def suggest_campaigns(
             org_id=str(org_id),
             usable=len(suggestions),
             angles=angles,
+            **reply_diagnostics(response, text, raw),
         )
         raise _bad_gateway(
             "The model did not return enough usable suggestions; no quota was used. Try again."
