@@ -439,6 +439,37 @@ async def test_strategy_lens_incomplete_is_502_and_saves_nothing(
         assert (await s.execute(select(CreativeAsset))).scalars().all() == []
 
 
+def test_strategy_lens_accepts_common_shape_drift():
+    """Prod 502'd on a near-miss reply; variants that carry the content must validate."""
+    from agency.agents.setup_profile import validate_strategy_lens
+
+    drifted = {
+        "lenses": {
+            "Jobs-to-be-Done": {"critique": ["c1", "c2"], "suggestion": "s"},
+            "Category Design": {"analysis": "c", "recommendation": "s"},
+            "Blue Ocean Strategy": {"critique": "c", "suggestions": ["s"]},
+            "Distinctive Assets": {"origin": "Sharp", "critique": "c", "suggestion": "s"},
+        },
+        "tension": "Speed vs memorability.",
+        "nextStep": "Name the 48-hour promise.",
+    }
+    panel = validate_strategy_lens(drifted)
+    assert len(panel["lenses"]) == 4
+    assert panel["lenses"][0]["origin"] == "Clayton Christensen"
+    assert panel["lenses"][0]["critique"] == "c1 c2"
+    assert panel["synthesis"] == "Name the 48-hour promise."
+
+
+def test_strategy_lens_still_rejects_missing_content():
+    from agency.agents.setup_profile import MalformedGenerationError, validate_strategy_lens
+
+    gutted = {**LENS, "lenses": [{**LENS["lenses"][0], "critique": ""}, *LENS["lenses"][1:]]}
+    with pytest.raises(MalformedGenerationError, match="3/4"):
+        validate_strategy_lens(gutted)
+    with pytest.raises(MalformedGenerationError, match="synthesis"):
+        validate_strategy_lens({**LENS, "synthesis": ""})
+
+
 async def test_strategy_lens_rejects_other_orgs_client(client, orgs, session_factory, stub_llm):
     await _seed_full_profile(session_factory, orgs.org_b, orgs.client_b)
     stub = stub_llm(LENS)

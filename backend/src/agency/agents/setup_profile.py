@@ -209,28 +209,78 @@ def build_strategy_lens_prompt(brand: dict[str, Any], answers: dict[str, str]) -
         "default) and one concrete suggestion. Then, in 1-2 sentences, name the sharpest place "
         "these four frameworks genuinely pull in different directions — real tension, not "
         "manufactured for effect. Finally, given that tension, name the single most actionable "
-        "next step to take."
+        "next step to take.\n\n"
+        'Return exactly four objects in "lenses", one per framework above, each with all four '
+        'string fields. Put the tension in "tension" and the next step in "synthesis".'
     )
 
 
+def _text(value: Any, limit: int = MAX_FIELD) -> str:
+    """Like :func:`_str`, but a list of strings (a common model variant) is joined."""
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        value = " ".join(v.strip() for v in value if v.strip())
+    return _str(value, limit)
+
+
+def _field(item: dict[str, Any], keys: tuple[str, ...], limit: int = MAX_FIELD) -> str:
+    """First non-empty value among alias keys — models drift between camel/snake/synonyms."""
+    for key in keys:
+        text = _text(item.get(key), limit)
+        if text:
+            return text
+    return ""
+
+
+def _canonical_origin(framework: str) -> str:
+    """The known origin of one of the four requested frameworks, matched by name."""
+    name = framework.lower()
+    for canonical, origin in STRATEGY_FRAMEWORKS:
+        stem = canonical.lower().split(" (")[0].split(" /")[0]
+        if stem in name or name in canonical.lower():
+            return origin
+    return ""
+
+
 def validate_strategy_lens(parsed: dict[str, Any]) -> dict[str, Any]:
-    raw = parsed.get("lenses")
+    raw = parsed.get("lenses", parsed.get("frameworks"))
+    if isinstance(raw, dict):  # {"Jobs-to-be-Done": {...}, ...}
+        raw = [
+            {"framework": name, **item} if isinstance(item, dict) else item
+            for name, item in raw.items()
+        ]
     lenses: list[dict[str, str]] = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):
             continue
+        framework = _field(item, ("framework", "name", "lens"), 120)
         lens = {
-            "framework": _str(item.get("framework"), 120),
-            "origin": _str(item.get("origin"), 160),
-            "critique": _str(item.get("critique")),
-            "suggestion": _str(item.get("suggestion")),
+            "framework": framework,
+            # The origin is ours, not the model's: fill it for a requested framework.
+            "origin": _field(item, ("origin", "source", "attribution"), 160)
+            or _canonical_origin(framework),
+            "critique": _field(item, ("critique", "analysis", "assessment")),
+            "suggestion": _field(item, ("suggestion", "suggestions", "recommendation")),
         }
         if all(lens.values()):
             lenses.append(lens)
-    tension = _str(parsed.get("tension"))
-    synthesis = _str(parsed.get("synthesis"))
-    if len(lenses) < len(STRATEGY_FRAMEWORKS) or not tension or not synthesis:
-        raise MalformedGenerationError("strategy lens panel is incomplete")
+    tension = _field(parsed, ("tension", "tensions"))
+    synthesis = _field(parsed, ("synthesis", "nextStep", "next_step", "recommendation"))
+    missing = [
+        label
+        for label, ok in (
+            (
+                f"lenses ({len(lenses)}/{len(STRATEGY_FRAMEWORKS)} complete)",
+                len(lenses) >= len(STRATEGY_FRAMEWORKS),
+            ),
+            ("tension", bool(tension)),
+            ("synthesis", bool(synthesis)),
+        )
+        if not ok
+    ]
+    if missing:
+        raise MalformedGenerationError(
+            "strategy lens panel is incomplete: missing " + ", ".join(missing)
+        )
     return {
         "lenses": lenses[: len(STRATEGY_FRAMEWORKS)],
         "tension": tension,
