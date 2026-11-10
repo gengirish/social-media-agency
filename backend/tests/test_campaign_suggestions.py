@@ -654,3 +654,30 @@ def test_validate_suggestions_drops_duplicate_names():
     )
     out = validate_suggestions(raw, ["launch_offer", "community"], WINDOW)
     assert len(out) == 1
+
+
+def test_reply_diagnostics_names_the_model_and_why_it_stopped():
+    """A usable=0 log must say which provider answered: fallbacks switch silently."""
+    from agency.services.campaign_suggestions import reply_diagnostics
+
+    response = SimpleNamespace(
+        content=[{"type": "thinking", "thinking": ""}, {"type": "text", "text": "Sorry, I can't"}],
+        response_metadata={"model": "gemini-x", "stop_reason": "max_tokens"},
+        usage_metadata={"output_tokens": 4096},
+    )
+    out = reply_diagnostics(response, "Sorry, I can't" + "x" * 500, {"raw_output": "..."})
+    assert out["reply_model"] == "gemini-x"
+    assert out["stop_reason"] == "max_tokens"
+    assert out["output_tokens"] == 4096
+    assert out["content_blocks"] == ["thinking", "text"]
+    assert out["parsed_shape"] == ["raw_output"]
+    assert len(out["text_head"]) == 300
+
+
+def test_reply_diagnostics_tolerates_a_bare_string_reply():
+    from agency.services.campaign_suggestions import reply_diagnostics
+
+    out = reply_diagnostics(SimpleNamespace(content="hi"), "hi", [])
+    assert out["reply_model"] is None
+    assert out["content_blocks"] == "str"
+    assert out["parsed_shape"] == "list"
